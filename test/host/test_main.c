@@ -468,8 +468,25 @@ static void test_hype(void)
     CHECK(e.p.hype < 0.1f, "stopped dancing: hype falls to %.2f", e.p.hype);
 }
 
+// Simulated mount: eye offset from the twist axis along screen +x (forward
+// of the pole for the starboard eye, where screen +x points to the nose).
+static float sim_mount_x = EYE_FORWARD_M;
+
+// Accelerations (g, IMU axes) felt by the offset eye while twisting: the
+// centripetal pull along screen +x, and the tangential push through the screen.
+static void twist_accel_g(float w_dps, float alpha_rad, float out[3])
+{
+    const float w = w_dps * (float)M_PI / 180.0f;
+    float sx[3];
+    screen_to_imu(1.0f, 0.0f, sx);
+    const float in_plane = -w * w * sim_mount_x / 9.81f;
+    const float through = -alpha_rad * sim_mount_x / 9.81f;
+    for (int k = 0; k < 3; k++) out[k] = in_plane * sx[k];
+    out[2] += through;  // IMU z is the screen normal
+}
+
 // Twist about the vertical with the board upright. Counter-clockwise seen from
-// above (positive) carries an outward-facing eye toward screen +x.
+// above (positive) turns an outward-facing eye's gaze toward screen +x.
 static void run_twist(motion_analysis_t *m, float twist_dps, float bob_g, float secs, float *avg_x)
 {
     float up[3], gyro[3], acc[3];
@@ -480,9 +497,11 @@ static void run_twist(motion_analysis_t *m, float twist_dps, float bob_g, float 
     for (int i = 0; i < n; i++, t += 1.0 / IMU_RATE_HZ) {
         // Vertical bobbing reduces the "up" reading when accelerating down.
         const float bob = bob_g * sinf(2 * M_PI * 2.0 * t);
+        float tw[3];
+        twist_accel_g(twist_dps, 0.0f, tw);
         for (int k = 0; k < 3; k++) {
             gyro[k] = twist_dps * up[k];
-            acc[k] = up[k] * (1.0f + bob);
+            acc[k] = up[k] * (1.0f + bob) + tw[k];
         }
         motion_analysis_update(m, acc, gyro);
         if (i >= n / 2) sum += m->out.look_x;
@@ -490,24 +509,23 @@ static void run_twist(motion_analysis_t *m, float twist_dps, float bob_g, float 
     if (avg_x) *avg_x = (float)(sum / (n - n / 2));
 }
 
-// Twisting back and forth (sinusoidal twist rate) with the sideways
-// acceleration the eye really feels, 120 mm from the axis. Returns the average
-// of look_x * direction-of-twist: positive means looking into the turn.
+// Twisting back and forth (sinusoidal twist rate) with the accelerations the
+// offset eye really feels. Returns the average of look_x * direction-of-twist:
+// positive means looking into the turn.
 static float run_twist_swing(motion_analysis_t *m, float peak_dps, float hz, float secs, float *dom)
 {
-    float up[3], side[3], gyro[3], acc[3];
+    float up[3], gyro[3], acc[3], tw[3];
     screen_to_imu(0.0f, -1.0f, up);
-    screen_to_imu(1.0f, 0.0f, side);  // screen +x in IMU axes
     double sum = 0.0, dsum = 0.0;
     const int n = (int)(secs * IMU_RATE_HZ);
     for (int i = 0; i < n; i++) {
         const double t = (double)i / IMU_RATE_HZ;
         const float w = peak_dps * sinf(2 * M_PI * hz * t);                            // deg/s
         const float alpha = peak_dps * (float)(M_PI / 180.0) * 2 * M_PI * hz * cosf(2 * M_PI * hz * t);  // rad/s^2
-        const float a_side = alpha * 0.12f / 9.81f;                                     // g, toward +x for CCW
+        twist_accel_g(w, alpha, tw);
         for (int k = 0; k < 3; k++) {
             gyro[k] = w * up[k];
-            acc[k] = up[k] + a_side * side[k];
+            acc[k] = up[k] + tw[k];
         }
         motion_analysis_update(m, acc, gyro);
         if (i >= n / 3) {
@@ -565,6 +583,34 @@ static void test_twist(void)
         const float along = m.out.look_x * cosf(roll) + m.out.look_y * sinf(roll);
         CHECK(along > 0.25f, "rolled board, twist: eye looks along the horizon into the turn (%+.2f)", along);
     }
+
+    // Port eye: mirror-image mount (screen +x points to the tail), same result.
+    sim_mount_x = -EYE_FORWARD_M;
+    for (float hz = 1.0f; hz <= 2.01f; hz += 1.0f) {
+        motion_analysis_init(&m, IMU_RATE_HZ);
+        motion_analysis_set_mount(&m, -EYE_FORWARD_M, 0.0f);
+        run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+        x = run_twist_swing(&m, 400.0f, hz, 6.0f, &dom);
+        CHECK(dom > 0.8f && x > 0.2f, "port eye, twisting at %.0f Hz: dominance %.2f, looks into the turn (%+.2f)", hz, dom, x);
+    }
+    // Fast spinning one way: the centripetal pull is removed, so the pupil
+    // isn't shoved sideways by it.
+    for (int side = 0; side < 2; side++) {
+        sim_mount_x = side ? -EYE_FORWARD_M : EYE_FORWARD_M;
+        motion_analysis_init(&m, IMU_RATE_HZ);
+        motion_analysis_set_mount(&m, sim_mount_x, 0.0f);
+        run_twist(&m, 0.0f, 0.0f, 2.0f, NULL);
+        float with, without;
+        run_twist(&m, 400.0f, 0.0f, 3.0f, &with);
+        motion_analysis_init(&m, IMU_RATE_HZ);
+        motion_analysis_set_mount(&m, 0.0f, 0.0f);  // no compensation
+        run_twist(&m, 0.0f, 0.0f, 2.0f, NULL);
+        run_twist(&m, 400.0f, 0.0f, 3.0f, &without);
+        CHECK(fabsf(with - 1.0f) < fabsf(without - 1.0f) || with > 0.95f,
+              "%s eye, steady 400 deg/s spin: look %+.2f with centripetal removed (%+.2f without)",
+              side ? "port" : "starboard", with, without);
+    }
+    sim_mount_x = EYE_FORWARD_M;
 
     // Twisting while bobbing hard: not mostly twist, so the pupil lags instead.
     motion_analysis_init(&m, IMU_RATE_HZ);

@@ -26,6 +26,7 @@ typedef struct {
     float twist_avg, other_avg;  // smoothed motion magnitudes, in look units
     float prev_twist, twist_accel;  // deg/s and smoothed deg/s^2
     float gyro_ms, lin_ms;          // ~1 s mean squares of rotation and linear acceleration
+    float mount_x_m, mount_out_m;   // eye offset from the twist axis: along screen +x, and outward
     float twist_snap[2];            // direct into-the-turn look, bypassing the spring
     // decimation to DANCE_RATE_HZ
     int decim, decim_n;
@@ -37,6 +38,11 @@ typedef struct {
 } motion_analysis_t;
 
 void motion_analysis_init(motion_analysis_t *m, float rate_hz);
+
+// Eye offset from the twist axis in its own screen frame: x_m along the
+// screen's horizontal (+x), out_m the way the screen faces. Defaults to the
+// starboard eye (x = +EYE_FORWARD_M).
+void motion_analysis_set_mount(motion_analysis_t *m, float x_m, float out_m);
 
 // acc in g, gyro in deg/s, both in the IMU's own axes.
 void motion_analysis_update(motion_analysis_t *m, const float acc[3], const float gyro[3]);

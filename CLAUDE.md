@@ -17,8 +17,13 @@ Waveshare **ESP32-S3-Touch-AMOLED-1.75**:
 - I2C on GPIO 14/15, shared by all chips. BOOT button on GPIO 0.
 - Pin reference: https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75/blob/main/HARDWARE_REFERENCE.md
 
-On the mount: the eye centre is **120 mm in front of the pole's twist axis**,
-the screen faces outward, and the board is rolled ~30° in the screen plane.
+Two identical boards are mounted **back to back** as the shark's eyes, 120 mm
+**forward** of the pole's twist axis (toward the nose), screens facing out to
+each side: **starboard** = 28:84:85:3A:DA:78 (the original), **port** =
+28:84:85:3B:6F:F4. One firmware binary serves both; the port board is picked
+out by MAC (`PORT_EYE_MACS` in `config.h`, logged as `motion: port eye` at
+boot). The starboard screen's +x points toward the nose, the port screen's
+toward the tail. The starboard board is rolled ~30° in the screen plane.
 The IMU's +X axis points toward the bottom of the screen (`EYE_MOUNT_ROTATION 90`).
 
 ## Build, flash, test
@@ -128,9 +133,14 @@ Managed components: `waveshare/esp32_s3_touch_amoled_1_75` (BSP), `waveshare/qmi
   mostly twist (dominance 0.45–0.60 share, recognised within ~50 ms), the
   left/right response reverses and the twist steers the pupil straight into the
   turn, bypassing the spring so it keeps up with fast twisting. "Sideways"
-  follows the true horizon (the board is rolled). The eye's swing from twisting
-  120 mm off-axis is removed from the accelerometer. Tuned from a recording of
-  real twisting; gyro range is ±2048°/s (fast twists reached 550°/s).
+  follows the true horizon (the board is rolled). Twisting accelerates the
+  offset eye: the centripetal pull (-ω²·x along the screen's horizontal, with
+  x = +0.12 m starboard, -0.12 m port) is removed from the accelerometer; the
+  tangential push goes through the screen and is ignored. The recording showed
+  twist acceleration through the screen (R² 0.92), which is how the forward
+  offset was confirmed (an earlier version wrongly assumed an outward offset).
+  Tuned from a recording of real twisting; gyro range is ±2048°/s (fast
+  twists reached 550°/s).
 - **Dance**: autocorrelation of vertical/horizontal acceleration (period
   0.3–1.2 s), with a bonus when it matches the music's tempo.
 - **Activity**: rms rotation (150→300°/s) or acceleration (0.15→0.30 g) over
@@ -183,7 +193,9 @@ Recordings are kept out of the repo.
 - The rhythm gate needs ~4 s of sound before beats start.
 - `QUIET_DB` was set in the user's room; a different space may need tuning.
 - The IMU's horizontal (x) sign for linear sway was never checked separately
-  on the mount; twist direction was confirmed by feel.
+  on the mount; twist direction was confirmed by feel on the starboard eye.
+- The two eyes run independently: presets cycle on each board's own clock and
+  blinks are random, so they are not synchronised.
 
 ## History (this session)
 

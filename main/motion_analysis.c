@@ -49,7 +49,15 @@ void motion_analysis_init(motion_analysis_t *m, float rate_hz)
     memset(m, 0, sizeof(*m));
     m->dt = 1.0f / rate_hz;
     m->decim = (int)(rate_hz / DANCE_RATE_HZ + 0.5f);
+    m->mount_x_m = EYE_FORWARD_M;
+    m->mount_out_m = EYE_OUTWARD_M;
     if (m->decim < 1) m->decim = 1;
+}
+
+void motion_analysis_set_mount(motion_analysis_t *m, float x_m, float out_m)
+{
+    m->mount_x_m = x_m;
+    m->mount_out_m = out_m;
 }
 
 // Strongest normalised autocorrelation peak within the dance period range.
@@ -121,14 +129,17 @@ void motion_analysis_update(motion_analysis_t *m, const float acc[3], const floa
     const float ul = sqrtf(ux * ux + uy * uy);
     const float hx = ul > 0.2f ? -uy / ul : 1.0f, hy = ul > 0.2f ? ux / ul : 0.0f;
 
-    // The eye sits TWIST_RADIUS_M from the twist axis, so speeding up or
-    // slowing a twist swings it sideways (toward +h for a speeding-up
-    // counter-clockwise twist). Remove that from the reading so it isn't
-    // mistaken for sway.
+    // The eye is offset from the twist axis, so twisting accelerates it:
+    // along the screen's horizontal that is the centripetal pull (-w^2 * x)
+    // plus, for an outward offset, the tangential push (alpha * out). Remove
+    // it from the reading so it isn't mistaken for sway. (Tangential push
+    // from a forward offset goes through the screen and doesn't move the pupil.)
     // Light smoothing only: a lag here leaves swing behind at fast twists.
     m->twist_accel += (dt / (0.005f + dt)) * ((twist - m->prev_twist) / dt - m->twist_accel);
     m->prev_twist = twist;
-    const float swing_g = TWIST_SCREEN_SIGN * m->twist_accel * ((float)M_PI / 180.0f) * TWIST_RADIUS_M / 9.81f;
+    const float deg = (float)M_PI / 180.0f;
+    const float w_rad = twist * deg;
+    const float swing_g = (TWIST_SCREEN_SIGN * m->twist_accel * deg * m->mount_out_m - w_rad * w_rad * m->mount_x_m) / 9.81f;
     float sx_imu, sy_imu;
     from_screen(hx, hy, &sx_imu, &sy_imu);
     const float acc_c[3] = { acc[0] - swing_g * sx_imu, acc[1] - swing_g * sy_imu, acc[2] };

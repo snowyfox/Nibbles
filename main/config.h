@@ -112,8 +112,18 @@
 #define TWIST_GAIN           0.006f  // sideways look per deg/s of twist
 #define TWIST_SCREEN_SIGN    1.0f    // +1 when the screen faces outward from the pole's axis; flip
                                      // to -1 if twisting makes the eye look out of the turn
-#define TWIST_RADIUS_M       0.12f   // eye centre to the twist axis; its sideways swing is removed
-                                     // from the accelerometer so it doesn't count as other motion
+// Where the eye sits relative to the pole's twist axis. The two eyes are
+// mounted back to back, forward of the pole, screens facing out to each side.
+// Spinning pulls the eye back toward the axis (centripetal), which lies along
+// the screen's horizontal and is removed from the accelerometer so it isn't
+// taken for sway. (A recording confirmed that twist acceleration shows up
+// through the screen, i.e. the eye is offset forward, not outward.)
+#define EYE_FORWARD_M        0.12f   // eye centre forward of the axis, toward the nose
+#define EYE_OUTWARD_M        0.0f    // eye centre outward of the axis, the way the screen faces
+// Which eye is which, by board MAC address. The starboard screen's +x points
+// toward the nose and the port screen's toward the tail. Boards not listed
+// are treated as starboard (the original board, 28:84:85:3A:DA:78, is starboard).
+#define PORT_EYE_MACS        { { 0x28, 0x84, 0x85, 0x3B, 0x6F, 0xF4 } }
 #define TWIST_ATTACK_S       0.05f   // how quickly a new twist is recognised...
 #define TWIST_SMOOTH_S       0.3f    // ...and how slowly it is forgotten
 #define TWIST_SNAP_S         0.05f   // looking into a turn skips the pupil spring; this is its smoothing

@@ -1,6 +1,8 @@
 // IMU sampling task.
 #include <math.h>
+#include <string.h>
 #include "bsp/esp-bsp.h"
+#include "esp_mac.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -38,9 +40,24 @@ static void motion_task(void *arg)
     }
 }
 
+// Port or starboard, from the board's MAC address (see PORT_EYE_MACS).
+static bool is_port_eye(void)
+{
+    static const uint8_t port[][6] = PORT_EYE_MACS;
+    uint8_t mac[6];
+    if (esp_efuse_mac_get_default(mac) != ESP_OK) return false;
+    for (size_t i = 0; i < sizeof(port) / sizeof(port[0]); i++)
+        if (memcmp(mac, port[i], 6) == 0) return true;
+    return false;
+}
+
 esp_err_t motion_start(void)
 {
     motion_analysis_init(&analysis, IMU_RATE_HZ);
+    // The starboard screen's +x points toward the nose, the port screen's toward the tail.
+    const bool port = is_port_eye();
+    motion_analysis_set_mount(&analysis, port ? -EYE_FORWARD_M : EYE_FORWARD_M, EYE_OUTWARD_M);
+    ESP_LOGI(TAG, "%s eye", port ? "port" : "starboard");
     i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
     ESP_RETURN_ON_FALSE(bus, ESP_FAIL, TAG, "no I2C bus");
     ESP_RETURN_ON_ERROR(qmi8658_init(&imu, bus, QMI8658_ADDRESS_HIGH), TAG, "IMU init failed");
