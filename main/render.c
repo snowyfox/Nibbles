@@ -37,12 +37,13 @@ static const preset_t *preset = &presets[0];
 #define SPIRAL_DBINS     (RING_LUT_N / 4)
 #define SPIRAL_PHASES    64
 static uint16_t spiral_lut[SPIRAL_DBINS * SPIRAL_PHASES];
-static uint16_t *spiral_map;
-static int spiral_map_arms;
-static float spiral_map_twist;
+#define MAX_PRESETS      32
+static uint16_t *spiral_maps[MAX_PRESETS];  // per preset, built at boot (shared when settings match)
+static uint16_t *spiral_map;                // the current preset's
 static bool spiral_on;
 static uint32_t spin_q;  // phase offset, 0..SPIRAL_PHASES-1
 static float spin_turns, spin_last_t, spin_rate;
+static bool spin_restart = true;  // a spiral preset was just selected
 static esp_lcd_panel_handle_t panel;
 static esp_lcd_panel_io_handle_t panel_io;
 static uint16_t *bufs[STRIP_BUFFERS];
@@ -274,11 +275,18 @@ static void prepare(const eye_params_t *p)
     // the music, over the same pupil rim, fill and beat ripples.
     spiral_on = preset->spiral_arms > 0 && spiral_map;
     if (spiral_on) {
+        const float target = preset_spin_rate(preset, p->tempo_bpm, p->hype);
+        if (spin_restart) {
+            // Start at this preset's own speed, not whatever the last spiral
+            // preset was doing when it left, and don't count the time since.
+            spin_rate = target;
+            spin_last_t = p->time_s;
+            spin_restart = false;
+        }
         const float dt = fminf(0.1f, fmaxf(0.0f, p->time_s - spin_last_t));
         spin_last_t = p->time_s;
         // Ease toward the tempo-locked speed so tempo changes (and the odd
         // jittery tempo estimate) speed it up and slow it down smoothly.
-        const float target = preset_spin_rate(preset, p->tempo_bpm, p->hype);
         spin_rate += (target - spin_rate) * (1.0f - expf(-dt / SPIN_EASE_S));
         spin_turns += dt * spin_rate;
         spin_turns -= floorf(spin_turns);
@@ -320,7 +328,8 @@ static void prepare(const eye_params_t *p)
 
     // Fixed outline ring around the whole eye.
     preset_color(p, n, c);
-    const float oamp = (0.4f + 0.6f * I) * preset->outline_amp;
+    // Always at full brightness, whatever the music, hype or sleep is doing.
+    const float oamp = 1.0f;
     for (int i = 0; i < OUTLINE_LUT_N; i++) {
         float g = outline_profile(OUTLINE_INNER + (float)i / LUT_SCALE - EYE_OUTLINE_RADIUS, oamp);
         outline_lut[i] = to565(g * c[0], g * c[1], g * c[2]);
@@ -474,12 +483,12 @@ static inline void span_lid(uint16_t *dst, const uint16_t *map, bool spiral, con
     }
 }
 
-// Build (or rebuild for new arm/twist settings) the spiral map. Done at boot;
-// a spiral preset with different settings rebuilds it when selected.
-static void build_spiral_map(int arms, float twist_px)
+// Build a spiral map for the given arms and twist (~0.74 MB of PSRAM, takes a
+// moment, so done at boot).
+static uint16_t *build_spiral_map(int arms, float twist_px)
 {
-    if (!spiral_map) spiral_map = heap_caps_malloc(PM_W * PM_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    if (!spiral_map) return;
+    uint16_t *map = heap_caps_malloc(PM_W * PM_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    if (!map) return NULL;
     for (int y = 0; y < PM_H; y++) {
         const float dy = y + 0.5f - (PM_PAD + DISP_CY);
         for (int x = 0; x < PM_W; x++) {
@@ -488,11 +497,10 @@ static void build_spiral_map(int arms, float twist_px)
             const int bin = (int)fminf(d * LUT_SCALE / 4.0f, SPIRAL_DBINS - 1);
             float turn = atan2f(dy, dx) / (2.0f * (float)M_PI) * arms + d / twist_px;
             turn -= floorf(turn);
-            spiral_map[y * PM_W + x] = (uint16_t)((bin << 6) | ((int)(turn * SPIRAL_PHASES) & (SPIRAL_PHASES - 1)));
+            map[y * PM_W + x] = (uint16_t)((bin << 6) | ((int)(turn * SPIRAL_PHASES) & (SPIRAL_PHASES - 1)));
         }
     }
-    spiral_map_arms = arms;
-    spiral_map_twist = twist_px;
+    return map;
 }
 
 static IRAM_ATTR void render_rows(uint16_t *dst, int y0, int y1)
@@ -606,13 +614,17 @@ esp_err_t render_init(void)
 
     gauss_init();
     ESP_RETURN_ON_ERROR(build_maps(), TAG, "no memory for distance maps");
-    // Build the spiral map now rather than freezing the eye the first time a
-    // spiral preset comes up.
+    // Build spiral maps now rather than freezing the eye the first time a
+    // spiral preset comes up. Presets with the same arms and twist share one.
+    ESP_RETURN_ON_FALSE(preset_count <= MAX_PRESETS, ESP_ERR_INVALID_SIZE, TAG, "too many presets");
     for (int i = 0; i < preset_count; i++) {
-        if (presets[i].spiral_arms > 0) {
-            build_spiral_map(presets[i].spiral_arms, presets[i].spiral_twist);
-            break;
+        if (presets[i].spiral_arms <= 0) continue;
+        for (int j = 0; j < i && !spiral_maps[i]; j++) {
+            if (presets[j].spiral_arms == presets[i].spiral_arms && presets[j].spiral_twist == presets[i].spiral_twist)
+                spiral_maps[i] = spiral_maps[j];
         }
+        if (!spiral_maps[i]) spiral_maps[i] = build_spiral_map(presets[i].spiral_arms, presets[i].spiral_twist);
+        if (!spiral_maps[i]) ESP_LOGE(TAG, "no memory for the %s spiral; it will show plain rings", presets[i].name);
     }
     BaseType_t ok = xTaskCreatePinnedToCore(helper_main, "render_helper", 3072, NULL, 7, &helper_task, 0);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "helper task create failed");
@@ -667,11 +679,10 @@ void render_take_stats(int *late, float *worst_ms, float *worst_prep_ms)
 
 void render_set_preset(int index)
 {
-    preset = &presets[index % preset_count];
-    if (preset->spiral_arms > 0 &&
-        (preset->spiral_arms != spiral_map_arms || preset->spiral_twist != spiral_map_twist)) {
-        build_spiral_map(preset->spiral_arms, preset->spiral_twist);
-    }
+    index %= preset_count;
+    preset = &presets[index];
+    spiral_map = spiral_maps[index];
+    spin_restart = true;
 }
 
 void render_set_brightness(int percent)

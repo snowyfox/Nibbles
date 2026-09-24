@@ -29,18 +29,18 @@ typedef struct {
     float flow;              // rings per second drifting outward when calm (negative = inward)
     float wobble_px;         // how far rings wobble with loudness
 
-    // Pupil, ripples and outline.
+    // Pupil and ripples (the outline and lid lines are always at full brightness).
     float pupil_scale;       // drawn pupil size relative to the eye's pupil radius
     float rim_amp, rim_white;
     float ripple_pos;        // ripple colour: ring position (palette) or hue offset in degrees (rainbow)
     float ripple_white;      // how much ripples are washed toward white
-    float outline_amp;
 
     // Spiral arms (0 = plain rings): the pattern twists and spins.
     int spiral_arms;
     float spiral_twist;      // pixels an arm travels outward per full turn
     float spin;              // turns per second when there is no steady beat
-    float spin_per_beat;     // turns per beat while music has a tempo; hype doubles it
+    float spin_per_beat;     // turns per beat while music has a tempo (1/arms = one arm per beat);
+                             // hype doubles it
 } preset_t;
 
 extern const preset_t presets[];

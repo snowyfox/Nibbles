@@ -648,21 +648,25 @@ static void test_motion_hype(void)
 
 static void test_spiral_tempo(void)
 {
-    const preset_t *hyp = NULL;
-    for (int i = 0; i < preset_count; i++) if (presets[i].spiral_arms > 0) hyp = &presets[i];
-    CHECK(hyp != NULL, "a spiral preset exists");
-    if (!hyp) return;
-    // One arm spacing per beat: with 3 arms, an arm sweeps past on every beat.
-    const float bpms[] = { 128, 138, 174 };
-    for (int i = 0; i < 3; i++) {
-        const float r = preset_spin_rate(hyp, bpms[i], 0.0f);
-        const float arms_per_beat = r * hyp->spiral_arms / (bpms[i] / 60.0f);
-        CHECK(fabsf(arms_per_beat - 1.0f) < 0.01f, "%s at %.0f bpm: %.2f turns/s, one arm per beat", hyp->name, bpms[i], r);
+    int spirals = 0;
+    for (int k = 0; k < preset_count; k++) {
+        const preset_t *sp = &presets[k];
+        if (sp->spiral_arms <= 0) continue;
+        spirals++;
+        // Locked to the tempo at the preset's turns per beat.
+        const float bpms[] = { 128, 138, 174 };
+        for (int i = 0; i < 3; i++) {
+            const float r = preset_spin_rate(sp, bpms[i], 0.0f);
+            const float turns_per_beat = r / (bpms[i] / 60.0f);
+            CHECK(fabsf(turns_per_beat - sp->spin_per_beat) < 1e-4f, "%s at %.0f bpm: %.2f turns/s (%.2f arms per beat)",
+                  sp->name, bpms[i], r, turns_per_beat * sp->spiral_arms);
+        }
+        CHECK(fabsf(preset_spin_rate(sp, 0.0f, 0.0f) - sp->spin) < 1e-6f, "%s with no tempo: calm spin %.2f turns/s",
+              sp->name, preset_spin_rate(sp, 0.0f, 0.0f));
+        CHECK(fabsf(preset_spin_rate(sp, 138.0f, 1.0f) - 2.0f * preset_spin_rate(sp, 138.0f, 0.0f)) < 1e-6f,
+              "%s in hype mode: twice as fast", sp->name);
     }
-    CHECK(fabsf(preset_spin_rate(hyp, 0.0f, 0.0f) - hyp->spin) < 1e-6f, "%s with no tempo: calm spin %.2f turns/s",
-          hyp->name, preset_spin_rate(hyp, 0.0f, 0.0f));
-    CHECK(fabsf(preset_spin_rate(hyp, 138.0f, 1.0f) - 2.0f * preset_spin_rate(hyp, 138.0f, 0.0f)) < 1e-6f,
-          "%s in hype mode: twice as fast", hyp->name);
+    CHECK(spirals > 0, "%d spiral presets", spirals);
 }
 
 static void test_sleep_wake(void)
