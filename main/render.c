@@ -23,8 +23,9 @@ static const char *TAG = "render";
 #define OUTLINE_INNER_PX 180
 #define OUTLINE_INNER    ((float)OUTLINE_INNER_PX)
 #define OUTLINE_LUT_N    ((DISP_W / 2 + 2 - OUTLINE_INNER_PX) * LUT_SCALE)
-#define LID_GLOW_PX      10
-#define LID_OPEN_SCALE   1.08f    // lid_open = 1 puts the lids just outside the round display
+#define LID_GLOW_PX      30       // lid lines reach this far each side (covers the outline halo)
+#define LID_LUT_N        (LID_GLOW_PX * LUT_SCALE)
+#define LID_CLEAR_PX     (LID_GLOW_PX + 2)  // at lid_open = 1 the lid lines sit fully outside the display
 #define SIGMA_RING       2.2f
 #define SIGMA_HALO       9.0f
 
@@ -40,7 +41,8 @@ static TaskHandle_t helper_task;
 static float acc[RING_LUT_N][3];
 static uint16_t ring_lut[RING_LUT_N];
 static uint16_t outline_lut[OUTLINE_LUT_N];
-static uint16_t lid_glow_lut[LID_GLOW_PX];
+static uint16_t lid_glow_lut[LID_LUT_N];
+static uint16_t lid_k[DISP_W];  // per column: 1/sqrt(1+slope^2) in Q8, turns vertical into perpendicular distance
 static int16_t lid_top[DISP_W], lid_bot[DISP_W];
 static bool lids_visible;
 static int pupil_ix, pupil_iy;   // pupil centre, whole pixels
@@ -68,6 +70,12 @@ static float smoothstep(float e0, float e1, float x)
 {
     float t = fminf(fmaxf((x - e0) / (e1 - e0), 0.0f), 1.0f);
     return t * t * (3.0f - 2.0f * t);
+}
+
+// Cross-section of the eye's neon outline: bright core plus a soft halo.
+static float outline_profile(float d, float amp)
+{
+    return amp * (expf(-0.5f * d * d / (2.5f * 2.5f)) + 0.3f * expf(-0.5f * d * d / (10.0f * 10.0f)));
 }
 
 static uint16_t to565(float r, float g, float b)
@@ -152,17 +160,15 @@ static void prepare(const eye_params_t *p)
     hsv(p->hue + EYE_RING_COUNT * HUE_RING_SPREAD_DEG, 1.0f, 1.0f, c);
     const float oamp = 0.4f + 0.6f * I;
     for (int i = 0; i < OUTLINE_LUT_N; i++) {
-        float d = OUTLINE_INNER + (float)i / LUT_SCALE - EYE_OUTLINE_RADIUS;
-        float g = oamp * (expf(-0.5f * d * d / (2.5f * 2.5f)) + 0.3f * expf(-0.5f * d * d / (10.0f * 10.0f)));
+        float g = outline_profile(OUTLINE_INNER + (float)i / LUT_SCALE - EYE_OUTLINE_RADIUS, oamp);
         outline_lut[i] = to565(g * c[0], g * c[1], g * c[2]);
     }
 
-    // Neon line along the eyelid edges. Stays visible when asleep.
-    hsv(p->hue, 0.5f, 1.0f, c);
-    const float lamp = fmaxf(I, 0.25f);
-    for (int e = 0; e < LID_GLOW_PX; e++) {
-        float g = lamp * expf(-e / 2.5f);
-        lid_glow_lut[e] = to565(g * c[0], g * c[1], g * c[2]);
+    // Eyelid edges use the same line as the outline, so the eye keeps one
+    // consistent outline as it closes (including when asleep).
+    for (int i = 0; i < LID_LUT_N; i++) {
+        float g = outline_profile((float)i / LUT_SCALE, oamp);
+        lid_glow_lut[i] = to565(g * c[0], g * c[1], g * c[2]);
     }
 
     // Eyelids: per-column top and bottom limits.
@@ -177,7 +183,9 @@ static void prepare(const eye_params_t *p)
             continue;
         }
         float cu = DISP_RADIUS * sqrtf(cu2);
-        float h = open * LID_OPEN_SCALE * cu;
+        float h = open * (cu + LID_CLEAR_PX);
+        float slope = open * u / sqrtf(cu2);
+        lid_k[x] = (uint16_t)(256.0f / sqrtf(1.0f + slope * slope));
         float top = DISP_CY - h;
         float bot = DISP_CY + h;
         lid_top[x] = (int16_t)fmaxf(-LID_GLOW_PX - 1, floorf(top));
@@ -235,18 +243,20 @@ static esp_err_t build_maps(void)
 
 static inline uint16_t shade(uint16_t idx, uint8_t o, int x, int y, bool lids)
 {
-    uint16_t c = ring_lut[idx];
-    if (o) c = add565(c, outline_lut[o - 1]);
+    uint16_t lid = 0;
     if (lids) {
         const int t = lid_top[x], b = lid_bot[x];
-        if (y < t || y > b) c = 0;
         int et = y - t, eb = b - y;
         if (et < 0) et = -et;
         if (eb < 0) eb = -eb;
-        const int e = et < eb ? et : eb;
-        if (e < LID_GLOW_PX) c = add565(c, lid_glow_lut[e]);
+        // Perpendicular distance to the lid edge, in LUT units.
+        const int e = ((et < eb ? et : eb) * lid_k[x] * LUT_SCALE) >> 8;
+        if (e < LID_LUT_N) lid = lid_glow_lut[e];
+        if (y < t || y > b) return lid;  // under a lid: only the lid line shows
     }
-    return c;
+    uint16_t c = ring_lut[idx];
+    if (o) c = add565(c, outline_lut[o - 1]);
+    return lid ? add565(c, lid) : c;
 }
 
 static IRAM_ATTR void render_rows(uint16_t *dst, int y0, int y1)
