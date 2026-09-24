@@ -1,5 +1,23 @@
 #include "presets.h"
 
+// Spiral families: every preset in a family shares everything but its
+// palette (and so shares one spiral map).
+#define HYPNO_FAMILY                                                          \
+    .palette_step = 0.25f, .palette_music = 0.5f,                             \
+    .rings = 0, .fill = 0.05f,                                                \
+    .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.4f,                  \
+    .ripple_pos = 3.0f, .ripple_white = 0.5f,                                 \
+    .spiral_arms = 3, .spiral_twist = 110.0f, .spin = 0.3f, .spin_per_beat = 1.0f / 3.0f
+
+#define VORTEX_FAMILY                                                         \
+    .palette_step = 0.3f, .palette_music = 0.3f,                              \
+    .rings = 0, .fill = 0.1f,                                                 \
+    .pupil_scale = 0.9f, .rim_amp = 1.2f, .rim_white = 0.6f,                  \
+    .ripple_pos = 2.0f, .ripple_white = 0.6f,                                 \
+    .spiral_arms = 5, .spiral_twist = 60.0f, .spin = 0.3f, .spin_per_beat = 1.0f / 3.0f
+
+// Presets play in this order. Spirals are interleaved with ring presets so
+// the cycle alternates between the two styles.
 const preset_t presets[] = {
     {
         // Rainbow neon rings on black (the original look).
@@ -9,6 +27,13 @@ const preset_t presets[] = {
         .wobble_px = 4.0f,
         .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.75f,
         .ripple_pos = 180.0f, .ripple_white = 0.6f,
+    },
+    {
+        // Hypnotic spiral: three glowing arms twisting out from the pupil, spinning in
+        // time with the music (an arm per beat), twice as fast in hype. Violet, pink, cyan.
+        .name = "Hypno",
+        .palette = { { 0.6f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.6f }, { 0.0f, 0.8f, 1.0f }, { 0.85f, 0.85f, 1.0f } },
+        HYPNO_FAMILY,
     },
     {
         // Fire: soft thick bands in red, orange and gold, flowing outward
@@ -22,6 +47,12 @@ const preset_t presets[] = {
         .ripple_pos = 2.0f, .ripple_white = 0.7f,
     },
     {
+        // Vortex in sunset orange, pink, purple and gold.
+        .name = "Vortex Sunset",
+        .palette = { { 1.0f, 0.45f, 0.0f }, { 1.0f, 0.3f, 0.55f }, { 0.6f, 0.15f, 0.8f }, { 1.0f, 0.8f, 0.2f } },
+        VORTEX_FAMILY,
+    },
+    {
         // Deep sea shark: a big black pupil in a solid teal-to-navy iris
         // with fine striations, drifting slowly, with a cyan glow.
         .name = "Abyss",
@@ -31,6 +62,12 @@ const preset_t presets[] = {
         .fill = 0.35f, .flow = 0.15f, .wobble_px = 1.5f,
         .pupil_scale = 1.5f, .rim_amp = 0.7f, .rim_white = 0.3f,
         .ripple_pos = 2.0f, .ripple_white = 0.4f,
+    },
+    {
+        // Hypno in white, pale blue and cyan.
+        .name = "Hypno Ice",
+        .palette = { { 0.9f, 0.95f, 1.0f }, { 0.45f, 0.7f, 1.0f }, { 0.0f, 0.9f, 1.0f }, { 0.75f, 0.9f, 1.0f } },
+        HYPNO_FAMILY,
     },
     {
         // Retro synthwave: a few bold hard-edged bands in pink, purple and
@@ -44,16 +81,10 @@ const preset_t presets[] = {
         .ripple_pos = 2.0f, .ripple_white = 0.3f,
     },
     {
-        // Hypnotic spiral: three glowing arms twisting out from the pupil,
-        // spinning in time with the music (an arm sweeps past on every beat)
-        // and twice as fast in hype mode.
-        .name = "Hypno",
-        .palette = { { 0.6f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.6f }, { 0.0f, 0.8f, 1.0f }, { 0.85f, 0.85f, 1.0f } },
-        .palette_step = 0.25f, .palette_music = 0.5f,
-        .rings = 0, .fill = 0.05f,
-        .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.4f,
-        .ripple_pos = 3.0f, .ripple_white = 0.5f,
-        .spiral_arms = 3, .spiral_twist = 110.0f, .spin = 0.3f, .spin_per_beat = 1.0f / 3.0f,
+        // Vortex in violet, magenta, indigo and pink.
+        .name = "Vortex Ultraviolet",
+        .palette = { { 0.55f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.8f }, { 0.25f, 0.1f, 0.9f }, { 1.0f, 0.4f, 0.9f } },
+        VORTEX_FAMILY,
     },
     {
         // Acid: hard-edged bands in lime, green and yellow pulled inward
@@ -67,6 +98,12 @@ const preset_t presets[] = {
         .ripple_pos = 1.0f, .ripple_white = 0.5f,
     },
     {
+        // Hypno in lime, green, yellow and teal.
+        .name = "Hypno Acid",
+        .palette = { { 0.3f, 1.0f, 0.0f }, { 0.9f, 1.0f, 0.0f }, { 0.0f, 0.8f, 0.3f }, { 0.0f, 0.9f, 0.7f } },
+        HYPNO_FAMILY,
+    },
+    {
         // Northern lights: wide soft billowing glows in green, teal and
         // violet over a strong iris fill, drifting slowly.
         .name = "Aurora",
@@ -78,15 +115,11 @@ const preset_t presets[] = {
         .ripple_pos = 2.0f, .ripple_white = 0.3f,
     },
     {
-        // Tight five-armed spiral in electric blue and white, turning as fast
-        // as Hypno (a third of a turn per beat).
+        // Tight five-armed spiral turning as fast as Hypno (a third of a turn per
+        // beat). Electric blue and white.
         .name = "Vortex",
         .palette = { { 0.0f, 0.3f, 1.0f }, { 0.4f, 0.8f, 1.0f }, { 1.0f, 1.0f, 1.0f }, { 0.2f, 0.1f, 0.9f } },
-        .palette_step = 0.3f, .palette_music = 0.3f,
-        .rings = 0, .fill = 0.1f,
-        .pupil_scale = 0.9f, .rim_amp = 1.2f, .rim_white = 0.6f,
-        .ripple_pos = 2.0f, .ripple_white = 0.6f,
-        .spiral_arms = 5, .spiral_twist = 60.0f, .spin = 0.3f, .spin_per_beat = 1.0f / 3.0f,
+        VORTEX_FAMILY,
     },
     {
         // Ice: many thin crisp rings in white and pale blue, drifting slowly
@@ -100,6 +133,12 @@ const preset_t presets[] = {
         .ripple_pos = 0.0f, .ripple_white = 0.9f,
     },
     {
+        // Hypno in red, orange and gold.
+        .name = "Hypno Ember",
+        .palette = { { 0.8f, 0.0f, 0.0f }, { 1.0f, 0.35f, 0.0f }, { 1.0f, 0.8f, 0.15f }, { 1.0f, 0.15f, 0.05f } },
+        HYPNO_FAMILY,
+    },
+    {
         // The full rainbow spectrum as solid hard-edged stripes, flowing outward.
         .name = "Prism",
         .rainbow = true, .hue_spread = 60.0f, .sat = 1.0f,
@@ -107,6 +146,24 @@ const preset_t presets[] = {
         .flow = 0.5f, .wobble_px = 5.0f,
         .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.9f,
         .ripple_pos = 180.0f, .ripple_white = 0.8f,
+    },
+    {
+        // Vortex in emerald, green, lime and gold.
+        .name = "Vortex Jungle",
+        .palette = { { 0.0f, 0.7f, 0.35f }, { 0.1f, 1.0f, 0.2f }, { 0.6f, 1.0f, 0.1f }, { 1.0f, 0.85f, 0.2f } },
+        VORTEX_FAMILY,
+    },
+    {
+        // Hypno in candy pastels: pink, mint, lavender and peach.
+        .name = "Hypno Candy",
+        .palette = { { 1.0f, 0.45f, 0.75f }, { 0.45f, 1.0f, 0.75f }, { 0.75f, 0.6f, 1.0f }, { 1.0f, 0.75f, 0.5f } },
+        HYPNO_FAMILY,
+    },
+    {
+        // Vortex in deep red, orange and yellow.
+        .name = "Vortex Magma",
+        .palette = { { 0.7f, 0.0f, 0.0f }, { 1.0f, 0.4f, 0.0f }, { 1.0f, 0.9f, 0.2f }, { 0.9f, 0.1f, 0.0f } },
+        VORTEX_FAMILY,
     },
 };
 

@@ -667,6 +667,21 @@ static void test_spiral_tempo(void)
               "%s in hype mode: twice as fast", sp->name);
     }
     CHECK(spirals > 0, "%d spiral presets", spirals);
+
+    // Variants of a spiral share everything with the family's first preset
+    // (same arms) except their name and palette.
+    for (int k = 0; k < preset_count; k++) {
+        if (presets[k].spiral_arms <= 0) continue;
+        const preset_t *base = NULL;
+        for (int j = 0; j < k && !base; j++)
+            if (presets[j].spiral_arms == presets[k].spiral_arms) base = &presets[j];
+        if (!base) continue;
+        preset_t a = presets[k], b = *base;
+        a.name = b.name = NULL;
+        memset(a.palette, 0, sizeof(a.palette));
+        memset(b.palette, 0, sizeof(b.palette));
+        CHECK(memcmp(&a, &b, sizeof(a)) == 0, "%s matches %s apart from its palette", presets[k].name, base->name);
+    }
 }
 
 static void test_sleep_wake(void)
