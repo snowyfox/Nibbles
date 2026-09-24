@@ -11,9 +11,10 @@
 #define STRIP_ROWS           16      // must be even (CO5300 needs even y ranges)
 #define STRIP_BUFFERS        3
 
-// Brightness presets (percent) cycled by the BOOT button. Index 1 is the default.
+// Brightness presets (percent) cycled by the BOOT button. Index 2 (100%, the
+// panel's maximum) is the default.
 #define BRIGHTNESS_PRESETS   { 30, 60, 100 }
-#define BRIGHTNESS_DEFAULT_INDEX 1
+#define BRIGHTNESS_DEFAULT_INDEX 2
 
 // ---------------------------------------------------------------- eye geometry (pixels)
 #define EYE_OUTLINE_RADIUS   218.0f  // fixed glowing ring around the whole eye
@@ -65,7 +66,7 @@
 #define DANCE_MIN_PERIOD_S   0.35f
 #define DANCE_MAX_PERIOD_S   1.2f
 #define DANCE_MIN_ENERGY_G   0.06f   // rms linear accel needed to count as dancing
-#define DANCE_HAPPY_SCORE    0.6f
+#define DANCE_HYPE_SCORE     0.6f    // dance score where the eye goes into hype mode
 
 // ---------------------------------------------------------------- behaviour
 #define BLINK_MIN_S          3.0f
@@ -74,3 +75,9 @@
 #define DROWSY_CLOSE_S       5.0f    // time for lids to close once drowsy
 #define WAKE_SOUND_S         0.3f    // sustained sound needed to wake up
 #define WAKE_MOTION_G        0.35f   // a jolt this big wakes the eye too
+
+// ---------------------------------------------------------------- hype (dancing)
+#define HYPE_RING_SPEED      2.0f    // rings per second flowing outward when the tempo is unknown
+#define HYPE_HUE_BOOST       6.0f    // colour cycles this many times faster at full hype
+#define HYPE_WOBBLE_PX       6.0f    // extra ring wobble at full hype
+#define HYPE_GLOW_BOOST      0.25f   // extra brightness at full hype

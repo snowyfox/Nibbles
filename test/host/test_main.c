@@ -110,7 +110,7 @@ static void test_dance(void)
     static motion_analysis_t m;
     motion_analysis_init(&m, IMU_RATE_HZ);
     feed_motion(&m, 8.0f, 2.0f, 0.3f, 0.02f);
-    CHECK(m.out.dance_score > DANCE_HAPPY_SCORE, "2 Hz bobbing: dance score %.2f", m.out.dance_score);
+    CHECK(m.out.dance_score > DANCE_HYPE_SCORE, "2 Hz bobbing: dance score %.2f", m.out.dance_score);
     CHECK(fabsf(m.out.dance_period_s - 0.5f) < 0.05f, "2 Hz bobbing: period %.2f s", m.out.dance_period_s);
 
     motion_analysis_init(&m, IMU_RATE_HZ);
@@ -168,6 +168,29 @@ static void test_look_inertia(void)
     CHECK(fabsf(m.out.look_x) < 0.05f, "after settling: pupil back at x=%+.2f", m.out.look_x);
 }
 
+static void test_hype(void)
+{
+    static eye_t e;
+    eye_init(&e, 1);
+    // Moderate loudness, so the target glow is well below full and a runaway would show.
+    audio_features_t music = { .level_db = -30.0f, .loudness = 0.2f, .warmth = 0.5f, .beat_period_s = 0.5f };
+    motion_features_t dancing = { .dance_score = 0.9f, .dance_period_s = 0.5f, .energy_g = 0.3f };
+    const float dt = 1.0f / 30;
+    float phase_moved = 0.0f, prev = 0.0f;
+    for (int i = 0; i < 90; i++) {  // 3 s
+        eye_update(&e, &music, &dancing, dt);
+        float d = e.p.ring_phase - prev;
+        phase_moved += d < 0.0f ? d + 1.0f : d;
+        prev = e.p.ring_phase;
+    }
+    CHECK(e.p.hype > 0.9f, "dancing to music: hype %.2f", e.p.hype);
+    CHECK(e.p.intensity < 0.9f, "dancing to moderate music: glow %.2f settles, no runaway", e.p.intensity);
+    CHECK(phase_moved > 3.5f && phase_moved < 6.5f, "dancing at 120 bpm: rings flowed %.1f rings in 3 s", phase_moved);
+    motion_features_t still = { 0 };
+    for (int i = 0; i < 90; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.hype < 0.1f, "stopped dancing: hype falls to %.2f", e.p.hype);
+}
+
 static void test_sleep_wake(void)
 {
     static eye_t e;
@@ -193,6 +216,7 @@ int main(void)
     test_dance();
     test_look_inertia();
     test_screen_directions();
+    test_hype();
     test_sleep_wake();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

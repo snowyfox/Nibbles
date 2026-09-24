@@ -19,7 +19,8 @@ typedef struct {
     float intensity;          // 0..1 overall glow
     float hue;                // degrees, colour of the innermost ring
     float lid_open;           // 0 closed .. 1 fully open (can overshoot when startled)
-    float happy;              // 0..1 happy-squint amount
+    float hype;               // 0..1 how energetic the rings are (from dancing)
+    float ring_phase;         // 0..1 how far the rings have flowed outward
     float wobble;             // 0..1 ring wobble, follows loudness
     eye_ripple_t ripples[EYE_MAX_RIPPLES];
 } eye_params_t;

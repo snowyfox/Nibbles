@@ -170,28 +170,32 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
         if (r->r > RIPPLE_END_PX || r->amp < 0.03f) r->amp = 0.0f;
     }
 
+    // Dancing -> hype: rings flow outward (one ring per beat when the tempo is
+    // known), colours cycle faster and everything glows and thumps harder.
+    e->dance = dance_with_music_bonus(a, m);
+    float hype_target = awake ? smoothstep(DANCE_HYPE_SCORE - 0.15f, DANCE_HYPE_SCORE + 0.1f, e->dance) : 0.0f;
+    p->hype = approach(p->hype, hype_target, 0.25f, dt);
+    float ring_speed = a->beat_period_s > 0.0f ? 1.0f / a->beat_period_s : HYPE_RING_SPEED;
+    p->ring_phase = fmodf(p->ring_phase + ring_speed * p->hype * dt, 1.0f);
+
     // Loudness -> intensity, pupil size and ring wobble. Fast attack, slow release.
     e->loud_smooth = approach(e->loud_smooth, a->loudness, a->loudness > e->loud_smooth ? 0.04f : 0.3f, dt);
     float breath = 0.5f + 0.5f * sinf(p->time_s * 1.3f);
     float target_int;
-    if (awake) target_int = IDLE_INTENSITY + 0.05f * breath + (1.0f - IDLE_INTENSITY) * e->loud_smooth + 0.2f * e->thump;
+    if (awake) target_int = IDLE_INTENSITY + 0.05f * breath + (1.0f - IDLE_INTENSITY) * e->loud_smooth +
+                            0.2f * e->thump + HYPE_GLOW_BOOST * p->hype;
     else target_int = SLEEP_INTENSITY * (0.6f + 0.4f * breath);
     p->intensity = clampf(approach(p->intensity, target_int, 0.05f, dt), 0.0f, 1.0f);
-    p->pupil_r = EYE_PUPIL_RADIUS + EYE_PUPIL_LOUD_GROW * e->loud_smooth + EYE_PUPIL_THUMP * e->thump;
-    p->wobble = e->loud_smooth;
+    p->pupil_r = EYE_PUPIL_RADIUS + EYE_PUPIL_LOUD_GROW * e->loud_smooth + EYE_PUPIL_THUMP * e->thump * (1.0f + p->hype);
+    p->wobble = e->loud_smooth * (1.0f + p->hype);
 
     // Colour: slow drift, pulled toward the music's warm/cool balance.
-    e->hue_drift = wrap_deg(e->hue_drift + HUE_DRIFT_DEG_PER_S * dt);
+    e->hue_drift = wrap_deg(e->hue_drift + HUE_DRIFT_DEG_PER_S * (1.0f + HYPE_HUE_BOOST * p->hype) * dt);
     float music_hue = HUE_COOL_DEG + (HUE_WARM_DEG - HUE_COOL_DEG) * a->warmth;
     float pull = HUE_PULL * smoothstep(0.05f, 0.3f, e->loud_smooth);
     float target_hue = wrap_deg(e->hue_drift + pull * hue_delta(e->hue_drift, music_hue));
     e->hue = wrap_deg(e->hue + hue_delta(e->hue, target_hue) * (1.0f - expf(-dt / HUE_SMOOTH_S)));
     p->hue = e->hue;
-
-    // Dancing -> happy squint.
-    e->dance = dance_with_music_bonus(a, m);
-    float happy_target = awake ? smoothstep(DANCE_HAPPY_SCORE - 0.15f, DANCE_HAPPY_SCORE + 0.1f, e->dance) : 0.0f;
-    p->happy = approach(p->happy, happy_target, 0.25f, dt);
 
     // Where the pupil looks: motion spring plus idle saccades.
     float idle = 1.0f - clampf(m->energy_g / DANCE_MIN_ENERGY_G, 0.0f, 1.0f);

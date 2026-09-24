@@ -61,6 +61,7 @@ static void eye_task(void *arg)
 
     int bright_idx = load_brightness_index();
     render_set_brightness(brightness_presets[bright_idx]);
+    ESP_LOGI(TAG, "brightness %d%%", brightness_presets[bright_idx]);
 
     int64_t last = esp_timer_get_time();
     int64_t last_log = last;
@@ -89,11 +90,11 @@ static void eye_task(void *arg)
         if (now - last_log >= 1000000) {
             float secs = (now - last_log) / 1e6f;
             ESP_LOGI(TAG, "%.1f fps | %.1f dBFS loud %.2f warm %.2f beats %lu bpm %.0f | "
-                     "look %+.2f,%+.2f jolt %.2fg dance %.2f (%.2fs) | %s lid %.2f happy %.2f",
+                     "look %+.2f,%+.2f jolt %.2fg dance %.2f (%.2fs) | %s lid %.2f hype %.2f",
                      frames / secs, a.level_db, a.loudness, a.warmth, (unsigned long)a.beat_count,
                      a.beat_period_s > 0 ? 60.0f / a.beat_period_s : 0.0f,
                      m.look_x, m.look_y, m.jolt_g, eye.dance, m.dance_period_s,
-                     eye_state_name(eye.state), eye.p.lid_open, eye.p.happy);
+                     eye_state_name(eye.state), eye.p.lid_open, eye.p.hype);
             frames = 0;
             last_log = now;
         }

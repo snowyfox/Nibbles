@@ -25,8 +25,6 @@ static const char *TAG = "render";
 #define OUTLINE_LUT_N    ((DISP_W / 2 + 2 - OUTLINE_INNER_PX) * LUT_SCALE)
 #define LID_GLOW_PX      10
 #define LID_OPEN_SCALE   1.08f    // lid_open = 1 puts the lids just outside the round display
-#define HAPPY_ARCH_TOP   (-0.35f) // happy-squint lower lid apex, in display radii from the centre
-#define HAPPY_ARCH_CURVE 0.8f
 #define SIGMA_RING       2.2f
 #define SIGMA_HALO       9.0f
 
@@ -64,6 +62,12 @@ static void hsv(float h, float s, float v, float out[3])
     else if (h < 300) { r = x; g = 0; b = c; }
     else              { r = c; g = 0; b = x; }
     out[0] = r + m; out[1] = g + m; out[2] = b + m;
+}
+
+static float smoothstep(float e0, float e1, float x)
+{
+    float t = fminf(fmaxf((x - e0) / (e1 - e0), 0.0f), 1.0f);
+    return t * t * (3.0f - 2.0f * t);
 }
 
 static uint16_t to565(float r, float g, float b)
@@ -116,12 +120,19 @@ static void prepare(const eye_params_t *p)
     add_ring(pr, 2.0f, 1.0f * I, c);
     add_ring(pr, 7.0f, 0.3f * I, c);
 
-    // Iris rings, each shifted in hue and wobbling with the music.
-    for (int i = 1; i <= EYE_RING_COUNT; i++) {
-        float ri = pr + (EYE_IRIS_RADIUS - pr) * i / EYE_RING_COUNT +
-                   p->wobble * 4.0f * sinf(p->time_s * 6.0f + i * 1.9f);
-        float amp = (1.0f - 0.1f * i) * I;
-        hsv(p->hue + i * HUE_RING_SPREAD_DEG, 1.0f, 1.0f, c);
+    // Iris rings, each shifted in hue and wobbling with the music. In hype mode
+    // ring_phase slides them outward: they fade in at the pupil and out past the
+    // iris edge, so the flow is seamless when the phase wraps.
+    const float spacing = (EYE_IRIS_RADIUS - pr) / EYE_RING_COUNT;
+    const float wobble_px = 4.0f + HYPE_WOBBLE_PX * p->hype;
+    for (int i = 0; i <= EYE_RING_COUNT; i++) {
+        const float pos = i + p->ring_phase;  // 1..EYE_RING_COUNT when calm
+        const float base = pr + spacing * pos;
+        const float fade = smoothstep(pr, pr + spacing, base) *
+                           (1.0f - smoothstep(EYE_IRIS_RADIUS, EYE_IRIS_RADIUS + spacing, base));
+        const float ri = base + p->wobble * wobble_px * sinf(p->time_s * 6.0f + pos * 1.9f);
+        const float amp = (1.0f - 0.1f * pos) * I * fade;
+        hsv(p->hue + pos * HUE_RING_SPREAD_DEG, 1.0f, 1.0f, c);
         add_ring(ri, SIGMA_RING, amp, c);
         add_ring(ri, SIGMA_HALO, 0.22f * amp, c);
     }
@@ -155,7 +166,7 @@ static void prepare(const eye_params_t *p)
     }
 
     // Eyelids: per-column top and bottom limits.
-    const float open = p->lid_open * (1.0f - 0.1f * p->happy);
+    const float open = p->lid_open;
     lids_visible = false;
     for (int x = 0; x < DISP_W; x++) {
         float u = (x + 0.5f - DISP_CX) / DISP_RADIUS;
@@ -169,8 +180,6 @@ static void prepare(const eye_params_t *p)
         float h = open * LID_OPEN_SCALE * cu;
         float top = DISP_CY - h;
         float bot = DISP_CY + h;
-        float arch = DISP_CY + DISP_RADIUS * (HAPPY_ARCH_TOP + HAPPY_ARCH_CURVE * u * u);
-        if (arch < bot) bot += (arch - bot) * p->happy;
         lid_top[x] = (int16_t)fmaxf(-LID_GLOW_PX - 1, floorf(top));
         lid_bot[x] = (int16_t)fminf(DISP_H + LID_GLOW_PX, ceilf(bot));
         if (top > DISP_CY - cu - LID_GLOW_PX || bot < DISP_CY + cu + LID_GLOW_PX) lids_visible = true;
