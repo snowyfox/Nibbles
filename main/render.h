@@ -12,7 +12,10 @@ void render_frame(const eye_params_t *p);
 
 // Since the last call: frames that took too long to send (and may have torn),
 // and the slowest send time measured from the refresh edge.
-void render_take_stats(int *late, float *worst_ms);
+void render_take_stats(int *late, float *worst_ms, float *worst_prep_ms);
+
+// Select the visual preset (index into presets[], wraps).
+void render_set_preset(int index);
 
 // Must be called from the same task as render_frame.
 void render_set_brightness(int percent);

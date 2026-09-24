@@ -7,6 +7,7 @@
 #include "audio_analysis.h"
 #include "eye.h"
 #include "motion_analysis.h"
+#include "presets.h"
 
 static int failures;
 
@@ -573,6 +574,97 @@ static void test_twist(void)
     CHECK(x < -0.1f, "twist while bobbing hard: pupil lags (x=%+.2f)", x);
 }
 
+static void test_preset_swap(void)
+{
+    static eye_t e;
+    eye_init(&e, 3);
+    audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.5f, .warmth = 0.5f };
+    motion_features_t still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int i = 0; i < 60; i++) eye_update(&e, &music, &still, dt);
+
+    // Awake: a blink, swapping only while the lids are shut, then fully open again.
+    eye_request_swap(&e);
+    int swaps = 0, frame = -1;
+    float lid_at_swap = 1.0f;
+    for (int i = 0; i < 45; i++) {
+        eye_update(&e, &music, &still, dt);
+        if (e.p.swap_now) {
+            swaps++;
+            lid_at_swap = e.p.lid_open;
+            frame = i;
+        }
+    }
+    CHECK(swaps == 1, "preset swap while awake: swapped %d time(s)", swaps);
+    CHECK(lid_at_swap < 0.02f, "preset swap while awake: lids shut at the swap (lid %.2f)", lid_at_swap);
+    CHECK(frame >= 0 && frame * dt < 0.4f, "preset swap while awake: swapped %.2f s after the request", frame * dt);
+    CHECK(e.p.lid_open > 0.95f, "preset swap while awake: eye open again afterwards (lid %.2f)", e.p.lid_open);
+
+    // Asleep: the slit closes fully for the swap and returns to a slit.
+    audio_features_t quiet = { .level_db = -95.0f, .avg_db = -95.0f, .warmth = 0.5f };
+    for (int i = 0; i < (int)(30 / dt); i++) eye_update(&e, &quiet, &still, dt);
+    const float slit = e.p.lid_open;
+    eye_request_swap(&e);
+    swaps = 0;
+    lid_at_swap = 1.0f;
+    for (int i = 0; i < 45; i++) {
+        eye_update(&e, &quiet, &still, dt);
+        if (e.p.swap_now) { swaps++; lid_at_swap = e.p.lid_open; }
+    }
+    CHECK(swaps == 1 && lid_at_swap < 0.01f, "preset swap while asleep: slit shut at the swap (%d swap, lid %.3f)", swaps, lid_at_swap);
+    CHECK(e.state == EYE_ASLEEP && fabsf(e.p.lid_open - slit) < 0.01f, "preset swap while asleep: still asleep, slit back (lid %.2f)", e.p.lid_open);
+}
+
+static void test_motion_hype(void)
+{
+    // Motion analysis: fast back-and-forth twisting is vigorous, slow isn't.
+    static motion_analysis_t m;
+    float dom;
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    run_twist(&m, 0.0f, 0.0f, 2.0f, NULL);
+    CHECK(m.out.activity < 0.05f, "still: activity %.2f", m.out.activity);
+    run_twist_swing(&m, 150.0f, 0.5f, 4.0f, &dom);
+    CHECK(m.out.activity < 0.2f, "slow twisting: activity %.2f", m.out.activity);
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    run_twist(&m, 0.0f, 0.0f, 2.0f, NULL);
+    run_twist_swing(&m, 550.0f, 2.5f, 3.0f, &dom);
+    CHECK(m.out.activity > 0.8f, "fast twisting: activity %.2f", m.out.activity);
+
+    // Eye: activity drives hype, holds it between moves, then fades.
+    static eye_t e;
+    eye_init(&e, 5);
+    audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.4f, .warmth = 0.5f };
+    motion_features_t moving = { .activity = 1.0f, .energy_g = 0.3f }, still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int i = 0; i < 30; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.hype < 0.05f, "no motion, no dancing: hype %.2f", e.p.hype);
+    for (int i = 0; i < 45; i++) eye_update(&e, &music, &moving, dt);
+    CHECK(e.p.hype > 0.9f, "vigorous motion for 1.5 s: hype %.2f", e.p.hype);
+    for (int i = 0; i < 45; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.hype > 0.9f, "1.5 s after the motion stops: hype held at %.2f", e.p.hype);
+    for (int i = 0; i < 150; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.hype < 0.1f, "5 s after the motion stops: hype faded to %.2f", e.p.hype);
+}
+
+static void test_spiral_tempo(void)
+{
+    const preset_t *hyp = NULL;
+    for (int i = 0; i < preset_count; i++) if (presets[i].spiral_arms > 0) hyp = &presets[i];
+    CHECK(hyp != NULL, "a spiral preset exists");
+    if (!hyp) return;
+    // One arm spacing per beat: with 3 arms, an arm sweeps past on every beat.
+    const float bpms[] = { 128, 138, 174 };
+    for (int i = 0; i < 3; i++) {
+        const float r = preset_spin_rate(hyp, bpms[i], 0.0f);
+        const float arms_per_beat = r * hyp->spiral_arms / (bpms[i] / 60.0f);
+        CHECK(fabsf(arms_per_beat - 1.0f) < 0.01f, "%s at %.0f bpm: %.2f turns/s, one arm per beat", hyp->name, bpms[i], r);
+    }
+    CHECK(fabsf(preset_spin_rate(hyp, 0.0f, 0.0f) - hyp->spin) < 1e-6f, "%s with no tempo: calm spin %.2f turns/s",
+          hyp->name, preset_spin_rate(hyp, 0.0f, 0.0f));
+    CHECK(fabsf(preset_spin_rate(hyp, 138.0f, 1.0f) - 2.0f * preset_spin_rate(hyp, 138.0f, 0.0f)) < 1e-6f,
+          "%s in hype mode: twice as fast", hyp->name);
+}
+
 static void test_sleep_wake(void)
 {
     static eye_t e;
@@ -640,13 +732,13 @@ static void replay_imu(const char *path)
     motion_analysis_init(&m, IMU_RATE_HZ);
     float v[6];
     int i = 0;
-    printf("   t   twist  share   dom  look_x  look_y\n");
+    printf("   t   twist  share   dom  look_x  look_y  activity\n");
     while (fread(v, sizeof(float), 6, fp) == 6) {
         motion_analysis_update(&m, v, v + 3);
         if (i % (IMU_RATE_HZ / 10) == 0) {
             const float share = m.twist_avg / (m.twist_avg + m.other_avg + 1e-3f);
-            printf("%5.1f %6.0f  %5.2f  %4.2f  %+5.2f  %+5.2f\n", (float)i / IMU_RATE_HZ, m.out.twist_dps,
-                   share, m.out.twist_dominance, m.out.look_x, m.out.look_y);
+            printf("%5.1f %6.0f  %5.2f  %4.2f  %+5.2f  %+5.2f  %4.2f\n", (float)i / IMU_RATE_HZ, m.out.twist_dps,
+                   share, m.out.twist_dominance, m.out.look_x, m.out.look_y, m.out.activity);
         }
         i++;
     }
@@ -677,6 +769,9 @@ int main(void)
     test_screen_directions();
     test_twist();
     test_hype();
+    test_preset_swap();
+    test_motion_hype();
+    test_spiral_tempo();
     test_sleep_wake();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

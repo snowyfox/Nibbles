@@ -142,6 +142,13 @@ void motion_analysis_update(motion_analysis_t *m, const float acc[3], const floa
     float linmag = sqrtf(lin[0] * lin[0] + lin[1] * lin[1] + lin[2] * lin[2]);
     o->jolt_g = fmaxf(o->jolt_g * expf(-dt / 0.15f), linmag);
 
+    // Activity: how hard the pole is moving, whatever the kind of motion.
+    const float ka = dt / (ACTIVITY_AVG_S + dt);
+    m->gyro_ms += ka * (gyro[0] * gyro[0] + gyro[1] * gyro[1] + gyro[2] * gyro[2] - m->gyro_ms);
+    m->lin_ms += ka * (linmag * linmag - m->lin_ms);
+    o->activity = fmaxf(smoothstep(ACTIVITY_GYRO_LO, ACTIVITY_GYRO_HI, sqrtf(m->gyro_ms)),
+                        smoothstep(ACTIVITY_ACCEL_LO, ACTIVITY_ACCEL_HI, sqrtf(m->lin_ms)));
+
     // Pupil: mass on a spring, pushed against the direction of motion.
     float lx, ly, gx, gy, wx, wy;
     to_screen(lin[0], lin[1], &lx, &ly);

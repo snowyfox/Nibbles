@@ -15,6 +15,7 @@ typedef struct {
     float energy_g;         // rms linear acceleration over the dance window
     float dance_score;      // 0..1
     float dance_period_s;   // period of the detected rhythm, 0 if none
+    float activity;         // 0..1 how vigorously the pole is moving (any kind of motion)
 } motion_features_t;
 
 typedef struct {
@@ -24,6 +25,7 @@ typedef struct {
     float pos[2], vel[2];
     float twist_avg, other_avg;  // smoothed motion magnitudes, in look units
     float prev_twist, twist_accel;  // deg/s and smoothed deg/s^2
+    float gyro_ms, lin_ms;          // ~1 s mean squares of rotation and linear acceleration
     float twist_snap[2];            // direct into-the-turn look, bypassing the spring
     // decimation to DANCE_RATE_HZ
     int decim, decim_n;

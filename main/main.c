@@ -10,6 +10,7 @@
 #include "nvs_flash.h"
 #include "config.h"
 #include "eye.h"
+#include "presets.h"
 #include "render.h"
 #include "sensors.h"
 
@@ -65,6 +66,10 @@ static void eye_task(void *arg)
 
     int64_t last = esp_timer_get_time();
     int64_t last_log = last;
+    int preset_index = 0, next_preset = 0;
+    int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
+    render_set_preset(0);
+    ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
     int frames = 0;
     for (;;) {
         const int64_t now = esp_timer_get_time();
@@ -72,11 +77,23 @@ static void eye_task(void *arg)
         if (dt > 0.1f) dt = 0.1f;
         last = now;
 
+        // Cycle through the visual presets; the eye blinks to hide each change.
+        if (now >= next_swap) {
+            next_swap += (int64_t)PRESET_CYCLE_S * 1000000;
+            next_preset = (preset_index + 1) % preset_count;
+            eye_request_swap(&eye);
+        }
+
         audio_features_t a;
         motion_features_t m;
         audio_get(&a);
         motion_get(&m);
         eye_update(&eye, &a, &m, dt);
+        if (eye.p.swap_now) {
+            preset_index = next_preset;
+            render_set_preset(preset_index);
+            ESP_LOGI(TAG, "preset %d: %s", preset_index, presets[preset_index].name);
+        }
         render_frame(&eye.p);
         frames++;
 
@@ -90,13 +107,13 @@ static void eye_task(void *arg)
         if (now - last_log >= 1000000) {
             float secs = (now - last_log) / 1e6f;
             int late;
-            float worst_ms;
-            render_take_stats(&late, &worst_ms);
-            ESP_LOGI(TAG, "%.1f fps (send %.1f ms max, %d late) | %.1f dB (floor %.1f, gain %.0f) loud %.2f warm %.2f beats %lu bpm %.0f rhythm %.2f | "
-                     "look %+.2f,%+.2f twist %+.0f/s (%.2f) jolt %.2fg dance %.2f (%.2fs) | %s lid %.2f hype %.2f",
-                     frames / secs, worst_ms, late, a.level_db, a.noise_floor_db, a.gain_db, a.loudness, a.warmth, (unsigned long)a.beat_count,
+            float worst_ms, prep_ms;
+            render_take_stats(&late, &worst_ms, &prep_ms);
+            ESP_LOGI(TAG, "%.1f fps (prep %.1f, send %.1f ms max, %d late) | %.1f dB (floor %.1f, gain %.0f) loud %.2f warm %.2f beats %lu bpm %.0f rhythm %.2f | "
+                     "look %+.2f,%+.2f twist %+.0f/s (%.2f) jolt %.2fg dance %.2f (%.2fs) act %.2f | %s lid %.2f hype %.2f",
+                     frames / secs, prep_ms, worst_ms, late, a.level_db, a.noise_floor_db, a.gain_db, a.loudness, a.warmth, (unsigned long)a.beat_count,
                      a.beat_period_s > 0 ? 60.0f / a.beat_period_s : 0.0f, a.beat_confidence,
-                     m.look_x, m.look_y, m.twist_dps, m.twist_dominance, m.jolt_g, eye.dance, m.dance_period_s,
+                     m.look_x, m.look_y, m.twist_dps, m.twist_dominance, m.jolt_g, eye.dance, m.dance_period_s, m.activity,
                      eye_state_name(eye.state), eye.p.lid_open, eye.p.hype);
             frames = 0;
             last_log = now;

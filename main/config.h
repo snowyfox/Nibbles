@@ -16,13 +16,16 @@
 #define BRIGHTNESS_PRESETS   { 30, 60, 100 }
 #define BRIGHTNESS_DEFAULT_INDEX 2
 
+// ---------------------------------------------------------------- presets
+#define PRESET_CYCLE_S       10      // move to the next visual preset this often (see presets.c)
+#define SPIN_EASE_S          1.0f    // how quickly a spiral's spin follows tempo changes
+
 // ---------------------------------------------------------------- eye geometry (pixels)
 #define EYE_OUTLINE_RADIUS   218.0f  // fixed glowing ring around the whole eye
 #define EYE_IRIS_RADIUS      150.0f  // outermost iris ring
 #define EYE_PUPIL_RADIUS     38.0f   // base pupil radius
 #define EYE_PUPIL_LOUD_GROW  16.0f   // extra pupil radius at full loudness
 #define EYE_PUPIL_THUMP      14.0f   // extra pupil radius on a beat
-#define EYE_RING_COUNT       5       // neon rings between pupil and iris edge
 #define EYE_MAX_LOOK_PX      70.0f   // how far the pupil can move from centre
 #define EYE_MAX_RIPPLES      4
 
@@ -31,7 +34,6 @@
 #define HUE_WARM_DEG         330.0f  // target hue for bass-heavy music (magenta/red)
 #define HUE_COOL_DEG         190.0f  // target hue for treble-heavy music (cyan)
 #define HUE_PULL             0.6f    // 0 = ignore the music's colour, 1 = follow it fully
-#define HUE_RING_SPREAD_DEG  28.0f   // hue step between neighbouring rings
 #define IDLE_INTENSITY       0.35f   // ring brightness with no music
 #define SLEEP_INTENSITY      0.12f
 
@@ -123,10 +125,27 @@
 #define DANCE_MIN_ENERGY_G   0.06f   // rms linear accel needed to count as dancing
 #define DANCE_HYPE_SCORE     0.6f    // dance score where the eye goes into hype mode
 
+// Vigorous motion of any kind (twisting, swinging, shaking) also drives hype.
+// Activity is the stronger of rotation and linear acceleration over ~1 s,
+// mapped 0..1 between these levels. Measured on the mount: slow twisting
+// 70-120 deg/s and 0.05-0.12 g, fast twisting 270-450 deg/s and 0.23-0.40 g.
+#define ACTIVITY_AVG_S       1.0f
+#define ACTIVITY_GYRO_LO     150.0f  // deg/s rms
+#define ACTIVITY_GYRO_HI     300.0f
+#define ACTIVITY_ACCEL_LO    0.15f   // g rms
+#define ACTIVITY_ACCEL_HI    0.30f
+#define HYPE_ACTIVITY_HOLD_S 2.0f    // hype from motion lasts this long after the motion stops...
+#define HYPE_ACTIVITY_FADE_S 1.5f    // ...then fades over this long
+
 // ---------------------------------------------------------------- behaviour
 #define BLINK_MIN_S          3.0f
 #define BLINK_MAX_S          8.0f
 #define BLINK_DURATION_S     0.18f
+// Preset changes happen behind a slower, deliberate blink: close, hold shut
+// (the preset swaps here), open.
+#define SWAP_CLOSE_S         0.14f
+#define SWAP_HOLD_S          0.08f
+#define SWAP_OPEN_S          0.20f
 #define DROWSY_CLOSE_S       5.0f    // time for lids to close once drowsy
 #define WAKE_MOTION_G        0.35f   // a jolt this big wakes the eye too
 

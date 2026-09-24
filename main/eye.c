@@ -64,12 +64,28 @@ void eye_init(eye_t *e, uint32_t seed)
     e->state = EYE_AWAKE;
     e->lid_base = 1.0f;
     e->blink_t = -1.0f;
+    e->swap_t = -1.0f;
     e->next_blink_s = BLINK_MIN_S;
     e->hue_drift = e->hue = HUE_COOL_DEG;
     e->next_sacc_s = 1.0f;
     e->p.pupil_r = EYE_PUPIL_RADIUS;
     e->p.lid_open = 1.0f;
     e->p.intensity = IDLE_INTENSITY;
+}
+
+void eye_request_swap(eye_t *e)
+{
+    e->swap_pending = true;
+}
+
+// Lid factor during the swap blink: ease shut, hold, ease open.
+static float swap_blink(float t)
+{
+    if (t < SWAP_CLOSE_S) return 0.5f + 0.5f * cosf((float)M_PI * t / SWAP_CLOSE_S);
+    t -= SWAP_CLOSE_S;
+    if (t < SWAP_HOLD_S) return 0.0f;
+    t -= SWAP_HOLD_S;
+    return t < SWAP_OPEN_S ? 0.5f - 0.5f * cosf((float)M_PI * t / SWAP_OPEN_S) : 1.0f;
 }
 
 static void set_state(eye_t *e, eye_state_t s)
@@ -137,8 +153,31 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     }
     bool awake = e->state == EYE_AWAKE || e->state == EYE_WAKING;
 
+    // Preset swaps hide behind a deliberate blink (a sleeping eye briefly
+    // closes its slit too), started once any ordinary blink has finished and
+    // not while waking up. The swap happens while the lids are shut.
+    p->swap_now = false;
+    if (e->swap_pending && e->swap_t < 0.0f && e->state != EYE_WAKING && e->blink_t < 0.0f) {
+        e->swap_t = 0.0f;
+        e->swap_done = false;
+    }
+    float swap = 1.0f;
+    if (e->swap_t >= 0.0f) {
+        e->swap_t += dt;
+        swap = swap_blink(e->swap_t);
+        if (!e->swap_done && e->swap_t >= SWAP_CLOSE_S) {
+            p->swap_now = true;
+            e->swap_done = true;
+            e->swap_pending = false;
+        }
+        if (e->swap_t >= SWAP_CLOSE_S + SWAP_HOLD_S + SWAP_OPEN_S) {
+            e->swap_t = -1.0f;
+            e->next_blink_s = BLINK_MIN_S + frand(e) * (BLINK_MAX_S - BLINK_MIN_S);
+        }
+    }
+
     // Blinks.
-    if (e->state == EYE_AWAKE && e->blink_t < 0.0f) {
+    if (e->state == EYE_AWAKE && e->blink_t < 0.0f && e->swap_t < 0.0f) {
         e->next_blink_s -= dt;
         if (e->next_blink_s <= 0.0f) e->blink_t = 0.0f;
     }
@@ -152,7 +191,7 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
             blink = 1.0f - sinf((float)M_PI * e->blink_t / BLINK_DURATION_S);
         }
     }
-    p->lid_open = e->lid_base * blink;
+    p->lid_open = e->lid_base * fminf(blink, swap);
 
     // Beats: ripple ring and pupil thump.
     if (beat && awake) {
@@ -176,8 +215,19 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     // Dancing -> hype: rings flow outward (one ring per beat when the tempo is
     // known), colours cycle faster and everything glows and thumps harder.
     e->dance = dance_with_music_bonus(a, m);
-    float hype_target = awake ? smoothstep(DANCE_HYPE_SCORE - 0.15f, DANCE_HYPE_SCORE + 0.1f, e->dance) : 0.0f;
+    // Vigorous motion drives hype too; it holds for a while after the motion
+    // stops so hype doesn't flicker between moves, then fades.
+    if (m->activity >= e->activity_peak) {
+        e->activity_peak = m->activity;
+        e->activity_hold_s = 0.0f;
+    } else if ((e->activity_hold_s += dt) > HYPE_ACTIVITY_HOLD_S) {
+        e->activity_peak = fmaxf(m->activity, e->activity_peak - dt / HYPE_ACTIVITY_FADE_S);
+    }
+    const float from_dance = smoothstep(DANCE_HYPE_SCORE - 0.15f, DANCE_HYPE_SCORE + 0.1f, e->dance);
+    const float from_motion = smoothstep(0.3f, 0.8f, e->activity_peak);
+    float hype_target = awake ? fmaxf(from_dance, from_motion) : 0.0f;
     p->hype = approach(p->hype, hype_target, 0.25f, dt);
+    p->tempo_bpm = a->beat_period_s > 0.0f ? 60.0f / a->beat_period_s : 0.0f;
     float ring_speed = a->beat_period_s > 0.0f ? 1.0f / a->beat_period_s : HYPE_RING_SPEED;
     p->ring_phase = fmodf(p->ring_phase + ring_speed * p->hype * dt, 1.0f);
 

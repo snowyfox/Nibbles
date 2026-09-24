@@ -1,0 +1,71 @@
+#include "presets.h"
+
+const preset_t presets[] = {
+    {
+        // Rainbow neon rings on black (the original look).
+        .name = "Neon",
+        .rainbow = true, .hue_spread = 28.0f, .sat = 1.0f,
+        .rings = 5, .ring_width = 2.2f, .halo_sigma = 9.0f, .halo_amp = 0.22f,
+        .wobble_px = 4.0f,
+        .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.75f,
+        .ripple_pos = 180.0f, .ripple_white = 0.6f,
+        .outline_amp = 1.0f,
+    },
+    {
+        // Fire: soft thick bands in red, orange and gold, flowing outward
+        // like heat, with white-hot beat ripples.
+        .name = "Inferno",
+        .palette = { { 0.55f, 0.0f, 0.0f }, { 1.0f, 0.3f, 0.0f }, { 1.0f, 0.75f, 0.1f }, { 0.9f, 0.15f, 0.0f } },
+        .palette_step = 0.2f, .palette_music = 0.5f,
+        .rings = 7, .ring_width = 3.5f, .halo_sigma = 14.0f, .halo_amp = 0.35f,
+        .fill = 0.12f, .flow = 0.7f, .wobble_px = 7.0f,
+        .pupil_scale = 0.9f, .rim_amp = 1.2f, .rim_white = 0.5f,
+        .ripple_pos = 2.0f, .ripple_white = 0.7f,
+        .outline_amp = 1.0f,
+    },
+    {
+        // Deep sea shark: a big black pupil in a solid teal-to-navy iris
+        // with fine striations, drifting slowly, with a cyan glow.
+        .name = "Abyss",
+        .palette = { { 0.0f, 0.08f, 0.25f }, { 0.0f, 0.45f, 0.6f }, { 0.2f, 0.9f, 1.0f }, { 0.0f, 0.25f, 0.5f } },
+        .palette_step = 0.08f, .palette_music = 0.4f,
+        .rings = 14, .ring_width = 0.9f, .halo_sigma = 5.0f, .halo_amp = 0.1f,
+        .fill = 0.35f, .flow = 0.15f, .wobble_px = 1.5f,
+        .pupil_scale = 1.5f, .rim_amp = 0.7f, .rim_white = 0.3f,
+        .ripple_pos = 2.0f, .ripple_white = 0.4f,
+        .outline_amp = 0.8f,
+    },
+    {
+        // Retro synthwave: a few bold hard-edged bands in pink, purple and
+        // cyan, sliding outward.
+        .name = "Synthwave",
+        .palette = { { 1.0f, 0.08f, 0.55f }, { 0.55f, 0.1f, 1.0f }, { 0.0f, 0.85f, 1.0f }, { 0.9f, 0.0f, 0.9f } },
+        .palette_step = 0.25f, .palette_music = 0.5f,
+        .rings = 4, .ring_width = 7.0f, .bands = true, .halo_sigma = 10.0f, .halo_amp = 0.25f,
+        .flow = 0.35f, .wobble_px = 3.0f,
+        .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.2f,
+        .ripple_pos = 2.0f, .ripple_white = 0.3f,
+        .outline_amp = 1.0f,
+    },
+    {
+        // Hypnotic spiral: three glowing arms twisting out from the pupil,
+        // spinning in time with the music (an arm sweeps past on every beat)
+        // and twice as fast in hype mode.
+        .name = "Hypno",
+        .palette = { { 0.6f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.6f }, { 0.0f, 0.8f, 1.0f }, { 0.85f, 0.85f, 1.0f } },
+        .palette_step = 0.25f, .palette_music = 0.5f,
+        .rings = 0, .fill = 0.05f,
+        .pupil_scale = 1.0f, .rim_amp = 1.0f, .rim_white = 0.4f,
+        .ripple_pos = 3.0f, .ripple_white = 0.5f,
+        .outline_amp = 1.0f,
+        .spiral_arms = 3, .spiral_twist = 110.0f, .spin = 0.3f, .spin_per_beat = 1.0f / 3.0f,
+    },
+};
+
+const int preset_count = sizeof(presets) / sizeof(presets[0]);
+
+float preset_spin_rate(const preset_t *ps, float tempo_bpm, float hype)
+{
+    const float base = tempo_bpm > 0.0f ? tempo_bpm / 60.0f * ps->spin_per_beat : ps->spin;
+    return base * (1.0f + hype);
+}
