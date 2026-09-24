@@ -4,11 +4,13 @@
 #include <stdbool.h>
 #include <string.h>
 #include "bsp/display.h"
+#include "driver/gpio.h"
 #include "bsp/esp-bsp.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -42,9 +44,26 @@ static float acc[RING_LUT_N][3];
 static uint16_t ring_lut[RING_LUT_N];
 static uint16_t outline_lut[OUTLINE_LUT_N];
 static uint16_t lid_glow_lut[LID_LUT_N];
-static uint16_t lid_k[DISP_W];  // per column: 1/sqrt(1+slope^2) in Q8, turns vertical into perpendicular distance
+static uint16_t lid_k[DISP_W];
+static int16_t lid_gv[DISP_W];  // per column: how far (vertically) the lid glow reaches from each edge  // per column: 1/sqrt(1+slope^2) in Q8, turns vertical into perpendicular distance
 static int16_t lid_top[DISP_W], lid_bot[DISP_W];
 static bool lids_visible;
+static int lid_row0, lid_row1;  // rows outside this range are entirely under the lids
+
+// Tearing avoidance. The panel refreshes from its own memory at ~59 Hz and
+// pulses TE high for ~0.6 ms of blanking; scanning starts on the falling edge.
+// Sending a frame takes longer than one refresh, so we start at a falling
+// edge: the first refresh then stays ahead of our writes (showing the whole
+// old frame) and the second finds them complete (the whole new frame), as
+// long as the frame is sent within about two refreshes.
+#define TE_GPIO          GPIO_NUM_13
+#define TE_PERIOD_US     16900
+#define TE_DEADLINE_US   (2 * TE_PERIOD_US - 700)
+static SemaphoreHandle_t te_sem;
+static volatile int64_t te_time_us, last_done_us;
+static int64_t frame_te_us;
+static int late_frames;
+static int64_t worst_send_us;
 static int pupil_ix, pupil_iy;   // pupil centre, whole pixels
 
 // Work handed to the helper core for the current strip.
@@ -173,24 +192,32 @@ static void prepare(const eye_params_t *p)
 
     // Eyelids: per-column top and bottom limits.
     const float open = p->lid_open;
-    lids_visible = false;
-    for (int x = 0; x < DISP_W; x++) {
+    lids_visible = open < 0.999f;  // fully (or extra-wide) open: no lids at all
+    lid_row0 = DISP_H;
+    lid_row1 = -1;
+    for (int x = 0; lids_visible && x < DISP_W; x++) {
         float u = (x + 0.5f - DISP_CX) / DISP_RADIUS;
         float cu2 = 1.0f - u * u;
         if (cu2 <= 0.0f) {
             lid_top[x] = DISP_H;
             lid_bot[x] = -1;
+            lid_gv[x] = 0;
             continue;
         }
         float cu = DISP_RADIUS * sqrtf(cu2);
         float h = open * (cu + LID_CLEAR_PX);
         float slope = open * u / sqrtf(cu2);
-        lid_k[x] = (uint16_t)(256.0f / sqrtf(1.0f + slope * slope));
-        float top = DISP_CY - h;
-        float bot = DISP_CY + h;
-        lid_top[x] = (int16_t)fmaxf(-LID_GLOW_PX - 1, floorf(top));
-        lid_bot[x] = (int16_t)fminf(DISP_H + LID_GLOW_PX, ceilf(bot));
-        if (top > DISP_CY - cu - LID_GLOW_PX || bot < DISP_CY + cu + LID_GLOW_PX) lids_visible = true;
+        const float k = 1.0f / sqrtf(1.0f + slope * slope);
+        lid_k[x] = (uint16_t)(256.0f * k);
+        // Glow reaches LID_GLOW_PX perpendicular to the edge, further vertically where it is steep.
+        lid_gv[x] = (int16_t)fminf(400.0f, ceilf(LID_GLOW_PX / k) + 1.0f);
+        lid_top[x] = (int16_t)floorf(DISP_CY - h);
+        lid_bot[x] = (int16_t)ceilf(DISP_CY + h);
+        // Only the on-screen part of the column matters when choosing rows to skip.
+        const int r0 = (int)fmaxf(lid_top[x] - lid_gv[x], DISP_CY - cu - 1.0f);
+        const int r1 = (int)fminf(lid_bot[x] + lid_gv[x], DISP_CY + cu + 1.0f);
+        if (r0 < lid_row0) lid_row0 = r0;
+        if (r1 > lid_row1) lid_row1 = r1;
     }
 
     const float lim = EYE_MAX_LOOK_PX;
@@ -241,22 +268,54 @@ static esp_err_t build_maps(void)
     return ESP_OK;
 }
 
-static inline uint16_t shade(uint16_t idx, uint8_t o, int x, int y, bool lids)
+static inline uint16_t base_color(uint16_t idx, uint8_t o)
 {
-    uint16_t lid = 0;
-    if (lids) {
-        const int t = lid_top[x], b = lid_bot[x];
-        int et = y - t, eb = b - y;
-        if (et < 0) et = -et;
-        if (eb < 0) eb = -eb;
-        // Perpendicular distance to the lid edge, in LUT units.
-        const int e = ((et < eb ? et : eb) * lid_k[x] * LUT_SCALE) >> 8;
-        if (e < LID_LUT_N) lid = lid_glow_lut[e];
-        if (y < t || y > b) return lid;  // under a lid: only the lid line shows
-    }
     uint16_t c = ring_lut[idx];
-    if (o) c = add565(c, outline_lut[o - 1]);
+    return o ? add565(c, outline_lut[o - 1]) : c;
+}
+
+// Colour of a pixel that may be near or under a lid.
+static inline uint16_t shade_lid(uint16_t idx, uint8_t o, int x, int y)
+{
+    const int t = lid_top[x], b = lid_bot[x];
+    int et = y - t, eb = b - y;
+    if (et < 0) et = -et;
+    if (eb < 0) eb = -eb;
+    // Perpendicular distance to the nearest lid edge, in LUT units.
+    const int e = ((et < eb ? et : eb) * lid_k[x] * LUT_SCALE) >> 8;
+    const uint16_t lid = e < LID_LUT_N ? lid_glow_lut[e] : 0;
+    if (y < t || y > b) return lid;  // under a lid: only the lid line shows
+    const uint16_t c = base_color(idx, o);
     return lid ? add565(c, lid) : c;
+}
+
+static inline bool lid_deep(int x, int y)      // under a lid, beyond the lid line's glow
+{
+    return y < lid_top[x] - lid_gv[x] || y > lid_bot[x] + lid_gv[x];
+}
+
+static inline bool lid_clear(int x, int y)     // between the lids, beyond the lid line's glow
+{
+    return y > lid_top[x] + lid_gv[x] && y < lid_bot[x] - lid_gv[x];
+}
+
+// Pixel pairs over [xa, xb) (both even); 32-bit stores, big-endian RGB565 for the panel.
+static inline void span_plain(uint16_t *dst, const uint16_t *pm, const uint8_t *om, int xa, int xb)
+{
+    uint32_t *out = (uint32_t *)(dst + xa);
+    for (int x = xa; x < xb; x += 2, pm += 2, om += 2) {
+        const uint16_t a = base_color(pm[0], om[0]), b = base_color(pm[1], om[1]);
+        *out++ = (uint32_t)__builtin_bswap16(a) | ((uint32_t)__builtin_bswap16(b) << 16);
+    }
+}
+
+static inline void span_lid(uint16_t *dst, const uint16_t *pm, const uint8_t *om, int xa, int xb, int y)
+{
+    uint32_t *out = (uint32_t *)(dst + xa);
+    for (int x = xa; x < xb; x += 2, pm += 2, om += 2) {
+        const uint16_t a = shade_lid(pm[0], om[0], x, y), b = shade_lid(pm[1], om[1], x + 1, y);
+        *out++ = (uint32_t)__builtin_bswap16(a) | ((uint32_t)__builtin_bswap16(b) << 16);
+    }
 }
 
 static IRAM_ATTR void render_rows(uint16_t *dst, int y0, int y1)
@@ -264,20 +323,52 @@ static IRAM_ATTR void render_rows(uint16_t *dst, int y0, int y1)
     const bool lids = lids_visible;
     const int ox = pupil_ix - (int)DISP_CX, oy = pupil_iy - (int)DISP_CY;
     for (int y = y0; y < y1; y++, dst += DISP_W) {
-        // Work on pixel pairs with 32-bit stores; keep the span even-aligned.
+        if (lids && (y < lid_row0 || y > lid_row1)) {
+            memset(dst, 0, DISP_W * sizeof(uint16_t));
+            continue;
+        }
+        // Work on pixel pairs; keep the span even-aligned.
         const int x0 = row_x0[y] & ~1, x1 = (row_x1[y] + 1) & ~1;
         memset(dst, 0, x0 * sizeof(uint16_t));
         memset(dst + x1, 0, (DISP_W - x1) * sizeof(uint16_t));
 
-        const uint16_t *pm = pupil_map + (y - oy + PM_PAD) * PM_W + (x0 - ox + PM_PAD);
-        const uint8_t *om = outline_map + y * DISP_W + x0;
-        uint32_t *out = (uint32_t *)(dst + x0);
-        for (int x = x0; x < x1; x += 2, pm += 2, om += 2) {
-            const uint16_t a = shade(pm[0], om[0], x, y, lids);
-            const uint16_t b = shade(pm[1], om[1], x + 1, y, lids);
-            // Panel expects big-endian RGB565.
-            *out++ = (uint32_t)__builtin_bswap16(a) | ((uint32_t)__builtin_bswap16(b) << 16);
+        const uint16_t *pm = pupil_map + (y - oy + PM_PAD) * PM_W + (x0 - ox + PM_PAD) - x0;
+        const uint8_t *om = outline_map + y * DISP_W;
+        if (!lids) {
+            span_plain(dst, pm + x0, om + x0, x0, x1);
+            continue;
         }
+
+        // Split the row so only pixels near a lid edge pay for the lid maths:
+        // [x0,bl) black | [bl,ia) lid | [ia,ib) clear | [ib,br) lid | [br,x1) black.
+        // Each boundary is found by scanning from its own side, so every
+        // shortcut region is exact; anything uncertain gets the lid path.
+        int bl = x0, br = x1;
+        while (bl < x1 && lid_deep(bl, y)) bl++;
+        while (br > bl && lid_deep(br - 1, y)) br--;
+        bl &= ~1;
+        br = (br + 1) & ~1;
+        if (bl >= br) {
+            memset(dst + x0, 0, (x1 - x0) * sizeof(uint16_t));
+            continue;
+        }
+        const int c = (DISP_W / 2) & ~1;
+        int ia = c, ib = c;
+        if (c >= bl && c < br && lid_clear(c, y)) {
+            while (ib < br && lid_clear(ib, y)) ib++;
+            while (ia > bl && lid_clear(ia - 1, y)) ia--;
+            ia = (ia + 1) & ~1;
+            ib &= ~1;
+            if (ia > ib) ia = ib;
+        } else {
+            ia = ib = bl;  // no clear stretch: lid path for the whole visible part
+        }
+
+        memset(dst + x0, 0, (bl - x0) * sizeof(uint16_t));
+        span_lid(dst, pm + bl, om + bl, bl, ia, y);
+        span_plain(dst, pm + ia, om + ia, ia, ib);
+        span_lid(dst, pm + ib, om + ib, ib, br, y);
+        memset(dst + br, 0, (x1 - br) * sizeof(uint16_t));
     }
 }
 
@@ -290,9 +381,18 @@ static void helper_main(void *arg)
     }
 }
 
+static void IRAM_ATTR on_te(void *arg)
+{
+    BaseType_t woken = pdFALSE;
+    te_time_us = esp_timer_get_time();
+    xSemaphoreGiveFromISR(te_sem, &woken);
+    if (woken) portYIELD_FROM_ISR();
+}
+
 static bool on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
     BaseType_t woken = pdFALSE;
+    last_done_us = esp_timer_get_time();
     xSemaphoreGiveFromISR(free_bufs, &woken);
     return woken == pdTRUE;
 }
@@ -310,13 +410,24 @@ esp_err_t render_init(void)
     }
     free_bufs = xSemaphoreCreateCounting(STRIP_BUFFERS, STRIP_BUFFERS);
     helper_done = xSemaphoreCreateBinary();
+    te_sem = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(te_sem, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
+    const gpio_config_t te_cfg = {
+        .pin_bit_mask = 1ULL << TE_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .intr_type = GPIO_INTR_NEGEDGE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&te_cfg), TAG, "TE pin config failed");
+    esp_err_t isr_err = gpio_install_isr_service(0);
+    ESP_RETURN_ON_FALSE(isr_err == ESP_OK || isr_err == ESP_ERR_INVALID_STATE, isr_err, TAG, "GPIO ISR service failed");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(TE_GPIO, on_te, NULL), TAG, "TE interrupt failed");
     ESP_RETURN_ON_FALSE(free_bufs && helper_done, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
 
     const esp_lcd_panel_io_callbacks_t cbs = { .on_color_trans_done = on_color_done };
     ESP_RETURN_ON_ERROR(esp_lcd_panel_io_register_event_callbacks(panel_io, &cbs, NULL), TAG, "callback register failed");
 
     ESP_RETURN_ON_ERROR(build_maps(), TAG, "no memory for distance maps");
-    BaseType_t ok = xTaskCreatePinnedToCore(helper_main, "render_helper", 3072, NULL, 4, &helper_task, 0);
+    BaseType_t ok = xTaskCreatePinnedToCore(helper_main, "render_helper", 3072, NULL, 7, &helper_task, 0);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "helper task create failed");
     return ESP_OK;
 }
@@ -324,6 +435,18 @@ esp_err_t render_init(void)
 void render_frame(const eye_params_t *p)
 {
     prepare(p);
+
+    // Check the previous frame made its deadline, then wait for a fresh TE
+    // falling edge. The timeout keeps things running if TE ever stops.
+    if (frame_te_us) {
+        const int64_t send_us = last_done_us - frame_te_us;
+        if (send_us > TE_DEADLINE_US) late_frames++;
+        if (send_us > worst_send_us) worst_send_us = send_us;
+    }
+    xSemaphoreTake(te_sem, 0);
+    if (xSemaphoreTake(te_sem, pdMS_TO_TICKS(50)) == pdTRUE) frame_te_us = te_time_us;
+    else frame_te_us = 0;
+
     for (int y = 0; y < DISP_H; y += STRIP_ROWS) {
         const int rows = DISP_H - y < STRIP_ROWS ? DISP_H - y : STRIP_ROWS;
         const int split = rows / 2;
@@ -341,6 +464,14 @@ void render_frame(const eye_params_t *p)
 
         esp_lcd_panel_draw_bitmap(panel, 0, y, DISP_W, y + rows, buf);
     }
+}
+
+void render_take_stats(int *late, float *worst_ms)
+{
+    *late = late_frames;
+    *worst_ms = worst_send_us / 1000.0f;
+    late_frames = 0;
+    worst_send_us = 0;
 }
 
 void render_set_brightness(int percent)
