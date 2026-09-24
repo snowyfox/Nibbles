@@ -92,10 +92,10 @@ static void eye_task(void *arg)
             int late;
             float worst_ms;
             render_take_stats(&late, &worst_ms);
-            ESP_LOGI(TAG, "%.1f fps (send %.1f ms max, %d late) | %.1f dB (floor %.1f, gain %.0f) loud %.2f warm %.2f beats %lu bpm %.0f | "
+            ESP_LOGI(TAG, "%.1f fps (send %.1f ms max, %d late) | %.1f dB (floor %.1f, gain %.0f) loud %.2f warm %.2f beats %lu bpm %.0f rhythm %.2f | "
                      "look %+.2f,%+.2f jolt %.2fg dance %.2f (%.2fs) | %s lid %.2f hype %.2f",
                      frames / secs, worst_ms, late, a.level_db, a.noise_floor_db, a.gain_db, a.loudness, a.warmth, (unsigned long)a.beat_count,
-                     a.beat_period_s > 0 ? 60.0f / a.beat_period_s : 0.0f,
+                     a.beat_period_s > 0 ? 60.0f / a.beat_period_s : 0.0f, a.beat_confidence,
                      m.look_x, m.look_y, m.jolt_g, eye.dance, m.dance_period_s,
                      eye_state_name(eye.state), eye.p.lid_open, eye.p.hype);
             frames = 0;

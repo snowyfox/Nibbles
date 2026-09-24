@@ -67,8 +67,23 @@
 #define NOISE_FLOOR_RISE_DB_S 0.3f
 #define NOISE_FLOOR_LEARN_S  30.0f   // after boot the floor rises faster to learn the room
 #define NOISE_FLOOR_LEARN_RISE_DB_S 1.0f
-#define BEAT_THRESHOLD_K     1.5f    // beat when bass flux > mean + K * stddev
+// Onset band weights for 40-160, 160-400, 400-1k, 1k-3k and 3k-8k Hz.
+// Weighted toward the highs, where this board's mic hears the rhythm best.
+#define ONSET_WEIGHTS        { 0.5f, 0.5f, 0.5f, 1.0f, 1.0f }
+// Beats: onsets above mean + K * stddev of the last ~1.5 s, fired only while
+// the last ~4 s of onsets are rhythmic (periodic at 60-240 bpm). Beats follow
+// the music's strong onsets, which can include accented off-beats.
+#define BEAT_THRESHOLD_K     1.0f    // lower = more sensitive
+#define BEAT_MIN_CONFIDENCE  0.4f    // how rhythmic the sound must be (0..1); keeps noise and talk out
 #define BEAT_MIN_INTERVAL_S  0.25f
+#define BEAT_MIN_BPM         60.0f
+#define BEAT_MAX_BPM         240.0f
+// The reported tempo is folded into this range, which covers the target
+// genres at their natural tempo: EDM ~128, trance ~138, dubstep 140 (half-time
+// 70 folds to 140), hardstyle 150, drum and bass 170-190.
+#define TEMPO_FOLD_MIN_BPM   100.0f
+#define TEMPO_FOLD_MAX_BPM   200.0f
+#define BEAT_EVAL_FRAMES     8       // re-measure rhythm every ~0.25 s
 #define AGC_FLOOR_RISE_DB_S  1.5f    // how fast the noise floor creeps up
 #define AGC_PEAK_FALL_DB_S   3.0f    // how fast the loudness peak decays
 #define AGC_MIN_RANGE_DB     12.0f
@@ -89,7 +104,7 @@
 #define LOOK_GYRO_GAIN       0.004f  // how hard rotation (deg/s) pushes the pupil
 #define LOOK_DOWN_BIAS       0.25f   // eye tends to look toward the ground (the crowd)
 #define DANCE_WINDOW_S       4       // seconds (integer: sizes a buffer)
-#define DANCE_MIN_PERIOD_S   0.35f
+#define DANCE_MIN_PERIOD_S   0.3f    // up to 200 bpm
 #define DANCE_MAX_PERIOD_S   1.2f
 #define DANCE_MIN_ENERGY_G   0.06f   // rms linear accel needed to count as dancing
 #define DANCE_HYPE_SCORE     0.6f    // dance score where the eye goes into hype mode

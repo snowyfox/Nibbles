@@ -9,7 +9,11 @@
 #define HIGH_LO_HZ    2000.0f
 #define HIGH_HI_HZ    8000.0f
 #define BAND_AVG_S    4.0f
-#define MIN_FLUX      0.05f
+
+// Beats are onsets measured across the spectrum: small mics hear little of
+// the kick drum's bass, but the rhythm shows clearly in the mids and highs.
+static const float onset_band_hz[ONSET_BANDS + 1] = { 40, 160, 400, 1000, 3000, 8000 };
+static const float onset_weight[ONSET_BANDS] = ONSET_WEIGHTS;
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -89,6 +93,32 @@ static void update_gain(audio_analysis_t *a, float peak_db, float dt)
     }
 }
 
+// How periodic recent onsets are: the strongest normalised autocorrelation
+// peak at a musical tempo. Music is strongly periodic; noise, a held chord
+// and talking are not.
+static float rhythm_strength(const audio_analysis_t *a)
+{
+    const int n = ONSET_HISTORY;
+    float x[ONSET_HISTORY];
+    float mean = 0.0f, r0 = 0.0f;
+    for (int i = 0; i < n; i++) mean += a->onset[i];
+    mean /= n;
+    for (int i = 0; i < n; i++) {
+        x[i] = a->onset[(a->onset_pos + i) % n] - mean;
+        r0 += x[i] * x[i];
+    }
+    if (r0 < 1e-12f) return 0.0f;
+    const float fps = 1.0f / a->frame_s;
+    const int lo = (int)(fps * 60.0f / BEAT_MAX_BPM), hi = (int)(fps * 60.0f / BEAT_MIN_BPM) + 1;
+    float best = 0.0f;
+    for (int lag = lo; lag <= hi; lag++) {
+        float s = 0.0f;
+        for (int i = 0; i + lag < n; i++) s += x[i] * x[i + lag];
+        best = fmaxf(best, s / r0 * (float)n / (n - lag));
+    }
+    return best;
+}
+
 static float median(const float *v, int n)
 {
     float s[BEAT_HISTORY];
@@ -117,7 +147,6 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     if (a->settle > 0) {
         a->settle--;
         a->applied_gain_db = o->gain_db;
-        a->since_beat_s += dt;
         a->rebase_flux = true;
         return;
     }
@@ -135,10 +164,10 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
 
     // Background noise floor: follows dips quickly, creeps up slowly, so it
     // settles at the quiet moments between beats and at steady crowd noise.
-    // Start well below the first reading, which may be music, and rise
-    // faster at first to learn a quiet room quickly.
+    // Start at the first reading; the QUIET_DB cap below stops music heard at
+    // boot being taken as background. Rise faster at first to learn the room.
     if (!a->have_floor) {
-        a->noise_floor_db = level_db - 20.0f;
+        a->noise_floor_db = level_db;
         a->have_floor = true;
     } else if (level_db < a->noise_floor_db) {
         a->noise_floor_db += 0.1f * (level_db - a->noise_floor_db);
@@ -173,19 +202,37 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     const int high_hi = (int)fminf(HIGH_HI_HZ / bin_hz, AUDIO_BINS - 1);
     const float norm = 2.0f / AUDIO_FRAME;
 
-    float bass_pow = 0.0f, high_pow = 0.0f, flux = 0.0f;
-    for (int k = bass_lo; k <= bass_hi; k++) {
-        float mag = sqrtf(a->re[k] * a->re[k] + a->im[k] * a->im[k]) * norm;
-        bass_pow += mag * mag;
-        float lm = log10f(1.0f + 1000.0f * mag);
-        float d = lm - a->prev_bass[k];
-        if (d > 0.0f) flux += d;
-        a->prev_bass[k] = lm;
+    // Magnitudes, stored over re[].
+    for (int k = 1; k < AUDIO_BINS; k++) a->re[k] = sqrtf(a->re[k] * a->re[k] + a->im[k] * a->im[k]) * norm;
+    const float *mag = a->re;
+
+    float bass_pow = 0.0f, high_pow = 0.0f;
+    for (int k = bass_lo; k <= bass_hi; k++) bass_pow += mag[k] * mag[k];
+    for (int k = high_lo; k <= high_hi; k++) high_pow += mag[k] * mag[k];
+
+    // Onset strength: in each band, positive jumps in log magnitude relative
+    // to the band's own recent level (so it works at any volume), averaged per
+    // bin, then weighted across bands.
+    float flux = 0.0f, wsum = 0.0f;
+    for (int b = 0; b < ONSET_BANDS; b++) {
+        const int lo = (int)ceilf(onset_band_hz[b] / bin_hz);
+        const int hi = (int)fminf(onset_band_hz[b + 1] / bin_hz, AUDIO_BINS);
+        float pow_b = 0.0f;
+        for (int k = lo; k < hi; k++) pow_b += mag[k] * mag[k];
+        if (a->band_avg[b] <= 0.0f) a->band_avg[b] = pow_b;
+        const float ref = sqrtf(a->band_avg[b] / (hi - lo)) + 1e-9f;
+        float fb = 0.0f;
+        for (int k = lo; k < hi; k++) {
+            const float lm = log10f(1.0f + mag[k] / ref);
+            const float d = lm - a->prev_logmag[k];
+            if (d > 0.0f) fb += d;
+            a->prev_logmag[k] = lm;
+        }
+        a->band_avg[b] += dt / BAND_AVG_S * (pow_b - a->band_avg[b]);
+        flux += onset_weight[b] * fb / (hi - lo);
+        wsum += onset_weight[b];
     }
-    for (int k = high_lo; k <= high_hi; k++) {
-        float mag = sqrtf(a->re[k] * a->re[k] + a->im[k] * a->im[k]) * norm;
-        high_pow += mag * mag;
-    }
+    flux /= wsum;
 
     // Frequency balance relative to each band's own recent average, so it
     // self-calibrates to the mic and the venue.
@@ -197,13 +244,25 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     float warmth = (rb + rh) > 1e-6f ? rb / (rb + rh) : 0.5f;
     o->warmth += 0.25f * (gate * warmth + (1.0f - gate) * 0.5f - o->warmth);
 
-    // Beat: bass spectral flux above an adaptive threshold.
-    a->since_beat_s += dt;
+    // Beats: onsets clearly above the recent level, but only while the music
+    // is rhythmic. Checking rhythm (how periodic the last ~4 s of onsets are)
+    // lets the onset threshold be sensitive enough for faint music without
+    // noise, a held chord or talking producing beats.
     const bool rebase = a->rebase_flux;  // first frame after a gap: flux is meaningless
     a->rebase_flux = false;
-    if (rebase) {
-        // prev_bass was just refreshed above; nothing to compare against.
-    } else if (a->flux_filled >= FLUX_HISTORY / 2) {
+    a->since_beat_s += dt;
+    if (!rebase) {
+        a->onset_mean += 0.05f * (flux - a->onset_mean);
+        a->onset[a->onset_pos] = fmaxf(0.0f, flux - a->onset_mean);
+        a->onset_pos = (a->onset_pos + 1) % ONSET_HISTORY;
+        if (a->onset_filled < ONSET_HISTORY) a->onset_filled++;
+    }
+    if (a->onset_filled == ONSET_HISTORY && --a->eval_countdown <= 0) {
+        a->eval_countdown = BEAT_EVAL_FRAMES;
+        o->beat_confidence += 0.5f * (rhythm_strength(a) - o->beat_confidence);
+    }
+
+    if (!rebase && a->flux_filled >= FLUX_HISTORY / 2) {
         float mean = 0.0f, var = 0.0f;
         for (int i = 0; i < a->flux_filled; i++) mean += a->flux_hist[i];
         mean /= a->flux_filled;
@@ -211,11 +270,16 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
             float d = a->flux_hist[i] - mean;
             var += d * d;
         }
-        float thresh = mean + BEAT_THRESHOLD_K * sqrtf(var / a->flux_filled);
-        if (flux > thresh && flux > MIN_FLUX && level_db > a->noise_floor_db + 3.0f &&
-            a->since_beat_s >= BEAT_MIN_INTERVAL_S) {
+        const float thresh = mean + BEAT_THRESHOLD_K * sqrtf(var / a->flux_filled);
+        if (flux > thresh && o->beat_confidence >= BEAT_MIN_CONFIDENCE &&
+            level_db > a->noise_floor_db + 3.0f && a->since_beat_s >= BEAT_MIN_INTERVAL_S) {
             if (a->since_beat_s < 1.5f) {
-                a->intervals[a->interval_pos] = a->since_beat_s;
+                // Fold into the tempo range so beats on eighth notes and on
+                // quarter notes agree on the same musical beat.
+                float iv = a->since_beat_s;
+                while (iv < 60.0f / TEMPO_FOLD_MAX_BPM) iv *= 2.0f;
+                while (iv > 60.0f / TEMPO_FOLD_MIN_BPM) iv *= 0.5f;
+                a->intervals[a->interval_pos] = iv;
                 a->interval_pos = (a->interval_pos + 1) % BEAT_HISTORY;
                 if (a->interval_filled < BEAT_HISTORY) a->interval_filled++;
             }

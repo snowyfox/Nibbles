@@ -7,7 +7,9 @@
 #include "config.h"
 
 #define AUDIO_BINS        (AUDIO_FRAME / 2)
-#define FLUX_HISTORY      48   // ~1.5 s of frames
+#define ONSET_BANDS       5
+#define ONSET_HISTORY     128  // ~4.1 s of onset strength, to measure how rhythmic it is
+#define FLUX_HISTORY      48   // ~1.5 s, for the adaptive onset threshold
 #define BEAT_HISTORY      8
 
 typedef struct {
@@ -18,18 +20,24 @@ typedef struct {
     float loudness;        // 0..1, automatic-gain normalised
     float warmth;          // 0 = treble-heavy, 0.5 = balanced, 1 = bass-heavy
     uint32_t beat_count;   // increments on every detected beat
-    float beat_period_s;   // median time between recent beats, 0 if unknown
+    float beat_period_s;   // musical beat period (see TEMPO_FOLD_*), 0 if unknown
+    float beat_confidence; // 0..1 how strongly periodic the recent onsets are
 } audio_features_t;
 
 typedef struct {
     float frame_s;
     float window[AUDIO_FRAME];
     float re[AUDIO_FRAME], im[AUDIO_FRAME];
-    float prev_bass[AUDIO_BINS];
-    float flux_hist[FLUX_HISTORY];
-    int flux_pos, flux_filled;
+    float prev_logmag[AUDIO_BINS];
+    float band_avg[ONSET_BANDS];
     float agc_floor_db, agc_peak_db;
     float bass_avg, high_avg;
+    float flux_hist[FLUX_HISTORY];
+    int flux_pos, flux_filled;
+    float onset[ONSET_HISTORY];   // onset strength above its running mean
+    int onset_pos, onset_filled;
+    float onset_mean;
+    int eval_countdown;
     float since_beat_s;
     float intervals[BEAT_HISTORY];
     int interval_pos, interval_filled;
