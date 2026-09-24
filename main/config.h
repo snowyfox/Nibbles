@@ -39,7 +39,7 @@
 #define AUDIO_SAMPLE_RATE    16000
 #define AUDIO_FRAME          512     // samples per analysis frame (32 ms)
 // Automatic mic gain: the ES7210 gain is lowered fast when the signal nears
-// clipping and raised slowly while it stays quiet. Analysis runs on levels with
+// clipping and raised quickly while it stays quiet. Analysis runs on levels with
 // the gain removed, so gain changes don't disturb loudness or beat detection.
 #define MIC_GAIN_START_DB    12.0f
 #define MIC_GAIN_MIN_DB      0.0f
@@ -47,18 +47,26 @@
 #define MIC_GAIN_STEP_DB     3.0f
 #define AGC_CLIP_DB          (-3.0f) // raw peak above this -> drop gain by two steps
 #define AGC_TARGET_PEAK_DB   (-12.0f)// aim for raw peaks around here
-#define AGC_RAISE_HOLD_S     3.0f    // peaks must stay 6 dB under target this long before raising
-#define AGC_PEAK_RELEASE_DB_S 2.0f
+#define AGC_RAISE_HOLD_S     0.5f    // peaks must stay 6 dB under target this long before raising
+#define AGC_PEAK_RELEASE_DB_S 8.0f
 #define AGC_SETTLE_FRAMES    4       // frames ignored after a gain change (~130 ms)
 
-// "Sound" means clearly above the room's own background noise, which is
-// tracked continuously, so the eye can sleep in a noisy crowd between sets.
-// Detected beats also count as sound, so dense music never looks quiet.
-#define SOUND_MARGIN_DB      6.0f
+// Sleep needs a genuinely quiet room: the ~1.5 s average level (mic gain
+// removed) must stay below QUIET_DB, with no steady beat, for SILENCE_SLEEP_S.
+// Measured on this board at 36 dB mic gain: silent room -89 dB (-88 to -90),
+// faint background music -74 to -84 dB. Raise QUIET_DB to sleep more readily,
+// lower it (toward the silent-room level) to sleep less.
+#define QUIET_DB             (-86.5f)
+#define QUIET_AVG_S          1.5f
+#define SILENCE_SLEEP_S      20.0f   // quiet this long -> eye gets drowsy
+#define WAKE_MARGIN_DB       3.0f    // a sound this far above QUIET_DB wakes the eye...
+#define WAKE_SOUND_S         0.15f   // ...if it lasts this long
+
+// Background noise floor, used to gate loudness and beats. It never rises
+// above QUIET_DB, so audible music is never mistaken for background.
 #define NOISE_FLOOR_RISE_DB_S 0.3f
 #define NOISE_FLOOR_LEARN_S  30.0f   // after boot the floor rises faster to learn the room
 #define NOISE_FLOOR_LEARN_RISE_DB_S 1.0f
-#define SILENCE_SLEEP_S      20.0f   // quiet this long -> eye gets drowsy
 #define BEAT_THRESHOLD_K     1.5f    // beat when bass flux > mean + K * stddev
 #define BEAT_MIN_INTERVAL_S  0.25f
 #define AGC_FLOOR_RISE_DB_S  1.5f    // how fast the noise floor creeps up
@@ -91,7 +99,6 @@
 #define BLINK_MAX_S          8.0f
 #define BLINK_DURATION_S     0.18f
 #define DROWSY_CLOSE_S       5.0f    // time for lids to close once drowsy
-#define WAKE_SOUND_S         0.3f    // sustained sound needed to wake up
 #define WAKE_MOTION_G        0.35f   // a jolt this big wakes the eye too
 
 // ---------------------------------------------------------------- hype (dancing)

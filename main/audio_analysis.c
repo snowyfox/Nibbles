@@ -129,6 +129,9 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     for (int i = 0; i < AUDIO_FRAME; i++) sq += samples[i] * samples[i];
     const float level_db = 10.0f * log10f(sq / AUDIO_FRAME + 1e-12f) - a->applied_gain_db;
     o->level_db = level_db;
+    const float power = powf(10.0f, level_db / 10.0f);
+    a->avg_power = a->have_floor ? a->avg_power + dt / QUIET_AVG_S * (power - a->avg_power) : power;
+    o->avg_db = 10.0f * log10f(a->avg_power + 1e-15f);
 
     // Background noise floor: follows dips quickly, creeps up slowly, so it
     // settles at the quiet moments between beats and at steady crowd noise.
@@ -144,8 +147,8 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
         a->noise_floor_db += (a->floor_age_s < NOISE_FLOOR_LEARN_S ? NOISE_FLOOR_LEARN_RISE_DB_S
                                                                    : NOISE_FLOOR_RISE_DB_S) * dt;
     }
+    if (a->noise_floor_db > QUIET_DB) a->noise_floor_db = QUIET_DB;
     o->noise_floor_db = a->noise_floor_db;
-    o->sound = level_db > a->noise_floor_db + SOUND_MARGIN_DB;
 
     // Loudness via automatic gain: map level between a slow floor and a slow peak.
     if (level_db < a->agc_floor_db) a->agc_floor_db += 0.3f * (level_db - a->agc_floor_db);

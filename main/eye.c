@@ -103,10 +103,13 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     bool beat = a->beat_count != e->last_beat;
     e->last_beat = a->beat_count;
 
-    bool sound = a->sound || beat;
-    e->silent_s = sound ? 0.0f : e->silent_s + dt;
-    e->sound_s = sound ? e->sound_s + dt : 0.0f;
-    bool wake = beat || e->sound_s > WAKE_SOUND_S || m->jolt_g > WAKE_MOTION_G;
+    // Sleep only in a genuinely quiet room; wake on any clear sound, a steady
+    // beat or a bump. Single "beats" are ignored: near-silence produces false ones.
+    const bool music = a->beat_period_s > 0.0f;
+    const bool quiet = a->avg_db < QUIET_DB && !music;
+    e->silent_s = quiet ? e->silent_s + dt : 0.0f;
+    e->sound_s = a->level_db > QUIET_DB + WAKE_MARGIN_DB ? e->sound_s + dt : 0.0f;
+    bool wake = music || a->avg_db > QUIET_DB || e->sound_s >= WAKE_SOUND_S || m->jolt_g > WAKE_MOTION_G;
 
     // Sleep / wake state machine.
     switch (e->state) {

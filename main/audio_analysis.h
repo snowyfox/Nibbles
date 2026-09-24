@@ -12,8 +12,8 @@
 
 typedef struct {
     float level_db;        // RMS level in dBFS with the mic gain removed
+    float avg_db;          // level averaged over ~QUIET_AVG_S, same scale
     float noise_floor_db;  // background level, same scale as level_db
-    bool sound;            // this frame is clearly above the background
     float gain_db;         // mic gain the analysis wants applied
     float loudness;        // 0..1, automatic-gain normalised
     float warmth;          // 0 = treble-heavy, 0.5 = balanced, 1 = bass-heavy
@@ -34,6 +34,7 @@ typedef struct {
     float intervals[BEAT_HISTORY];
     int interval_pos, interval_filled;
     float noise_floor_db;
+    float avg_power;
     bool have_floor;
     float floor_age_s;
     float applied_gain_db;     // gain in effect for the samples being analysed
