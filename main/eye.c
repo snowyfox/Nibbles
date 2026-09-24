@@ -103,7 +103,7 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     bool beat = a->beat_count != e->last_beat;
     e->last_beat = a->beat_count;
 
-    bool sound = a->level_db > SILENCE_DB;
+    bool sound = a->sound || beat;
     e->silent_s = sound ? 0.0f : e->silent_s + dt;
     e->sound_s = sound ? e->sound_s + dt : 0.0f;
     bool wake = beat || e->sound_s > WAKE_SOUND_S || m->jolt_g > WAKE_MOTION_G;

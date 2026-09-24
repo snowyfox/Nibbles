@@ -38,8 +38,26 @@
 // ---------------------------------------------------------------- audio
 #define AUDIO_SAMPLE_RATE    16000
 #define AUDIO_FRAME          512     // samples per analysis frame (32 ms)
-#define MIC_GAIN_DB          6.0f    // ES7210 input gain. Keep low for festival volume.
-#define SILENCE_DB           (-62.0f)// dBFS below which the eye counts it as quiet
+// Automatic mic gain: the ES7210 gain is lowered fast when the signal nears
+// clipping and raised slowly while it stays quiet. Analysis runs on levels with
+// the gain removed, so gain changes don't disturb loudness or beat detection.
+#define MIC_GAIN_START_DB    12.0f
+#define MIC_GAIN_MIN_DB      0.0f
+#define MIC_GAIN_MAX_DB      36.0f
+#define MIC_GAIN_STEP_DB     3.0f
+#define AGC_CLIP_DB          (-3.0f) // raw peak above this -> drop gain by two steps
+#define AGC_TARGET_PEAK_DB   (-12.0f)// aim for raw peaks around here
+#define AGC_RAISE_HOLD_S     3.0f    // peaks must stay 6 dB under target this long before raising
+#define AGC_PEAK_RELEASE_DB_S 2.0f
+#define AGC_SETTLE_FRAMES    4       // frames ignored after a gain change (~130 ms)
+
+// "Sound" means clearly above the room's own background noise, which is
+// tracked continuously, so the eye can sleep in a noisy crowd between sets.
+// Detected beats also count as sound, so dense music never looks quiet.
+#define SOUND_MARGIN_DB      6.0f
+#define NOISE_FLOOR_RISE_DB_S 0.3f
+#define NOISE_FLOOR_LEARN_S  30.0f   // after boot the floor rises faster to learn the room
+#define NOISE_FLOOR_LEARN_RISE_DB_S 1.0f
 #define SILENCE_SLEEP_S      20.0f   // quiet this long -> eye gets drowsy
 #define BEAT_THRESHOLD_K     1.5f    // beat when bass flux > mean + K * stddev
 #define BEAT_MIN_INTERVAL_S  0.25f

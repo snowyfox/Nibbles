@@ -27,7 +27,12 @@ static void audio_task(void *arg)
         for (int i = 0; i < AUDIO_FRAME; i++) {
             mono[i] = (raw[i * CHANNELS] + raw[i * CHANNELS + 1]) / (2.0f * 32768.0f);
         }
+        const float old_gain = analysis.out.gain_db;
         audio_analysis_process(&analysis, mono);
+        if (analysis.out.gain_db != old_gain) {
+            bsp_extra_codec_set_in_gain(analysis.out.gain_db);
+            ESP_LOGI(TAG, "mic gain %.0f dB", analysis.out.gain_db);
+        }
         taskENTER_CRITICAL(&lock);
         latest = analysis.out;
         taskEXIT_CRITICAL(&lock);
@@ -36,10 +41,10 @@ static void audio_task(void *arg)
 
 esp_err_t audio_start(void)
 {
-    audio_analysis_init(&analysis, AUDIO_SAMPLE_RATE);
+    audio_analysis_init(&analysis, AUDIO_SAMPLE_RATE, MIC_GAIN_START_DB);
     latest = analysis.out;
     ESP_RETURN_ON_ERROR(bsp_extra_codec_init(), TAG, "codec init failed");
-    ESP_RETURN_ON_ERROR(bsp_extra_codec_set_in_gain(MIC_GAIN_DB), TAG, "mic gain failed");
+    ESP_RETURN_ON_ERROR(bsp_extra_codec_set_in_gain(MIC_GAIN_START_DB), TAG, "mic gain failed");
     BaseType_t ok = xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 6, NULL, 0);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }

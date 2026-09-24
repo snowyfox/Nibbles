@@ -50,7 +50,7 @@ static void fft(float *re, float *im, int n)
     }
 }
 
-void audio_analysis_init(audio_analysis_t *a, float sample_rate)
+void audio_analysis_init(audio_analysis_t *a, float sample_rate, float start_gain_db)
 {
     memset(a, 0, sizeof(*a));
     a->frame_s = AUDIO_FRAME / sample_rate;
@@ -63,6 +63,30 @@ void audio_analysis_init(audio_analysis_t *a, float sample_rate)
     a->since_beat_s = 10.0f;
     a->out.level_db = -120.0f;
     a->out.warmth = 0.5f;
+    a->applied_gain_db = a->out.gain_db = start_gain_db;
+    a->peak_env_db = AGC_TARGET_PEAK_DB;
+    a->settle = AGC_SETTLE_FRAMES;
+}
+
+// Decide the mic gain from the raw (gained) peak level.
+static void update_gain(audio_analysis_t *a, float peak_db, float dt)
+{
+    a->since_change_s += dt;
+    a->peak_env_db = fmaxf(a->peak_env_db - AGC_PEAK_RELEASE_DB_S * dt, peak_db);
+    a->raise_timer_s = a->peak_env_db < AGC_TARGET_PEAK_DB - 6.0f ? a->raise_timer_s + dt : 0.0f;
+
+    float gain = a->out.gain_db;
+    if (peak_db > AGC_CLIP_DB && a->since_change_s >= 0.25f) {
+        gain = fmaxf(MIC_GAIN_MIN_DB, gain - 2.0f * MIC_GAIN_STEP_DB);
+    } else if (a->raise_timer_s >= AGC_RAISE_HOLD_S && a->since_change_s >= AGC_RAISE_HOLD_S) {
+        gain = fminf(MIC_GAIN_MAX_DB, gain + MIC_GAIN_STEP_DB);
+    }
+    if (gain != a->out.gain_db) {
+        a->peak_env_db += gain - a->out.gain_db;  // expect peaks to move with the gain
+        a->out.gain_db = gain;
+        a->raise_timer_s = a->since_change_s = 0.0f;
+        a->settle = AGC_SETTLE_FRAMES;
+    }
 }
 
 static float median(const float *v, int n)
@@ -83,11 +107,45 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     audio_features_t *o = &a->out;
     const float dt = a->frame_s;
 
-    // Level
+    // Raw peak drives the mic gain control.
+    float peak = 0.0f;
+    for (int i = 0; i < AUDIO_FRAME; i++) peak = fmaxf(peak, fabsf(samples[i]));
+    const float peak_db = 20.0f * log10f(peak + 1e-9f);
+
+    // Right after a gain change the buffered samples may have either gain, so
+    // skip a few frames, keeping the beat detector's reference current.
+    if (a->settle > 0) {
+        a->settle--;
+        a->applied_gain_db = o->gain_db;
+        a->since_beat_s += dt;
+        a->rebase_flux = true;
+        return;
+    }
+    update_gain(a, peak_db, dt);
+
+    // Level with the mic gain removed.
+    const float inv_gain = powf(10.0f, -a->applied_gain_db / 20.0f);
     float sq = 0.0f;
     for (int i = 0; i < AUDIO_FRAME; i++) sq += samples[i] * samples[i];
-    float level_db = 10.0f * log10f(sq / AUDIO_FRAME + 1e-12f);
+    const float level_db = 10.0f * log10f(sq / AUDIO_FRAME + 1e-12f) - a->applied_gain_db;
     o->level_db = level_db;
+
+    // Background noise floor: follows dips quickly, creeps up slowly, so it
+    // settles at the quiet moments between beats and at steady crowd noise.
+    // Start well below the first reading, which may be music, and rise
+    // faster at first to learn a quiet room quickly.
+    if (!a->have_floor) {
+        a->noise_floor_db = level_db - 20.0f;
+        a->have_floor = true;
+    } else if (level_db < a->noise_floor_db) {
+        a->noise_floor_db += 0.1f * (level_db - a->noise_floor_db);
+    } else {
+        a->floor_age_s += dt;
+        a->noise_floor_db += (a->floor_age_s < NOISE_FLOOR_LEARN_S ? NOISE_FLOOR_LEARN_RISE_DB_S
+                                                                   : NOISE_FLOOR_RISE_DB_S) * dt;
+    }
+    o->noise_floor_db = a->noise_floor_db;
+    o->sound = level_db > a->noise_floor_db + SOUND_MARGIN_DB;
 
     // Loudness via automatic gain: map level between a slow floor and a slow peak.
     if (level_db < a->agc_floor_db) a->agc_floor_db += 0.3f * (level_db - a->agc_floor_db);
@@ -96,12 +154,12 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
     else a->agc_peak_db -= AGC_PEAK_FALL_DB_S * dt;
     if (a->agc_floor_db > a->agc_peak_db - AGC_MIN_RANGE_DB) a->agc_floor_db = a->agc_peak_db - AGC_MIN_RANGE_DB;
     float range = fmaxf(a->agc_peak_db - a->agc_floor_db, AGC_MIN_RANGE_DB);
-    float gate = smoothstep(SILENCE_DB, SILENCE_DB + 6.0f, level_db);
+    float gate = smoothstep(a->noise_floor_db + 3.0f, a->noise_floor_db + 9.0f, level_db);
     o->loudness = clampf((level_db - a->agc_floor_db) / range, 0.0f, 1.0f) * gate;
 
     // Spectrum
     for (int i = 0; i < AUDIO_FRAME; i++) {
-        a->re[i] = samples[i] * a->window[i];
+        a->re[i] = samples[i] * inv_gain * a->window[i];
         a->im[i] = 0.0f;
     }
     fft(a->re, a->im, AUDIO_FRAME);
@@ -138,7 +196,11 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
 
     // Beat: bass spectral flux above an adaptive threshold.
     a->since_beat_s += dt;
-    if (a->flux_filled >= FLUX_HISTORY / 2) {
+    const bool rebase = a->rebase_flux;  // first frame after a gap: flux is meaningless
+    a->rebase_flux = false;
+    if (rebase) {
+        // prev_bass was just refreshed above; nothing to compare against.
+    } else if (a->flux_filled >= FLUX_HISTORY / 2) {
         float mean = 0.0f, var = 0.0f;
         for (int i = 0; i < a->flux_filled; i++) mean += a->flux_hist[i];
         mean /= a->flux_filled;
@@ -147,7 +209,7 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
             var += d * d;
         }
         float thresh = mean + BEAT_THRESHOLD_K * sqrtf(var / a->flux_filled);
-        if (flux > thresh && flux > MIN_FLUX && level_db > SILENCE_DB &&
+        if (flux > thresh && flux > MIN_FLUX && level_db > a->noise_floor_db + 3.0f &&
             a->since_beat_s >= BEAT_MIN_INTERVAL_S) {
             if (a->since_beat_s < 1.5f) {
                 a->intervals[a->interval_pos] = a->since_beat_s;
@@ -158,9 +220,11 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
             o->beat_count++;
         }
     }
-    a->flux_hist[a->flux_pos] = flux;
-    a->flux_pos = (a->flux_pos + 1) % FLUX_HISTORY;
-    if (a->flux_filled < FLUX_HISTORY) a->flux_filled++;
+    if (!rebase) {
+        a->flux_hist[a->flux_pos] = flux;
+        a->flux_pos = (a->flux_pos + 1) % FLUX_HISTORY;
+        if (a->flux_filled < FLUX_HISTORY) a->flux_filled++;
+    }
 
     if (a->since_beat_s > 3.0f) a->interval_filled = 0;  // music stopped; forget tempo
     o->beat_period_s = a->interval_filled >= 3 ? median(a->intervals, a->interval_filled) : 0.0f;

@@ -28,68 +28,191 @@ static void synth_music(float *buf, int n, float bpm, float gain, double *t)
     }
 }
 
-static void test_beats(float bpm)
+// Simulated microphone: signals are "acoustic" levels referred to 0 dB mic
+// gain. The hardware gain lags the analysis' request by two frames (DMA
+// buffering) and the ADC clips at full scale.
+typedef struct {
+    audio_analysis_t a;
+    float hw_gain_db, queue[2];
+    float peak_db;  // raw peak of the last frame
+    int clipped;    // frames that hit full scale
+} mic_t;
+
+static void mic_init(mic_t *m)
 {
-    static audio_analysis_t a;
-    audio_analysis_init(&a, AUDIO_SAMPLE_RATE);
+    audio_analysis_init(&m->a, AUDIO_SAMPLE_RATE, MIC_GAIN_START_DB);
+    m->hw_gain_db = m->queue[0] = m->queue[1] = MIC_GAIN_START_DB;
+    m->clipped = 0;
+}
+
+static void mic_feed(mic_t *m, const float *acoustic)
+{
+    float raw[AUDIO_FRAME], peak = 0.0f;
+    const float g = powf(10.0f, m->hw_gain_db / 20.0f);
+    bool clip = false;
+    for (int i = 0; i < AUDIO_FRAME; i++) {
+        float v = acoustic[i] * g;
+        if (v >= 1.0f) { v = 1.0f; clip = true; }
+        if (v <= -1.0f) { v = -1.0f; clip = true; }
+        raw[i] = v;
+        peak = fmaxf(peak, fabsf(v));
+    }
+    m->clipped += clip;
+    m->peak_db = 20.0f * log10f(peak + 1e-9f);
+    audio_analysis_process(&m->a, raw);
+    m->hw_gain_db = m->queue[0];
+    m->queue[0] = m->queue[1];
+    m->queue[1] = m->a.out.gain_db;
+}
+
+#define FRAMES(sec) ((int)((sec) * AUDIO_SAMPLE_RATE / AUDIO_FRAME))
+
+// Music at `amp` for `secs`; beats and loudness measured over the last `measure` seconds.
+static void test_beats(float bpm, float amp, float secs, float measure, const char *label)
+{
+    static mic_t m;
+    mic_init(&m);
     float buf[AUDIO_FRAME];
     double t = 0;
-    const int frames = (int)(20.0f * AUDIO_SAMPLE_RATE / AUDIO_FRAME);  // 20 s
-    const int frames_5s = (int)(5.0f * AUDIO_SAMPLE_RATE / AUDIO_FRAME);
-    uint32_t beats_at_5s = 0;
+    const int frames = FRAMES(secs), from = frames - FRAMES(measure);
+    uint32_t beats_from = 0;
     float loud_sum = 0.0f;
     for (int f = 0; f < frames; f++) {
-        synth_music(buf, AUDIO_FRAME, bpm, 0.3f, &t);
-        audio_analysis_process(&a, buf);
-        if (f == frames_5s) beats_at_5s = a.out.beat_count;
-        if (f > frames_5s) loud_sum += a.out.loudness;
+        synth_music(buf, AUDIO_FRAME, bpm, amp, &t);
+        mic_feed(&m, buf);
+        if (f == from) beats_from = m.a.out.beat_count;
+        if (f > from) loud_sum += m.a.out.loudness;
     }
-    float loud_avg = loud_sum / (frames - frames_5s - 1);
-    float detected_bpm = (a.out.beat_count - beats_at_5s) / 15.0f * 60.0f;
-    float period_bpm = a.out.beat_period_s > 0 ? 60.0f / a.out.beat_period_s : 0;
-    CHECK(fabsf(detected_bpm - bpm) < bpm * 0.08f, "%.0f bpm track: %.1f beats/min counted", bpm, detected_bpm);
-    CHECK(fabsf(period_bpm - bpm) < bpm * 0.08f, "%.0f bpm track: tempo from beat period %.1f bpm", bpm, period_bpm);
-    CHECK(loud_avg > 0.3f, "%.0f bpm track: average loudness %.2f while music plays", bpm, loud_avg);
+    float loud_avg = loud_sum / (frames - from - 1);
+    float detected_bpm = (m.a.out.beat_count - beats_from) / measure * 60.0f;
+    float period_bpm = m.a.out.beat_period_s > 0 ? 60.0f / m.a.out.beat_period_s : 0;
+    CHECK(fabsf(detected_bpm - bpm) < bpm * 0.08f, "%s %.0f bpm: %.1f beats/min counted (gain %.0f dB)",
+          label, bpm, detected_bpm, m.a.out.gain_db);
+    CHECK(fabsf(period_bpm - bpm) < bpm * 0.08f, "%s %.0f bpm: tempo from beat period %.1f bpm", label, bpm, period_bpm);
+    CHECK(loud_avg > 0.3f, "%s %.0f bpm: average loudness %.2f", label, bpm, loud_avg);
+}
+
+static void test_agc(void)
+{
+    static mic_t m;
+    float buf[AUDIO_FRAME];
+    double t = 0;
+
+    // Festival-loud: clips at the starting gain, must back off and stop clipping.
+    mic_init(&m);
+    for (int f = 0; f < FRAMES(10); f++) { synth_music(buf, AUDIO_FRAME, 128, 1.0f, &t); mic_feed(&m, buf); }
+    m.clipped = 0;
+    for (int f = 0; f < FRAMES(10); f++) { synth_music(buf, AUDIO_FRAME, 128, 1.0f, &t); mic_feed(&m, buf); }
+    CHECK(m.clipped == 0, "very loud music: %d clipped frames after settling (gain %.0f dB)", m.clipped, m.a.out.gain_db);
+
+    // Quiet: gain climbs until peaks are in a healthy range.
+    mic_init(&m);
+    float env = -120.0f;
+    for (int f = 0; f < FRAMES(45); f++) {
+        synth_music(buf, AUDIO_FRAME, 128, 0.003f, &t);
+        mic_feed(&m, buf);
+        if (f > FRAMES(40)) env = fmaxf(env, m.peak_db);
+    }
+    CHECK(m.a.out.gain_db > MIC_GAIN_START_DB + 12.0f, "quiet music: gain raised to %.0f dB", m.a.out.gain_db);
+    CHECK(env > AGC_TARGET_PEAK_DB - 9.0f && env < AGC_CLIP_DB, "quiet music: raw peaks now %.1f dBFS", env);
 }
 
 static void test_silence(void)
 {
-    static audio_analysis_t a;
-    audio_analysis_init(&a, AUDIO_SAMPLE_RATE);
+    static mic_t m;
+    mic_init(&m);
     float buf[AUDIO_FRAME];
-    for (int f = 0; f < 300; f++) {
+    int sound = 0;
+    for (int f = 0; f < FRAMES(40); f++) {  // the floor needs ~15 s to learn the room
         for (int i = 0; i < AUDIO_FRAME; i++) buf[i] = 0.0002f * noise();
-        audio_analysis_process(&a, buf);
+        mic_feed(&m, buf);
+        if (f > FRAMES(30)) sound += m.a.out.sound;
     }
-    CHECK(a.out.beat_count == 0, "silence: %u beats", (unsigned)a.out.beat_count);
-    CHECK(a.out.loudness < 0.05f, "silence: loudness %.3f", a.out.loudness);
-    CHECK(a.out.level_db < SILENCE_DB, "silence: level %.1f dBFS below SILENCE_DB", a.out.level_db);
+    CHECK(m.a.out.beat_count == 0, "silence: %u beats", (unsigned)m.a.out.beat_count);
+    CHECK(m.a.out.loudness < 0.05f, "silence: loudness %.3f", m.a.out.loudness);
+    CHECK(sound == 0, "silence: %d frames counted as sound", sound);
+}
+
+// Steady crowd noise with no music should count as quiet; music on top should not.
+static void test_crowd(void)
+{
+    static mic_t m;
+    mic_init(&m);
+    float buf[AUDIO_FRAME];
+    double t = 0;
+    int sound = 0;
+    for (int f = 0; f < FRAMES(40); f++) {
+        for (int i = 0; i < AUDIO_FRAME; i++) buf[i] = 0.05f * noise();
+        mic_feed(&m, buf);
+        if (f > FRAMES(20)) sound += m.a.out.sound;
+    }
+    CHECK(sound < FRAMES(20) / 50, "crowd noise only: %d of %d frames counted as sound", sound, FRAMES(20));
+
+    sound = 0;
+    uint32_t beats0 = m.a.out.beat_count;
+    float music[AUDIO_FRAME];
+    for (int f = 0; f < FRAMES(15); f++) {
+        synth_music(music, AUDIO_FRAME, 120, 0.4f, &t);
+        for (int i = 0; i < AUDIO_FRAME; i++) buf[i] = music[i] + 0.05f * noise();
+        mic_feed(&m, buf);
+        sound += m.a.out.sound;
+    }
+    float bpm = (m.a.out.beat_count - beats0) / 15.0f * 60.0f;
+    CHECK(sound > FRAMES(15) / 5, "music over crowd: %d of %d frames counted as sound", sound, FRAMES(15));
+    CHECK(fabsf(bpm - 120.0f) < 15.0f, "music over crowd: %.0f beats/min", bpm);
+}
+
+static void test_sleep_end_to_end(void)
+{
+    static mic_t m;
+    static eye_t e;
+    mic_init(&m);
+    eye_init(&e, 7);
+    motion_features_t still = { 0 };
+    float buf[AUDIO_FRAME], music[AUDIO_FRAME];
+    double t = 0;
+    const float dt = (float)AUDIO_FRAME / AUDIO_SAMPLE_RATE;
+    int slept_in_music = 0;
+    for (int f = 0; f < FRAMES(60); f++) {  // boot straight into loud music over crowd noise
+        synth_music(music, AUDIO_FRAME, 126, 0.5f, &t);
+        for (int i = 0; i < AUDIO_FRAME; i++) buf[i] = music[i] + 0.05f * noise();
+        mic_feed(&m, buf);
+        eye_update(&e, &m.a.out, &still, dt);
+        slept_in_music += e.state != EYE_AWAKE;
+    }
+    CHECK(slept_in_music == 0, "60 s of music from boot: eye stayed awake (%d frames not awake)", slept_in_music);
+    for (int f = 0; f < FRAMES(45); f++) {  // set ends, crowd noise carries on
+        for (int i = 0; i < AUDIO_FRAME; i++) buf[i] = 0.05f * noise();
+        mic_feed(&m, buf);
+        eye_update(&e, &m.a.out, &still, dt);
+    }
+    CHECK(e.state == EYE_ASLEEP, "45 s of crowd noise after the set: state %s", eye_state_name(e.state));
 }
 
 static void test_warmth(void)
 {
-    static audio_analysis_t a;
-    audio_analysis_init(&a, AUDIO_SAMPLE_RATE);
+    static mic_t m;
+    mic_init(&m);
     float buf[AUDIO_FRAME];
     double t = 0;
     // Balanced mix for 8 s, then bass only, then treble only.
     for (int f = 0; f < 250; f++) {
         for (int i = 0; i < AUDIO_FRAME; i++, t += 1.0 / AUDIO_SAMPLE_RATE)
             buf[i] = 0.2f * sinf(2 * M_PI * 80 * t) + 0.05f * sinf(2 * M_PI * 4000 * t);
-        audio_analysis_process(&a, buf);
+        mic_feed(&m, buf);
     }
     for (int f = 0; f < 40; f++) {
         for (int i = 0; i < AUDIO_FRAME; i++, t += 1.0 / AUDIO_SAMPLE_RATE)
             buf[i] = 0.4f * sinf(2 * M_PI * 80 * t) + 0.01f * sinf(2 * M_PI * 4000 * t);
-        audio_analysis_process(&a, buf);
+        mic_feed(&m, buf);
     }
-    float warm = a.out.warmth;
+    float warm = m.a.out.warmth;
     for (int f = 0; f < 80; f++) {
         for (int i = 0; i < AUDIO_FRAME; i++, t += 1.0 / AUDIO_SAMPLE_RATE)
             buf[i] = 0.04f * sinf(2 * M_PI * 80 * t) + 0.2f * sinf(2 * M_PI * 4000 * t);
-        audio_analysis_process(&a, buf);
+        mic_feed(&m, buf);
     }
-    float cool = a.out.warmth;
+    float cool = m.a.out.warmth;
     CHECK(warm > 0.7f, "bass-heavy section: warmth %.2f", warm);
     CHECK(cool < 0.3f, "treble-heavy section: warmth %.2f", cool);
 }
@@ -173,7 +296,7 @@ static void test_hype(void)
     static eye_t e;
     eye_init(&e, 1);
     // Moderate loudness, so the target glow is well below full and a runaway would show.
-    audio_features_t music = { .level_db = -30.0f, .loudness = 0.2f, .warmth = 0.5f, .beat_period_s = 0.5f };
+    audio_features_t music = { .level_db = -30.0f, .sound = true, .loudness = 0.2f, .warmth = 0.5f, .beat_period_s = 0.5f };
     motion_features_t dancing = { .dance_score = 0.9f, .dance_period_s = 0.5f, .energy_g = 0.3f };
     const float dt = 1.0f / 30;
     float phase_moved = 0.0f, prev = 0.0f;
@@ -200,7 +323,7 @@ static void test_sleep_wake(void)
     const float dt = 1.0f / 30;
     for (int i = 0; i < (int)(30 / dt); i++) eye_update(&e, &quiet, &still, dt);
     CHECK(e.state == EYE_ASLEEP, "30 s of silence: state %s", eye_state_name(e.state));
-    audio_features_t loud = { .level_db = -30.0f, .loudness = 0.8f, .warmth = 0.5f, .beat_count = 1 };
+    audio_features_t loud = { .level_db = -30.0f, .sound = true, .loudness = 0.8f, .warmth = 0.5f, .beat_count = 1 };
     for (int i = 0; i < (int)(1.0f / dt); i++) eye_update(&e, &loud, &still, dt);
     CHECK(e.state == EYE_AWAKE, "music starts: state %s", eye_state_name(e.state));
 }
@@ -208,10 +331,14 @@ static void test_sleep_wake(void)
 int main(void)
 {
     srand(42);
-    test_beats(120.0f);
-    test_beats(128.0f);
-    test_beats(90.0f);
+    test_beats(120.0f, 0.3f, 20, 15, "loud");
+    test_beats(128.0f, 0.3f, 20, 15, "loud");
+    test_beats(90.0f, 0.3f, 20, 15, "loud");
+    test_beats(120.0f, 0.003f, 45, 15, "quiet");
+    test_agc();
     test_silence();
+    test_crowd();
+    test_sleep_end_to_end();
     test_warmth();
     test_dance();
     test_look_inertia();
