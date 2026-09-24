@@ -467,6 +467,112 @@ static void test_hype(void)
     CHECK(e.p.hype < 0.1f, "stopped dancing: hype falls to %.2f", e.p.hype);
 }
 
+// Twist about the vertical with the board upright. Counter-clockwise seen from
+// above (positive) carries an outward-facing eye toward screen +x.
+static void run_twist(motion_analysis_t *m, float twist_dps, float bob_g, float secs, float *avg_x)
+{
+    float up[3], gyro[3], acc[3];
+    screen_to_imu(0.0f, -1.0f, up);  // upright: reading points to screen top
+    static double t;
+    double sum = 0.0;
+    const int n = (int)(secs * IMU_RATE_HZ);
+    for (int i = 0; i < n; i++, t += 1.0 / IMU_RATE_HZ) {
+        // Vertical bobbing reduces the "up" reading when accelerating down.
+        const float bob = bob_g * sinf(2 * M_PI * 2.0 * t);
+        for (int k = 0; k < 3; k++) {
+            gyro[k] = twist_dps * up[k];
+            acc[k] = up[k] * (1.0f + bob);
+        }
+        motion_analysis_update(m, acc, gyro);
+        if (i >= n / 2) sum += m->out.look_x;
+    }
+    if (avg_x) *avg_x = (float)(sum / (n - n / 2));
+}
+
+// Twisting back and forth (sinusoidal twist rate) with the sideways
+// acceleration the eye really feels, 120 mm from the axis. Returns the average
+// of look_x * direction-of-twist: positive means looking into the turn.
+static float run_twist_swing(motion_analysis_t *m, float peak_dps, float hz, float secs, float *dom)
+{
+    float up[3], side[3], gyro[3], acc[3];
+    screen_to_imu(0.0f, -1.0f, up);
+    screen_to_imu(1.0f, 0.0f, side);  // screen +x in IMU axes
+    double sum = 0.0, dsum = 0.0;
+    const int n = (int)(secs * IMU_RATE_HZ);
+    for (int i = 0; i < n; i++) {
+        const double t = (double)i / IMU_RATE_HZ;
+        const float w = peak_dps * sinf(2 * M_PI * hz * t);                            // deg/s
+        const float alpha = peak_dps * (float)(M_PI / 180.0) * 2 * M_PI * hz * cosf(2 * M_PI * hz * t);  // rad/s^2
+        const float a_side = alpha * 0.12f / 9.81f;                                     // g, toward +x for CCW
+        for (int k = 0; k < 3; k++) {
+            gyro[k] = w * up[k];
+            acc[k] = up[k] + a_side * side[k];
+        }
+        motion_analysis_update(m, acc, gyro);
+        if (i >= n / 3) {
+            sum += m->out.look_x * (w > 0 ? 1.0 : -1.0);
+            dsum += m->out.twist_dominance;
+        }
+    }
+    if (dom) *dom = (float)(dsum / (n - n / 3));
+    return (float)(sum / (n - n / 3));
+}
+
+static void test_twist(void)
+{
+    static motion_analysis_t m;
+    float x;
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+    run_twist(&m, 60.0f, 0.0f, 1.5f, &x);
+    CHECK(m.out.twist_dominance > 0.9f, "pure twist: dominance %.2f", m.out.twist_dominance);
+    CHECK(x > 0.2f, "pure twist counter-clockwise: eye looks into the turn (x=%+.2f)", x);
+    run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+    run_twist(&m, -60.0f, 0.0f, 1.5f, &x);
+    CHECK(x < -0.2f, "pure twist clockwise: eye looks into the turn (x=%+.2f)", x);
+
+    // Realistic twisting back and forth, including the sideways swing of an
+    // eye 120 mm from the axis: still counts as twist, eye looks into the turn.
+    float dom;
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+    x = run_twist_swing(&m, 90.0f, 1.0f, 6.0f, &dom);
+    CHECK(dom > 0.8f, "twisting back and forth at 1 Hz: average dominance %.2f", dom);
+    CHECK(x > 0.2f, "twisting back and forth at 1 Hz: eye looks into the turn (%+.2f)", x);
+    // Faster than the pupil spring: twist steers the pupil directly, so it keeps up.
+    for (float hz = 2.0f; hz <= 3.01f; hz += 1.0f) {
+        motion_analysis_init(&m, IMU_RATE_HZ);
+        run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+        x = run_twist_swing(&m, 120.0f, hz, 6.0f, &dom);
+        CHECK(dom > 0.8f, "fast twisting at %.0f Hz: average dominance %.2f", hz, dom);
+        CHECK(x > 0.15f, "fast twisting at %.0f Hz: eye looks into the turn (%+.2f)", hz, x);
+    }
+
+    // Board rolled 30 degrees in the screen plane (as measured on the real
+    // mount): the eye still looks along the true horizon into the turn.
+    {
+        const float roll = 30.0f * (float)M_PI / 180.0f;
+        float up[3], gyr[3], acc[3];
+        screen_to_imu(sinf(roll), -cosf(roll), up);
+        motion_analysis_init(&m, IMU_RATE_HZ);
+        for (int i = 0; i < 3 * IMU_RATE_HZ; i++) {
+            const float w = i < 2 * IMU_RATE_HZ ? 0.0f : 60.0f;
+            for (int k = 0; k < 3; k++) { gyr[k] = w * up[k]; acc[k] = up[k]; }
+            motion_analysis_update(&m, acc, gyr);
+        }
+        // Horizon on the rolled screen points along (cos, sin) of the roll.
+        const float along = m.out.look_x * cosf(roll) + m.out.look_y * sinf(roll);
+        CHECK(along > 0.25f, "rolled board, twist: eye looks along the horizon into the turn (%+.2f)", along);
+    }
+
+    // Twisting while bobbing hard: not mostly twist, so the pupil lags instead.
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    run_twist(&m, 0.0f, 0.0f, 3.0f, NULL);
+    run_twist(&m, 60.0f, 0.5f, 3.0f, &x);
+    CHECK(m.out.twist_dominance < 0.1f, "twist while bobbing hard: dominance %.2f", m.out.twist_dominance);
+    CHECK(x < -0.1f, "twist while bobbing hard: pupil lags (x=%+.2f)", x);
+}
+
 static void test_sleep_wake(void)
 {
     static eye_t e;
@@ -524,10 +630,35 @@ static void analyse_recording(const char *spec)
            a.out.beat_period_s > 0 ? 60.0f / a.out.beat_period_s : 0.0f);
 }
 
+// Optional: replay an IMU recording from the board (float32 acc g[3], gyro
+// dps[3] per sample at IMU_RATE_HZ). Set NIBBLES_IMU=path.
+static void replay_imu(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) { printf("cannot open %s\n", path); return; }
+    static motion_analysis_t m;
+    motion_analysis_init(&m, IMU_RATE_HZ);
+    float v[6];
+    int i = 0;
+    printf("   t   twist  share   dom  look_x  look_y\n");
+    while (fread(v, sizeof(float), 6, fp) == 6) {
+        motion_analysis_update(&m, v, v + 3);
+        if (i % (IMU_RATE_HZ / 10) == 0) {
+            const float share = m.twist_avg / (m.twist_avg + m.other_avg + 1e-3f);
+            printf("%5.1f %6.0f  %5.2f  %4.2f  %+5.2f  %+5.2f\n", (float)i / IMU_RATE_HZ, m.out.twist_dps,
+                   share, m.out.twist_dominance, m.out.look_x, m.out.look_y);
+        }
+        i++;
+    }
+    fclose(fp);
+}
+
 int main(void)
 {
     const char *pcm = getenv("NIBBLES_PCM");
     if (pcm) { analyse_recording(pcm); return 0; }
+    const char *imu = getenv("NIBBLES_IMU");
+    if (imu) { replay_imu(imu); return 0; }
     srand(42);
     test_beats(128.0f, 0.3f, 20, 15, "EDM");
     test_beats(138.0f, 0.3f, 20, 15, "trance");
@@ -544,6 +675,7 @@ int main(void)
     test_dance();
     test_look_inertia();
     test_screen_directions();
+    test_twist();
     test_hype();
     test_sleep_wake();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);

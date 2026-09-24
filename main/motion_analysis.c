@@ -7,6 +7,12 @@
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+static float smoothstep(float e0, float e1, float x)
+{
+    float t = clampf((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 // Rotate an IMU-frame x/y pair into screen coordinates.
 static void to_screen(float x, float y, float *sx, float *sy)
 {
@@ -21,6 +27,21 @@ static void to_screen(float x, float y, float *sx, float *sy)
 #endif
     *sx = rx * IMU_X_SIGN;
     *sy = ry * IMU_Y_SIGN;
+}
+
+// Screen x/y back into IMU x/y (inverse of to_screen).
+static void from_screen(float sx, float sy, float *x, float *y)
+{
+    const float rx = sx / IMU_X_SIGN, ry = sy / IMU_Y_SIGN;
+#if EYE_MOUNT_ROTATION == 90
+    *x = ry; *y = -rx;
+#elif EYE_MOUNT_ROTATION == 180
+    *x = -rx; *y = -ry;
+#elif EYE_MOUNT_ROTATION == 270
+    *x = -ry; *y = rx;
+#else
+    *x = rx; *y = ry;
+#endif
 }
 
 void motion_analysis_init(motion_analysis_t *m, float rate_hz)
@@ -82,13 +103,42 @@ void motion_analysis_update(motion_analysis_t *m, const float acc[3], const floa
         memcpy(m->grav, acc, sizeof(m->grav));
         m->have_grav = 1;
     }
+    float gmag = sqrtf(m->grav[0] * m->grav[0] + m->grav[1] * m->grav[1] + m->grav[2] * m->grav[2]);
+    float inv_g = gmag > 0.1f ? 1.0f / gmag : 0.0f;
+
+    // Split rotation into twist about the vertical and tilt. At rest the
+    // accelerometer reads +1 g pointing up, so grav/|grav| is "up" and "down" is -grav.
+    const float up[3] = { m->grav[0] * inv_g, m->grav[1] * inv_g, m->grav[2] * inv_g };
+    const float twist = gyro[0] * up[0] + gyro[1] * up[1] + gyro[2] * up[2];
+    const float tilt[3] = { gyro[0] - twist * up[0], gyro[1] - twist * up[1], gyro[2] - twist * up[2] };
+    o->twist_dps = twist;
+
+    // "Sideways" for a twist is the true horizontal in the screen plane, which
+    // follows the board's roll: perpendicular to up as seen on the screen,
+    // pointing toward screen +x when the board is upright.
+    float ux, uy;
+    to_screen(up[0], up[1], &ux, &uy);
+    const float ul = sqrtf(ux * ux + uy * uy);
+    const float hx = ul > 0.2f ? -uy / ul : 1.0f, hy = ul > 0.2f ? ux / ul : 0.0f;
+
+    // The eye sits TWIST_RADIUS_M from the twist axis, so speeding up or
+    // slowing a twist swings it sideways (toward +h for a speeding-up
+    // counter-clockwise twist). Remove that from the reading so it isn't
+    // mistaken for sway.
+    // Light smoothing only: a lag here leaves swing behind at fast twists.
+    m->twist_accel += (dt / (0.005f + dt)) * ((twist - m->prev_twist) / dt - m->twist_accel);
+    m->prev_twist = twist;
+    const float swing_g = TWIST_SCREEN_SIGN * m->twist_accel * ((float)M_PI / 180.0f) * TWIST_RADIUS_M / 9.81f;
+    float sx_imu, sy_imu;
+    from_screen(hx, hy, &sx_imu, &sy_imu);
+    const float acc_c[3] = { acc[0] - swing_g * sx_imu, acc[1] - swing_g * sy_imu, acc[2] };
+
     float a = dt / (GRAVITY_TAU_S + dt);
     float lin[3];
     for (int i = 0; i < 3; i++) {
-        m->grav[i] += a * (acc[i] - m->grav[i]);
-        lin[i] = acc[i] - m->grav[i];
+        m->grav[i] += a * (acc_c[i] - m->grav[i]);
+        lin[i] = acc_c[i] - m->grav[i];
     }
-    float gmag = sqrtf(m->grav[0] * m->grav[0] + m->grav[1] * m->grav[1] + m->grav[2] * m->grav[2]);
     float linmag = sqrtf(lin[0] * lin[0] + lin[1] * lin[1] + lin[2] * lin[2]);
     o->jolt_g = fmaxf(o->jolt_g * expf(-dt / 0.15f), linmag);
 
@@ -96,12 +146,34 @@ void motion_analysis_update(motion_analysis_t *m, const float acc[3], const floa
     float lx, ly, gx, gy, wx, wy;
     to_screen(lin[0], lin[1], &lx, &ly);
     to_screen(m->grav[0], m->grav[1], &gx, &gy);
-    to_screen(gyro[0], gyro[1], &wx, &wy);
-    float inv_g = gmag > 0.1f ? 1.0f / gmag : 0.0f;
-    // At rest the accelerometer reads +1 g pointing up, so "down" is -grav.
+    to_screen(tilt[0], tilt[1], &wx, &wy);
+    // A twist carries the eye sideways (toward +h for a counter-clockwise twist
+    // when the screen faces outward), so its lag pushes the pupil the other way.
+    const float twist_push = -TWIST_SCREEN_SIGN * twist * TWIST_GAIN;
+    const float side_push = -lx * LOOK_ACCEL_GAIN + wy * LOOK_GYRO_GAIN;
+
+    // How much of the motion is twist, compared in look units. Twist is
+    // noticed quickly when it starts and forgotten slowly, so the eye turns
+    // into a twist straight away instead of first lagging behind it.
+    const float k = dt / (TWIST_SMOOTH_S + dt);
+    const float tw = fabsf(twist_push);
+    m->twist_avg += (tw > m->twist_avg ? dt / (TWIST_ATTACK_S + dt) : k) * (tw - m->twist_avg);
+    m->other_avg += k * ((fabsf(lx) + fabsf(ly)) * LOOK_ACCEL_GAIN + (fabsf(wx) + fabsf(wy)) * LOOK_GYRO_GAIN - m->other_avg);
+    const float share = m->twist_avg / (m->twist_avg + m->other_avg + 1e-3f);
+    o->twist_dominance = smoothstep(TWIST_DOMINANT_LO, TWIST_DOMINANT_HI, share);
+
+    // Mostly twist: reverse left/right. Other sideways motion reverses through
+    // the spring; the twist itself steers the pupil into the turn directly,
+    // skipping the spring so it keeps up with fast twisting. Otherwise twist
+    // lags through the spring like any other motion.
+    const float dom = o->twist_dominance;
+    const float ks = dt / (TWIST_SNAP_S + dt);
+    m->twist_snap[0] += ks * (-twist_push * dom * hx - m->twist_snap[0]);
+    m->twist_snap[1] += ks * (-twist_push * dom * hy - m->twist_snap[1]);
+    const float twist_lag = twist_push * (1.0f - dom);
     float target[2] = {
-        -lx * LOOK_ACCEL_GAIN + wy * LOOK_GYRO_GAIN - gx * inv_g * LOOK_DOWN_BIAS,
-        -ly * LOOK_ACCEL_GAIN - wx * LOOK_GYRO_GAIN - gy * inv_g * LOOK_DOWN_BIAS,
+        side_push * (1.0f - 2.0f * dom) + twist_lag * hx - gx * inv_g * LOOK_DOWN_BIAS,
+        -ly * LOOK_ACCEL_GAIN - wx * LOOK_GYRO_GAIN + twist_lag * hy - gy * inv_g * LOOK_DOWN_BIAS,
     };
     const float w = 2.0f * (float)M_PI * LOOK_SPRING_HZ;
     for (int i = 0; i < 2; i++) {
@@ -116,8 +188,14 @@ void motion_analysis_update(motion_analysis_t *m, const float acc[3], const floa
         m->vel[0] *= 0.5f;
         m->vel[1] *= 0.5f;
     }
-    o->look_x = m->pos[0];
-    o->look_y = m->pos[1];
+    float lx_out = m->pos[0] + m->twist_snap[0], ly_out = m->pos[1] + m->twist_snap[1];
+    r = sqrtf(lx_out * lx_out + ly_out * ly_out);
+    if (r > 1.0f) {
+        lx_out /= r;
+        ly_out /= r;
+    }
+    o->look_x = lx_out;
+    o->look_y = ly_out;
 
     // Dance: decimate vertical (along gravity) and screen-horizontal linear accel.
     m->acc_v += (lin[0] * m->grav[0] + lin[1] * m->grav[1] + lin[2] * m->grav[2]) * inv_g;

@@ -46,7 +46,7 @@ esp_err_t motion_start(void)
     ESP_RETURN_ON_ERROR(qmi8658_init(&imu, bus, QMI8658_ADDRESS_HIGH), TAG, "IMU init failed");
     qmi8658_set_accel_range(&imu, QMI8658_ACCEL_RANGE_8G);
     qmi8658_set_accel_odr(&imu, QMI8658_ACCEL_ODR_250HZ);
-    qmi8658_set_gyro_range(&imu, QMI8658_GYRO_RANGE_512DPS);
+    qmi8658_set_gyro_range(&imu, QMI8658_GYRO_RANGE_2048DPS);  // fast twists exceed 500 deg/s
     qmi8658_set_gyro_odr(&imu, QMI8658_GYRO_ODR_250HZ);
     BaseType_t ok = xTaskCreatePinnedToCore(motion_task, "motion", 4096, NULL, 5, NULL, 0);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;

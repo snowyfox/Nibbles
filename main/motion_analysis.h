@@ -9,6 +9,8 @@
 
 typedef struct {
     float look_x, look_y;   // pupil offset in -1..1, screen coords (x right, y down)
+    float twist_dps;        // rotation about the vertical; + is counter-clockwise seen from above
+    float twist_dominance;  // 0..1, how much of the current motion is twist
     float jolt_g;           // recent peak linear acceleration, decays quickly
     float energy_g;         // rms linear acceleration over the dance window
     float dance_score;      // 0..1
@@ -20,6 +22,9 @@ typedef struct {
     float grav[3];
     int have_grav;
     float pos[2], vel[2];
+    float twist_avg, other_avg;  // smoothed motion magnitudes, in look units
+    float prev_twist, twist_accel;  // deg/s and smoothed deg/s^2
+    float twist_snap[2];            // direct into-the-turn look, bypassing the spring
     // decimation to DANCE_RATE_HZ
     int decim, decim_n;
     float acc_v, acc_h;

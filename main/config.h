@@ -101,8 +101,22 @@
 #define LOOK_SPRING_HZ       1.4f    // natural frequency of the pupil spring
 #define LOOK_DAMPING         0.35f   // damping ratio (lower = more wobble)
 #define LOOK_ACCEL_GAIN      3.0f    // how hard linear acceleration pushes the pupil
-#define LOOK_GYRO_GAIN       0.004f  // how hard rotation (deg/s) pushes the pupil
+#define LOOK_GYRO_GAIN       0.004f  // how hard tilting (deg/s) pushes the pupil
 #define LOOK_DOWN_BIAS       0.25f   // eye tends to look toward the ground (the crowd)
+
+// Twist: rotation about the vertical (the pole spinning the shark). It pushes
+// the pupil sideways like other motion, but when the movement is mostly
+// twist the left/right response reverses, so the eye looks into the turn.
+#define TWIST_GAIN           0.006f  // sideways look per deg/s of twist
+#define TWIST_SCREEN_SIGN    1.0f    // +1 when the screen faces outward from the pole's axis; flip
+                                     // to -1 if twisting makes the eye look out of the turn
+#define TWIST_RADIUS_M       0.12f   // eye centre to the twist axis; its sideways swing is removed
+                                     // from the accelerometer so it doesn't count as other motion
+#define TWIST_ATTACK_S       0.05f   // how quickly a new twist is recognised...
+#define TWIST_SMOOTH_S       0.3f    // ...and how slowly it is forgotten
+#define TWIST_SNAP_S         0.05f   // looking into a turn skips the pupil spring; this is its smoothing
+#define TWIST_DOMINANT_LO    0.45f   // share of motion from twist where reversal starts...
+#define TWIST_DOMINANT_HI    0.60f   // ...and where it is complete (hand twisting scores ~0.6-0.8)
 #define DANCE_WINDOW_S       4       // seconds (integer: sizes a buffer)
 #define DANCE_MIN_PERIOD_S   0.3f    // up to 200 bpm
 #define DANCE_MAX_PERIOD_S   1.2f
