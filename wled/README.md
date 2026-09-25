@@ -127,6 +127,19 @@ WLED 16 read the noise there as button presses (0.15 didn't). The button was
 removed from the config (`hw.btn.ins` now empty; nothing on the board uses
 it) and the toggling stopped. Don't put a button on GPIO 0 on this board.
 
+**Power and the flash bump.** A flash bump turns all 1194 LEDs (2020-size
+WS281x) full white. With WLED's current limiter off, that rebooted the
+controller (a brownout). The bench board with the same firmware and config but
+no LEDs handled flash, blackout and preset bumps fine. The LEDs run from a
+50 W 12-24 V to 5 V converter (at most 10 A), fed with 20 V from a USB-PD
+trigger board (3-5 A) or a 4S 21700 pack. WLED's global limiter
+(`hw.led.maxpwr`, with its 55 mA-per-LED estimate) is now set to **5000 mA**:
+8000 still rebooted on a flash, 5000 survived single and repeated flashes.
+With 2020 LEDs, WLED's estimate overstates the real draw, so "5000" is a cap in
+WLED's units, not a measured 5 A. Normal presets are far below it (preset 230
+is estimated at about 120 mA). Keep the limiter on; retest flashes if the
+power hardware changes.
+
 Upgrade plan (for later upgrades):
 1. Back up its config and presets (WLED → Config → Security & Updates →
    Backup). LED and mic pins are in that config, not in the build.
