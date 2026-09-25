@@ -13,6 +13,7 @@
 // and base). See docs/architecture.md in the Nibbles repo.
 #include "wled.h"
 #include "nibbles_link.h"
+#include <esp_now.h>
 #include <map>
 
 #ifdef WLED_DISABLE_ESPNOW
@@ -70,10 +71,22 @@ class NibblesUsermod : public Usermod {
 
     bool radioUp() const { return enabled && enableESPNow && statusESPNow == ESP_NOW_STATE_ON; }
 
+    // Sent straight through ESP-IDF, not quickEspNow.send(): WLED starts
+    // QuickEspNow in synchronous mode, where send() spins in WLED's loop until
+    // the "sent" callback, and a send that fails (e.g. while Wi-Fi is still
+    // connecting in station mode) never gets one. That hung WLED on the shark.
     void send(const uint8_t *mac, uint8_t type, const void *payload, size_t len) {
       uint8_t pkt[NL_RADIO_MAX];
       const size_t n = nl_radio_build(pkt, sizeof(pkt), type, seq++, NL_ROLE_WLED, NL_SIDE_NONE, payload, len);
-      if (n) quickEspNow.send(mac, pkt, n);
+      if (!n) return;
+      esp_now_peer_info_t peer = {};
+      memcpy(peer.peer_addr, mac, 6);
+      peer.channel = 0;  // the current channel
+      peer.ifidx = (apActive && !WLED_CONNECTED) ? WIFI_IF_AP : WIFI_IF_STA;
+      esp_now_peer_info_t have;
+      if (esp_now_get_peer(mac, &have) != ESP_OK) esp_now_add_peer(&peer);
+      else if (have.ifidx != peer.ifidx) esp_now_mod_peer(&peer);
+      esp_now_send(mac, pkt, n);  // returns at once; failures are simply dropped
     }
 
     void sendHeartbeat() {
