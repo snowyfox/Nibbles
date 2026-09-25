@@ -80,7 +80,31 @@ usermod reads it with a names-only filter), Wi-Fi channel 11 at home, AP
 **`nibbles_shark`** env: WLED 16's `esp32_eth` plus the usermod. It builds and
 fits: 1.33 MB of the 1.5 MB app partition.
 
-Upgrade plan:
+**First upgrade attempt, 2026-09-24: WLED 16 hung on boot. Rolled back.**
+OTA to 16.0.1 + usermod went through, but on every boot the controller joined
+Wi-Fi (answered pings) and then stalled: no web server, LEDs dark, no Nibbles
+heartbeat. The release build prints nothing, and GPIO 1 (serial TX) carries
+LED channel 1, so there is no log. Recovered over the board's own USB port
+(CH340; `/dev/cu.wchusbserial*`, auto-reset into the bootloader works):
+- full flash image saved first (`wled/backup/.../flash_after_wled16.bin`);
+- app0 still held the official 0.15.1 image byte for byte (WLED 16 was in
+  app1), so erasing `otadata` (0xe000, 8 KB) made it boot 0.15.1 again;
+- WLED 16 had rewritten `cfg.json` on first boot (kept the old one as
+  `bkp.cfg.json`): `linked_remote` became a list, `hw.led.prl` (parallel I2S
+  output) and some transition keys were dropped. The original `cfg.json` was
+  uploaded back through `/upload` and the controller rebooted: 0.15.1, 1194
+  LEDs, 42 presets, remote linked.
+- Power the board from its LED supply while USB is connected: with the LEDs
+  attached, USB power alone tripped the Mac's port over-current protection.
+- DHCP gave it a new address afterwards (10.7.200.136).
+
+Before trying again, find the hang on the bench: a debug build with its log on
+another pin, or a classic ESP32 dev board with this config and presets
+(suspects: the parallel I2S LED output that 0.15 used, `prl`, alongside
+AudioReactive's I2S mic; the 5 buses on GPIO 1-5 including the UART pins).
+Upgrade only after the same build runs on the bench with this config.
+
+Upgrade plan (once the hang is understood):
 1. Back up its config and presets (WLED → Config → Security & Updates →
    Backup). LED and mic pins are in that config, not in the build.
 2. Build `nibbles_shark`; the image is `.pio/build/nibbles_shark/firmware.bin`.
