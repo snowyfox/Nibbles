@@ -102,6 +102,7 @@ typedef struct NL_PACKED {
     float hype;
     uint8_t brightness;     // panel brightness in percent
     char name[NL_NAME_LEN]; // current preset's name, NUL-terminated
+    uint8_t auto_cycle;     // 1 = presets change by themselves
 } nl_eye_telemetry_t;
 
 typedef struct NL_PACKED {
@@ -127,6 +128,7 @@ typedef enum {
     NL_OP_PRESET_PREV = 3,
     NL_OP_BRIGHTNESS_SET = 4,   // arg = 0..255
     NL_OP_BRIGHTNESS_STEP = 5,  // arg = signed step (eyes: through their brightness presets by sign)
+    NL_OP_AUTO_CYCLE = 6,       // eyes: arg 1 = cycle presets by themselves, 0 = hold the current one
 } nl_op_t;
 
 typedef struct NL_PACKED {

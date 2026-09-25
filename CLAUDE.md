@@ -49,7 +49,7 @@ idf.py -C firmware/base build                         # base prototype; flash th
 
 Testing radio commands without pressing buttons: write commands (plus
 newline) to the base prototype's USB serial port: `next`, `prev`, `set N`,
-`wled next`, `wled set N`, `bri N`, `wled bri N`, `[eyes|wled] bump
+`wled next`, `wled set N`, `bri N`, `wled bri N`, `auto on|off`, `[eyes|wled] bump
 flash|black MS`, `[eyes|wled] bump preset N MS`, and `shot` (a screenshot of
 its display as base64 RGB565; see `firmware/base/CLAUDE.md`). WLED builds are
 in `wled/README.md`.

@@ -59,7 +59,7 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
     if (cmd.target != NL_TARGET_EYES) status = NL_ACK_UNSUPPORTED;
     else if (cmd.op == NL_OP_PRESET_SET && (cmd.arg < 0 || cmd.arg >= preset_count)) status = NL_ACK_BAD_ARG;
     else if (cmd.op == NL_OP_BRIGHTNESS_SET && (cmd.arg < 0 || cmd.arg > 255)) status = NL_ACK_BAD_ARG;
-    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_BRIGHTNESS_STEP) status = NL_ACK_UNSUPPORTED;
+    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_AUTO_CYCLE) status = NL_ACK_UNSUPPORTED;
     else if (!repeat) xQueueSend(radio_cmds, &cmd, 0);
     last_id = cmd.id;
     memcpy(last_mac, mac, 6);
@@ -118,6 +118,7 @@ static void eye_task(void *arg)
     nl_bump_rx_t bumps;
     nl_bump_rx_init(&bumps);
     int64_t bump_rx_us = 0;
+    bool auto_cycle = true;  // presets change every PRESET_CYCLE_S unless the base holds them
     int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
     render_set_preset(0);
     ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
@@ -153,7 +154,11 @@ static void eye_task(void *arg)
         // A command from the radio. A preset chosen this way holds for a full cycle.
         nl_cmd_t cmd;
         if (!following && radio_cmds && xQueueReceive(radio_cmds, &cmd, 0) == pdTRUE) {
-            if (cmd.op == NL_OP_BRIGHTNESS_SET || cmd.op == NL_OP_BRIGHTNESS_STEP) {
+            if (cmd.op == NL_OP_AUTO_CYCLE) {
+                auto_cycle = cmd.arg != 0;
+                next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+                ESP_LOGI(TAG, "radio command: presets %s", auto_cycle ? "cycle" : "held");
+            } else if (cmd.op == NL_OP_BRIGHTNESS_SET || cmd.op == NL_OP_BRIGHTNESS_STEP) {
                 if (cmd.op == NL_OP_BRIGHTNESS_SET) {
                     bright_pct = (cmd.arg * 100 + 127) / 255;  // not saved: the presets are what BOOT cycles
                 } else {
@@ -198,7 +203,7 @@ static void eye_task(void *arg)
         if (ev != NL_BUMP_EV_NONE) ESP_LOGI(TAG, "bump %s (action %d)", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
 
         // Cycle through the visual presets; the eye blinks to hide each change.
-        if (!following && now >= next_swap) {
+        if (!following && auto_cycle && now >= next_swap) {
             next_swap += (int64_t)PRESET_CYCLE_S * 1000000;
             next_preset = (preset_index + 1) % preset_count;
             eye_request_swap(&eye);
@@ -251,6 +256,7 @@ static void eye_task(void *arg)
                 .level_db = a.level_db,
                 .hype = eye.p.hype,
                 .brightness = (uint8_t)bright_pct,
+                .auto_cycle = auto_cycle,
             };
             strlcpy(t.name, presets[shown].name, sizeof(t.name));
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));

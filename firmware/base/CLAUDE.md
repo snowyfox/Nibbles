@@ -34,7 +34,9 @@ What it does now (`main/main.c`):
   printf has no `%f`.
 - **Touch** (AXS15231B touch at 0x3B on I2C SDA 17 / SCL 18, read with the
   vendor's 11-byte command; native coordinates, LVGL rotates them): tap the
-  EYES or WLED card for that side's next preset; drag the slider at the
+  EYES or WLED card for that side's next preset; long-press the EYES card to
+  hold the current preset or let them change by themselves again (the card
+  shows `auto` or `held`); drag the slider at the
   bottom of either card to set its brightness (sent on release); hold the FLASH or BLACKOUT
   pad to bump (targets `BTN_BUMP_TARGET`; BLACKOUT wins over FLASH). Taps go
   through a queue to an actions task, since commands block for their ack; the
@@ -47,7 +49,7 @@ What it does now (`main/main.c`):
   the last message).
 - USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
   `wled next`, `wled set N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
-  step); `shot`; `[eyes|wled] bump flash MS`,
+  step); `auto on|off`; `shot`; `[eyes|wled] bump flash MS`,
   `[eyes|wled] bump black MS`, `[eyes|wled] bump preset N MS` (no prefix:
   flash and blackout go to both, preset bumps to WLED, as the preset numbers
   differ). Commands are unicast with an ack and up to 3 tries of

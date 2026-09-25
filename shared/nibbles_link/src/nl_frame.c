@@ -3,7 +3,7 @@
 #include <string.h>
 
 _Static_assert(sizeof(nl_heartbeat_t) == 14, "nl_heartbeat_t layout");
-_Static_assert(sizeof(nl_eye_telemetry_t) == 45, "nl_eye_telemetry_t layout");
+_Static_assert(sizeof(nl_eye_telemetry_t) == 46, "nl_eye_telemetry_t layout");
 _Static_assert(sizeof(nl_cmd_t) == 6, "nl_cmd_t layout");
 _Static_assert(sizeof(nl_ack_t) == 3, "nl_ack_t layout");
 _Static_assert(sizeof(nl_wled_telemetry_t) == 30, "nl_wled_telemetry_t layout");

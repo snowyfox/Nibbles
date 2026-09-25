@@ -202,6 +202,9 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
 - Takes `nl_cmd_t` preset commands (set/next/prev) and acks them; retries with
   the same id are acked but applied once. A command triggers the swap blink
   and holds for a full preset cycle; the port eye follows over the cable.
+- `NL_OP_AUTO_CYCLE` (arg 0/1) stops or restarts the automatic preset change
+  every `PRESET_CYCLE_S`; telemetry's `auto_cycle` reports it. Held presets
+  still change on commands.
 - Brightness commands: `NL_OP_BRIGHTNESS_SET` (0..255 → percent, not saved)
   and `NL_OP_BRIGHTNESS_STEP` (to the next `BRIGHTNESS_PRESETS` level above or
   below the current one, saved like the BOOT button). The leader shares its

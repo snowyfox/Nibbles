@@ -31,6 +31,7 @@ typedef enum {
     DISPLAY_PAD_BLACKOUT,     // hold the BLACKOUT pad
     DISPLAY_SLIDE_EYES,       // eyes brightness slider released: value 0..255
     DISPLAY_SLIDE_WLED,       // WLED brightness slider released: value 0..255
+    DISPLAY_HOLD_EYES,        // long press on the EYES card (toggle automatic preset changes)
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).

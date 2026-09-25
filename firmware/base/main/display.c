@@ -235,7 +235,7 @@ static void on_event(lv_event_t *ev)
         }
         return;
     }
-    if (code == LV_EVENT_CLICKED || code == LV_EVENT_PRESSED) action_cb(a, true, 0);
+    if (code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_LONG_PRESSED || code == LV_EVENT_PRESSED) action_cb(a, true, 0);
     else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) action_cb(a, false, 0);
 }
 
@@ -359,9 +359,10 @@ static void ui_build(void)
 
     // Tapping a card steps that side's preset.
     lv_obj_add_flag(eyes_card.card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(eyes_card.card, on_event, LV_EVENT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_EYES);
+    lv_obj_add_event_cb(eyes_card.card, on_event, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_EYES);
+    lv_obj_add_event_cb(eyes_card.card, on_event, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)DISPLAY_HOLD_EYES);
     lv_obj_add_flag(wled_card.card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(wled_card.card, on_event, LV_EVENT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_WLED);
+    lv_obj_add_event_cb(wled_card.card, on_event, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_WLED);
     lv_obj_set_style_bg_color(eyes_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(wled_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
     lv_obj_add_event_cb(eyes_card.bar, on_event, LV_EVENT_RELEASED, (void *)(intptr_t)DISPLAY_SLIDE_EYES);
@@ -403,7 +404,8 @@ static void ui_update(const display_status_t *s)
                               e->brightness);
         lv_obj_set_style_text_color(eyes_card.line1, lv_color_hex(e->linked ? COL_TEXT : COL_WARN), 0);
         // LVGL's printf has no floats.
-        lv_label_set_text_fmt(eyes_card.line2, "%d/%d  %d.%d|%d.%d fps  %d bpm", e->preset + 1, e->preset_count,
+        lv_label_set_text_fmt(eyes_card.line2, "%d/%d %s  %d.%d|%d.%d fps  %d bpm", e->preset + 1, e->preset_count,
+                              e->auto_cycle ? "auto" : "held",
                               e->fps_x10[0] / 10, e->fps_x10[0] % 10, e->fps_x10[1] / 10, e->fps_x10[1] % 10,
                               (int)(e->tempo_bpm + 0.5f));
         set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, true);

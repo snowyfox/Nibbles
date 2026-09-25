@@ -66,8 +66,9 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const int64_t t0 = esp_timer_get_time();
     const esp_err_t err = nl_espnow_command(mac, &cmd, &status, CMD_TRIES, CMD_TIMEOUT_MS);
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
-    static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness" };
-    const char *what = op <= NL_OP_BRIGHTNESS_STEP ? ops[op] : "?";
+    static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
+                                 "auto presets" };
+    const char *what = op <= NL_OP_AUTO_CYCLE ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
@@ -134,6 +135,13 @@ static void actions_task(void *arg)
             case DISPLAY_TAP_WLED:   send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0); break;
             case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_EYES, NL_OP_BRIGHTNESS_SET, a.value); break;
             case DISPLAY_SLIDE_WLED: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
+            case DISPLAY_HOLD_EYES: {
+                taskENTER_CRITICAL(&lock);
+                const bool on = eyes.auto_cycle;
+                taskEXIT_CRITICAL(&lock);
+                send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, !on);
+                break;
+            }
             default: break;
         }
     }
@@ -231,6 +239,7 @@ static void console_task(void *arg)
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
         else if (!strcmp(line, "shot")) display_screenshot();
+        else if (!strcmp(line, "auto on") || !strcmp(line, "auto off")) send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, line[6] == 'n');
         else if (!strncmp(line, "bri ", 4)) send_cmd_to(NL_TARGET_EYES, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
         else if (!strncmp(line, "wled bri ", 9)) send_cmd_to(NL_TARGET_WLED, line[9] == '+' || line[9] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 9));
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
@@ -246,7 +255,7 @@ static void console_task(void *arg)
                 if (target == (NL_TARGET_EYES | NL_TARGET_WLED)) target = NL_TARGET_WLED;
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
     }
 }
 
