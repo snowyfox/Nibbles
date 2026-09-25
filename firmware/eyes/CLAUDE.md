@@ -220,7 +220,10 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   - blackout: lids snap shut and `p.master` (a master level the renderer applies
     to everything, outline included) goes to 0; reopens over ~0.3 s;
   - preset: shows preset number `arg` (1-based, so the same number means the
-    same on WLED; index `arg - 1`) at once, no blink, and puts the old one back.
+    same on WLED; index `arg - 1`) behind a swap blink, and blinks back to the
+    eye's own preset on release (about 0.2 s to show: the lids take 0.14 s to
+    shut). The leader changes presets only at `swap_now`, to whatever it
+    should show (bump preset, else its own), and exports the preset on screen.
   The leader logs `bump shown N ms after it arrived` (measured 35–68 ms,
   median 54: up to a frame of waiting, the TE wait, then ~26 ms to send the
   frame). Bumps change `eye.p` on the leader, and the shared state

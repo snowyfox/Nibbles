@@ -183,8 +183,8 @@ static void eye_task(void *arg)
             }
         }
 
-        // Bumps: flash and blackout are drawn by the eye; a preset bump swaps
-        // the preset at once (no blink) and puts it back on release.
+        // Bumps: flash and blackout are drawn by the eye at once; a preset bump
+        // blinks to its preset and blinks back on release (see swap_now below).
         bump_item_t bmsg;
         const uint32_t now_ms = (uint32_t)(now / 1000);
         nl_bump_event_t ev = NL_BUMP_EV_NONE;
@@ -221,23 +221,37 @@ static void eye_task(void *arg)
                 preset_index = shared.preset;
                 ESP_LOGI(TAG, "preset %d: %s (from the leader)", preset_index, presets[preset_index].name);
             }
-        } else if (eye.p.swap_now) {
-            preset_index = next_preset;
-            ESP_LOGI(TAG, "preset %d: %s", preset_index, presets[preset_index].name);
-        }
-        const int shown = bump_preset >= 0 && !following ? bump_preset : preset_index;
-        if (shown != rendered) {
-            rendered = shown;
-            render_set_preset(rendered);
+            if (preset_index != rendered) {  // the leader's lids are shut for it
+                rendered = preset_index;
+                render_set_preset(rendered);
+            }
+        } else {
+            // What the eye should show: a held preset bump, else its own preset.
+            // Every change hides behind a swap blink and happens while the lids
+            // are shut.
+            const int wanted = bump_preset >= 0 ? bump_preset : next_preset;
+            if (wanted != rendered && !eye.swap_pending && !eye.p.swap_now) eye_request_swap(&eye);
+            if (eye.p.swap_now) {
+                if (next_preset != preset_index) {
+                    preset_index = next_preset;
+                    ESP_LOGI(TAG, "preset %d: %s", preset_index, presets[preset_index].name);
+                }
+                const int show = bump_preset >= 0 ? bump_preset : preset_index;
+                if (show != rendered) {
+                    rendered = show;
+                    render_set_preset(rendered);
+                    if (bump_preset >= 0) ESP_LOGI(TAG, "bump preset %d: %s", rendered, presets[rendered].name);
+                }
+            }
         }
         if (role == NL_ROLE_EYE_LEADER) {
-            eye_export_shared(&eye, shown, side, &shared);
+            eye_export_shared(&eye, rendered, side, &shared);
             shared.brightness = (uint8_t)bright_pct;
             link_send_eye_state(&shared);
         }
         render_frame(&eye.p);
         frames++;
-        if (bump_rx_us) {
+        if (bump_rx_us && (bumps.bump.action != NL_BUMP_PRESET || bump_preset < 0 || rendered == bump_preset)) {
             ESP_LOGI(TAG, "bump shown %.1f ms after it arrived", (esp_timer_get_time() - bump_rx_us) / 1000.0f);
             bump_rx_us = 0;
         }
@@ -259,7 +273,7 @@ static void eye_task(void *arg)
                 .brightness = (uint8_t)bright_pct,
                 .auto_cycle = auto_cycle,
             };
-            strlcpy(t.name, presets[shown].name, sizeof(t.name));
+            strlcpy(t.name, presets[rendered].name, sizeof(t.name));
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));
         }
 
