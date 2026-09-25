@@ -97,6 +97,9 @@ LED channel 1, so there is no log. Recovered over the board's own USB port
 - Power the board from its LED supply while USB is connected: with the LEDs
   attached, USB power alone tripped the Mac's port over-current protection.
 - DHCP gave it a new address afterwards (10.7.200.136).
+- While the USB cable is connected, LED channel 3 (GPIO 3, the UART RX pin
+  that the CH340 drives) goes dark; it comes back when USB is unplugged.
+  Only connect USB for recovery.
 
 Before trying again, find the hang on the bench: a debug build with its log on
 another pin, or a classic ESP32 dev board with this config and presets
