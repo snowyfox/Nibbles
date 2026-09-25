@@ -46,7 +46,7 @@ idf.py -p /dev/cu.usbmodemNNN flash      # port varies (201, 401 seen): ls /dev/
 Host tests (pure-C analysis, eye behaviour and presets; no hardware needed):
 
 ```sh
-make -C test/host            # 147 checks, prints ok/FAIL, non-zero exit on failure
+make -C test/host            # 150 checks, prints ok/FAIL, non-zero exit on failure
 ```
 
 Reading the board: open the port with pyserial from the activated IDF env and
@@ -76,6 +76,8 @@ main/
   motion_analysis.c/h pure C: gravity, pupil spring, twist, dance, motion activity
   eye.c/h             pure C: behaviour (sleep/wake, blinks, swap blink, hype, colour drift, ripples)
   presets.c/h         18 visual presets (data) + tempo-locked spin rate
+  board.c/h           side and role from the board's MAC
+  link.c/h            wired eye link (UART1)
   render.c/h          custom renderer straight to the CO5300 (no LVGL)
   sensors.h           audio/motion task interfaces
 components/bsp_extra/ copied from Waveshare's 05_Spec_Analyzer (Apache-2.0), plus a mic gain setter
@@ -191,6 +193,19 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   frames, CRC and bad-frame counts, own echoes (a loopback jumper), the audio
   source and total late frames.
 
+### Radio (`nibbles_espnow`, leader eye only)
+- ESP-NOW via `shared/nibbles_espnow`: Wi-Fi in station mode without joining a
+  network. The leader scans channels (from `RADIO_START_CHANNEL`) until it hears
+  an anchor heartbeat (the base prototype today, WLED later), then locks.
+- Broadcasts `nl_eye_telemetry_t` every 500 ms (preset, state, linked, both
+  eyes' fps and late frames, tempo, level, hype).
+- Takes `nl_cmd_t` preset commands (set/next/prev) and acks them; retries with
+  the same id are acked but applied once. A command triggers the swap blink
+  and holds for a full preset cycle; the port eye follows over the cable.
+- Measured: commands acked in ~2 ms, 0 late frames with Wi-Fi running,
+  ~73 KB internal RAM free. A 5 s `radio:` log line shows channel, lock,
+  rx/tx/fail and free internal heap.
+
 ### Controls
 BOOT button cycles brightness 30/60/100% (saved to NVS; default 100%).
 
@@ -215,8 +230,6 @@ Recordings are kept out of the repo.
 - `QUIET_DB` was set in the user's room; a different space may need tuning.
 - The IMU's horizontal (x) sign for linear sway was never checked separately
   on the mount; twist direction was confirmed by feel on the starboard eye.
-- The two eyes run independently: presets cycle on each board's own clock and
-  blinks are random, so they are not synchronised.
 
 ## History (this session)
 

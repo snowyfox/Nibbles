@@ -1,5 +1,6 @@
 // Nibbles: a neon eye for a festival shark totem.
 #include <stdio.h>
+#include <string.h>
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -12,6 +13,9 @@
 #include "board.h"
 #include "eye.h"
 #include "link.h"
+#include "esp_heap_caps.h"
+#include "freertos/queue.h"
+#include "nibbles_espnow.h"
 #include "presets.h"
 #include "render.h"
 #include "sensors.h"
@@ -21,6 +25,28 @@ static const char *TAG = "nibbles";
 #define BOOT_BUTTON GPIO_NUM_0
 static const int brightness_presets[] = BRIGHTNESS_PRESETS;
 #define N_PRESETS ((int)(sizeof(brightness_presets) / sizeof(brightness_presets[0])))
+
+// Preset commands from the radio, handed to the eye task.
+static QueueHandle_t radio_cmds;
+
+static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
+{
+    if (h->type != NL_MSG_CMD || len != sizeof(nl_cmd_t)) return;
+    nl_cmd_t cmd;
+    memcpy(&cmd, pl, sizeof(cmd));
+    // Retries reuse the id: acknowledge again, but apply once.
+    static uint16_t last_id;
+    static uint8_t last_mac[6];
+    const bool repeat = cmd.id == last_id && memcmp(mac, last_mac, 6) == 0;
+    uint8_t status = NL_ACK_OK;
+    if (cmd.target != NL_TARGET_EYES) status = NL_ACK_UNSUPPORTED;
+    else if (cmd.op == NL_OP_PRESET_SET && (cmd.arg < 0 || cmd.arg >= preset_count)) status = NL_ACK_BAD_ARG;
+    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_PRESET_PREV) status = NL_ACK_UNSUPPORTED;
+    else if (!repeat) xQueueSend(radio_cmds, &cmd, 0);
+    last_id = cmd.id;
+    memcpy(last_mac, mac, 6);
+    nl_espnow_ack(mac, cmd.id, status);
+}
 
 static int load_brightness_index(void)
 {
@@ -76,7 +102,8 @@ static void eye_task(void *arg)
     const nl_role_t role = board_role();
     const nl_side_t side = board_side();
     bool was_linked = false;
-    int64_t last_link_log = last;
+    int64_t last_link_log = last, next_telemetry = last;
+    uint16_t fps_x10 = 0, late_second = 0;
     for (;;) {
         const int64_t now = esp_timer_get_time();
         float dt = (now - last) / 1e6f;
@@ -91,6 +118,18 @@ static void eye_task(void *arg)
             ESP_LOGI(TAG, "%s", following ? "following the leader eye" : "running standalone");
             was_linked = following;
             next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+        }
+
+        // A preset chosen over the radio; it then holds for a full cycle.
+        nl_cmd_t cmd;
+        if (!following && radio_cmds && xQueueReceive(radio_cmds, &cmd, 0) == pdTRUE) {
+            const int base = eye.swap_pending ? next_preset : preset_index;
+            if (cmd.op == NL_OP_PRESET_SET) next_preset = cmd.arg;
+            else if (cmd.op == NL_OP_PRESET_NEXT) next_preset = (base + 1) % preset_count;
+            else next_preset = (base + preset_count - 1) % preset_count;
+            eye_request_swap(&eye);
+            next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+            ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
         }
 
         // Cycle through the visual presets; the eye blinks to hide each change.
@@ -124,6 +163,24 @@ static void eye_task(void *arg)
         render_frame(&eye.p);
         frames++;
 
+        if (radio_cmds && now >= next_telemetry) {
+            next_telemetry = now + TELEMETRY_MS * 1000LL;
+            link_stats_t ls;
+            link_get_stats(&ls);
+            const nl_eye_telemetry_t t = {
+                .preset = (uint8_t)preset_index,
+                .preset_count = (uint8_t)preset_count,
+                .state = (uint8_t)eye.state,
+                .linked = ls.peer_up,
+                .fps_x10 = { fps_x10, ls.peer_up ? ls.peer_fps_x10 : 0 },
+                .late_frames = { late_second, ls.peer_up ? ls.peer_late : 0 },
+                .tempo_bpm = eye.p.tempo_bpm,
+                .level_db = a.level_db,
+                .hype = eye.p.hype,
+            };
+            nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));
+        }
+
         if (button_pressed()) {
             bright_idx = (bright_idx + 1) % N_PRESETS;
             render_set_brightness(brightness_presets[bright_idx]);
@@ -136,7 +193,10 @@ static void eye_task(void *arg)
             int late;
             float worst_ms, prep_ms;
             render_take_stats(&late, &worst_ms, &prep_ms);
-            link_set_status((uint16_t)(frames / secs * 10.0f + 0.5f), (uint16_t)late);
+            fps_x10 = (uint16_t)(frames / secs * 10.0f + 0.5f);
+            late_second = (uint16_t)late;
+            link_set_status(fps_x10, late_second);
+            if (radio_cmds) nl_espnow_set_status(fps_x10, late_second);
             late_total += late;
             ESP_LOGI(TAG, "%.1f fps (prep %.1f, send %.1f ms max, %d late) | %.1f dB (floor %.1f, gain %.0f) loud %.2f warm %.2f beats %lu bpm %.0f rhythm %.2f | "
                      "look %+.2f,%+.2f twist %+.0f/s (%.2f) jolt %.2fg dance %.2f (%.2fs) act %.2f | %s lid %.2f hype %.2f",
@@ -155,6 +215,14 @@ static void eye_task(void *arg)
                      ls.peer_up ? "up" : "down", following ? " (following)" : "",
                      (unsigned long)ls.rx_frames, (unsigned long)ls.tx_frames, (unsigned long)ls.crc_errors,
                      (unsigned long)ls.bad_frames, (unsigned long)ls.own_frames, remote_audio ? "port eye" : "own mic", late_total);
+            if (radio_cmds) {
+                nl_espnow_stats_t rs;
+                nl_espnow_get_stats(&rs);
+                ESP_LOGI(TAG, "radio: channel %d %s, rx %lu tx %lu fail %lu dropped %lu, %lu locks, internal heap free %u",
+                         rs.channel, rs.locked ? "locked" : "scanning", (unsigned long)rs.rx, (unsigned long)rs.tx,
+                         (unsigned long)rs.tx_fail, (unsigned long)rs.dropped, (unsigned long)rs.locks,
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+            }
             last_link_log = now;
         }
         vTaskDelay(1);  // let the idle task run
@@ -178,6 +246,22 @@ void app_main(void)
 
     ESP_ERROR_CHECK(render_init());
     if (link_start() != ESP_OK) ESP_LOGE(TAG, "eye link unavailable; running standalone");
+    if (EYES_RADIO && board_role() == NL_ROLE_EYE_LEADER) {
+        radio_cmds = xQueueCreate(4, sizeof(nl_cmd_t));
+        const nl_espnow_config_t rcfg = {
+            .role = NL_ROLE_EYE_LEADER,
+            .side = board_side(),
+            .fw = NIBBLES_FW_BUILD,
+            .anchor = false,
+            .anchor_channel = RADIO_START_CHANNEL,
+            .handler = on_radio,
+            .core = 0,
+        };
+        if (nl_espnow_start(&rcfg) != ESP_OK) {
+            ESP_LOGE(TAG, "radio unavailable");
+            radio_cmds = NULL;
+        }
+    }
     if (audio_start() != ESP_OK) ESP_LOGE(TAG, "audio unavailable; eye will not react to sound");
     if (motion_start() != ESP_OK) ESP_LOGE(TAG, "IMU unavailable; eye will not react to motion");
 

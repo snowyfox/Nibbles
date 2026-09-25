@@ -2,7 +2,12 @@
 
 #include <string.h>
 
-_Static_assert(sizeof(nl_heartbeat_t) == 12, "nl_heartbeat_t layout");
+_Static_assert(sizeof(nl_heartbeat_t) == 14, "nl_heartbeat_t layout");
+_Static_assert(sizeof(nl_eye_telemetry_t) == 24, "nl_eye_telemetry_t layout");
+_Static_assert(sizeof(nl_cmd_t) == 6, "nl_cmd_t layout");
+_Static_assert(sizeof(nl_ack_t) == 3, "nl_ack_t layout");
+_Static_assert(sizeof(nl_radio_hdr_t) == 10, "nl_radio_hdr_t layout");
+_Static_assert(NL_RADIO_MAX <= 250, "ESP-NOW packets are at most 250 bytes");
 _Static_assert(sizeof(nl_audio_t) == 36, "nl_audio_t layout");
 _Static_assert(sizeof(nl_eye_state_t) == 80, "nl_eye_state_t layout");
 _Static_assert(sizeof(nl_eye_state_t) <= NL_MAX_PAYLOAD, "payload too big");
@@ -114,5 +119,35 @@ bool nl_parse_byte(nl_parser_t *p, uint8_t byte, nl_frame_t *out)
     out->payload = p->dec + NL_HEADER_LEN;
     out->len = len - NL_HEADER_LEN - NL_CRC_LEN;
     p->frames++;
+    return true;
+}
+
+size_t nl_radio_build(uint8_t *out, size_t cap, uint8_t type, uint16_t seq, uint8_t role, uint8_t side,
+                      const void *payload, size_t len)
+{
+    if (len > NL_MAX_PAYLOAD || cap < sizeof(nl_radio_hdr_t) + len) return 0;
+    const nl_radio_hdr_t h = {
+        .magic = { NL_RADIO_MAGIC0, NL_RADIO_MAGIC1 },
+        .net_id = NL_NET_ID,
+        .type = type,
+        .version = NL_VERSION,
+        .seq = seq,
+        .role = role,
+        .side = side,
+    };
+    memcpy(out, &h, sizeof(h));
+    if (len) memcpy(out + sizeof(h), payload, len);
+    return sizeof(h) + len;
+}
+
+bool nl_radio_parse(const uint8_t *in, size_t n, nl_radio_hdr_t *hdr, const uint8_t **payload, size_t *len)
+{
+    if (n < sizeof(nl_radio_hdr_t)) return false;
+    memcpy(hdr, in, sizeof(*hdr));
+    if (hdr->magic[0] != NL_RADIO_MAGIC0 || hdr->magic[1] != NL_RADIO_MAGIC1 || hdr->net_id != NL_NET_ID ||
+        hdr->version != NL_VERSION)
+        return false;
+    *payload = in + sizeof(*hdr);
+    *len = n - sizeof(*hdr);
     return true;
 }

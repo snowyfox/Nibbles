@@ -11,8 +11,9 @@ of Nibbles' own code; WLED itself stays upstream.
 |---|---|---|---|
 | **Eyes** (port + starboard) | 2× Waveshare ESP32-S3-Touch-AMOLED-1.75, back to back | `firmware/eyes/` (ESP-IDF 5.5.5) | Working; linked by a 3-wire cable (starboard leads, port is the ears) |
 | **Lights** | Existing ESP32 running WLED (0.15, to be upgraded to 16.x), external digital mic | `wled/usermod_nibbles/` (planned) | Stock WLED today |
-| **Base station** | New ESP32 in the pole base: batteries, status screen(s), buttons | `firmware/base/` (planned) | Not built; hardware not chosen |
-| **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing + eye messages; host tests (`make -C shared/nibbles_link`) |
+| **Base station** | New ESP32 in the pole base: batteries, status screen(s), buttons | `firmware/base/` (ESP-IDF 5.5.5) | Prototype on a Waveshare ESP32-S3-Touch-LCD-3.49: anchors the radio channel, logs eye telemetry, BOOT/second key = next/previous eye preset; no screen yet |
+| **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing, radio packets, eye messages, commands, channel scanning; host tests (`make -C shared/nibbles_link`) |
+| **Radio transport** | ESP-IDF boards (eyes, base) | `shared/nibbles_espnow/` | ESP-NOW: anchor or scan, broadcast, commands with ack/retry |
 
 `docs/architecture.md` has the agreed design and roadmap: roles, the wired eye
 link, ESP-NOW with WLED as the channel anchor, the message rules, and phases.
@@ -26,6 +27,7 @@ how the firmware works and why.
 |---|---|---|
 | Starboard eye | 28:84:85:3A:DA:78 | link leader (shared eye brain); planned radio gateway |
 | Port eye | 28:84:85:3B:6F:F4 | recognised by MAC (`PORT_EYE_MACS`); the ears (mic + audio analysis) |
+| Base prototype | 28:84:85:91:27:08 | ESP32-S3-Touch-LCD-3.49 running `firmware/base` |
 
 Eye cable (8-pin headers): GND↔GND (pin 2), starboard GPIO 17 (pin 6) → port GPIO 18
 (pin 7), port GPIO 17 → starboard GPIO 18. Never link VBUS (pin 1) or 3V3.
@@ -42,7 +44,11 @@ make -C firmware/eyes/test/host                       # eye host tests (no hardw
 make -C shared/nibbles_link                           # link protocol host tests
 idf.py -C firmware/eyes build
 idf.py -C firmware/eyes -p /dev/cu.usbmodemNNN flash
+idf.py -C firmware/base build                         # base prototype; flash the same way
 ```
+
+Testing radio commands without pressing buttons: write `next`, `prev` or
+`set N` (plus newline) to the base prototype's USB serial port.
 
 ## Conventions
 

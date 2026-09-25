@@ -28,6 +28,7 @@ typedef struct {
     uint32_t own_frames;            // our own heartbeats heard back (a loopback jumper)
     bool peer_up;
     uint16_t peer_fps_x10;
+    uint16_t peer_late;             // the other eye's late frames in its last second
 } link_stats_t;
 
 void link_get_stats(link_stats_t *out);

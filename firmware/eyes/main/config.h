@@ -28,6 +28,14 @@
 #define LINK_PEER_TIMEOUT_MS 1500    // other eye counts as gone after this long without a heartbeat
 #define LINK_STATE_MAX_AGE_MS 250    // shared state / audio older than this is ignored (fall back to standalone)
 
+// ---------------------------------------------------------------- radio (leader eye only)
+// ESP-NOW to the rest of the shark: scans for the channel anchor (WLED, or the
+// base station until the WLED usermod exists), sends telemetry, takes preset
+// commands. The port eye has no radio; it follows the leader over the cable.
+#define EYES_RADIO           1
+#define RADIO_START_CHANNEL  6       // first channel tried when scanning
+#define TELEMETRY_MS         500
+
 // ---------------------------------------------------------------- presets
 #define PRESET_CYCLE_S       10      // move to the next visual preset this often (see presets.c)
 #define SPIN_EASE_S          1.0f    // how quickly a spiral's spin follows tempo changes

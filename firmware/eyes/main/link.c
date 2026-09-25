@@ -175,5 +175,6 @@ void link_get_stats(link_stats_t *out)
     out->own_frames = own_frames;
     out->peer_up = fresh(peer_us, LINK_PEER_TIMEOUT_MS);
     out->peer_fps_x10 = rx_heartbeat.fps_x10;
+    out->peer_late = rx_heartbeat.late_frames;
     taskEXIT_CRITICAL(&lock);
 }

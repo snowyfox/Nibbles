@@ -113,6 +113,60 @@ static void test_crc(void)
     CHECK(nl_crc16((const uint8_t *)"123456789", 9) == 0x29B1, "CRC-16/CCITT-FALSE check value 0x%04X", nl_crc16((const uint8_t *)"123456789", 9));
 }
 
+static void test_radio(void)
+{
+    uint8_t pkt[NL_RADIO_MAX];
+    const nl_cmd_t cmd = { .id = 77, .target = NL_TARGET_EYES, .op = NL_OP_PRESET_NEXT };
+    const size_t n = nl_radio_build(pkt, sizeof(pkt), NL_MSG_CMD, 9, NL_ROLE_BASE, NL_SIDE_NONE, &cmd, sizeof(cmd));
+    nl_radio_hdr_t h;
+    const uint8_t *pl;
+    size_t len;
+    const bool ok = nl_radio_parse(pkt, n, &h, &pl, &len);
+    nl_cmd_t got;
+    memcpy(&got, pl, sizeof(got));
+    CHECK(ok && h.type == NL_MSG_CMD && h.seq == 9 && h.role == NL_ROLE_BASE && len == sizeof(cmd) && got.id == 77 &&
+          got.op == NL_OP_PRESET_NEXT, "radio packet round trip (%d bytes)", (int)n);
+    pkt[2] ^= 1;  // another network
+    CHECK(!nl_radio_parse(pkt, n, &h, &pl, &len), "packet from another network ignored");
+    pkt[2] ^= 1;
+    pkt[5] = NL_VERSION + 1;
+    CHECK(!nl_radio_parse(pkt, n, &h, &pl, &len), "packet with another protocol version ignored");
+    CHECK(!nl_radio_parse(pkt, 5, &h, &pl, &len), "short packet ignored");
+}
+
+static void test_chanscan(void)
+{
+    // An anchor on channel 11: found within one sweep, then held.
+    nl_chanscan_t s;
+    nl_chanscan_init(&s, 1);
+    int found_ms = -1;
+    for (int t = 0; t < 20000; t += 50) {
+        const uint8_t ch = nl_chanscan_tick(&s, 50);
+        if (ch == 11 && (t % 250) < 50) nl_chanscan_heard_anchor(&s);  // 4 Hz heartbeat
+        if (s.locked && found_ms < 0) found_ms = t;
+    }
+    CHECK(found_ms >= 0 && found_ms <= 13 * NL_SCAN_DWELL_MS, "anchor on channel 11 found after %d ms", found_ms);
+    CHECK(s.locked && s.channel == 11 && s.locks == 1, "stays locked on channel 11 (%u locks)", (unsigned)s.locks);
+
+    // The anchor moves to channel 3 (WLED switched from hotspot to its own AP).
+    int relock_ms = -1;
+    for (int t = 0; t < 30000; t += 50) {
+        const uint8_t ch = nl_chanscan_tick(&s, 50);
+        if (ch == 3 && (t % 250) < 50) nl_chanscan_heard_anchor(&s);
+        if (s.locked && s.channel == 3 && relock_ms < 0) relock_ms = t;
+    }
+    CHECK(relock_ms >= NL_LOCK_TIMEOUT_MS && relock_ms <= NL_LOCK_TIMEOUT_MS + 13 * NL_SCAN_DWELL_MS,
+          "anchor moved to channel 3: relocked after %d ms", relock_ms);
+
+    // No anchor: keeps sweeping every channel.
+    nl_chanscan_init(&s, 5);
+    int seen[NL_CHANNEL_MAX + 1] = { 0 };
+    for (int t = 0; t < 13 * NL_SCAN_DWELL_MS; t += 50) seen[nl_chanscan_tick(&s, 50)] = 1;
+    int all = 1;
+    for (int c = NL_CHANNEL_MIN; c <= NL_CHANNEL_MAX; c++) all &= seen[c];
+    CHECK(all && !s.locked, "no anchor: sweeps all 13 channels");
+}
+
 int main(void)
 {
     srand(1);
@@ -120,6 +174,8 @@ int main(void)
     test_round_trip();
     test_corruption();
     test_resync_and_stream();
+    test_radio();
+    test_chanscan();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }
