@@ -75,6 +75,7 @@ typedef struct NL_PACKED {
 } nl_audio_t;
 
 #define NL_RIPPLES 4
+#define NL_NAME_LEN 20          // preset names in telemetry, terminator included
 
 typedef struct NL_PACKED {
     float time_s;           // the leader's animation clock
@@ -100,6 +101,7 @@ typedef struct NL_PACKED {
     float level_db;
     float hype;
     uint8_t brightness;     // panel brightness in percent
+    char name[NL_NAME_LEN]; // current preset's name, NUL-terminated
 } nl_eye_telemetry_t;
 
 typedef struct NL_PACKED {
@@ -111,6 +113,7 @@ typedef struct NL_PACKED {
     uint8_t channel;        // radio channel
     uint16_t fps;
     uint16_t leds;          // total LED count
+    char name[NL_NAME_LEN]; // current preset's name, NUL-terminated ("" = none)
 } nl_wled_telemetry_t;
 
 typedef enum {

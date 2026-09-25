@@ -22,8 +22,9 @@ eyes and base (`shared/nibbles_link`).
   On STOP, or 300 ms without a message, it restores the state (and current
   preset) saved at the start. A new bump replaces the one playing and keeps the
   original saved state.
-- Broadcasts **WLED telemetry** twice a second (on, brightness, preset,
-  effect, palette, channel, fps, LED count).
+- Broadcasts **WLED telemetry** twice a second (on, brightness, preset and its
+  name, effect, palette, channel, fps, LED count). Preset names come from the
+  same cached read of `/presets.json` as the preset list.
 - Shows the radio status and the **eyes' telemetry on WLED's Info page**.
 - Leaves other ESP-NOW traffic (e.g. WiZ remotes) to WLED.
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`.

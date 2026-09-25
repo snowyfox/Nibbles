@@ -13,6 +13,7 @@
 // and base). See docs/architecture.md in the Nibbles repo.
 #include "wled.h"
 #include "nibbles_link.h"
+#include <map>
 
 #ifdef WLED_DISABLE_ESPNOW
 #error "usermod_nibbles needs ESP-NOW"
@@ -50,6 +51,7 @@ class NibblesUsermod : public Usermod {
     // Which preset ids exist, read from presets.json once and again only when
     // presets change (reading the file per id is far too slow for a command).
     uint8_t presetBits[32] = { 0 };
+    std::map<uint8_t, String> presetNames;  // for telemetry, filled with presetBits
     bool presetBitsValid = false;
     unsigned long presetBitsTime = 0;
 
@@ -91,6 +93,9 @@ class NibblesUsermod : public Usermod {
       t.channel = WiFi.channel();
       t.fps = strip.getFps();
       t.leds = strip.getLengthTotal();
+      refreshPresets();  // only reads the file after presets change
+      auto it = presetNames.find(currentPreset);
+      if (currentPreset && it != presetNames.end()) strlcpy(t.name, it->second.c_str(), sizeof(t.name));
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_WLED_TELEMETRY, &t, sizeof(t));
     }
 
@@ -99,6 +104,7 @@ class NibblesUsermod : public Usermod {
       JSONBufferGuard guard(JSON_LOCK_NIBBLES);
       if (!guard) return;
       memset(presetBits, 0, sizeof(presetBits));
+      presetNames.clear();
       File f = WLED_FS.open(F("/presets.json"), "r");
       if (!f) {
         presetBitsValid = true;  // no presets file: no presets
@@ -111,7 +117,10 @@ class NibblesUsermod : public Usermod {
       if (err) return;  // leave invalid; try again next time
       for (JsonPair kv : pDoc->as<JsonObject>()) {
         const int id = atoi(kv.key().c_str());
-        if (id >= 1 && id <= 250) presetBits[id / 8] |= 1 << (id % 8);
+        if (id < 1 || id > 250) continue;
+        presetBits[id / 8] |= 1 << (id % 8);
+        const char *name = kv.value()["n"] | "";
+        if (*name) presetNames[id] = name;
       }
       presetBitsValid = true;
       presetBitsTime = presetsModifiedTime;

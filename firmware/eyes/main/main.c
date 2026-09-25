@@ -223,7 +223,7 @@ static void eye_task(void *arg)
             next_telemetry = now + TELEMETRY_MS * 1000LL;
             link_stats_t ls;
             link_get_stats(&ls);
-            const nl_eye_telemetry_t t = {
+            nl_eye_telemetry_t t = {
                 .preset = (uint8_t)preset_index,
                 .preset_count = (uint8_t)preset_count,
                 .state = (uint8_t)eye.state,
@@ -235,6 +235,7 @@ static void eye_task(void *arg)
                 .hype = eye.p.hype,
                 .brightness = (uint8_t)bright_pct,
             };
+            strlcpy(t.name, presets[shown].name, sizeof(t.name));
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));
         }
 

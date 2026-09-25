@@ -284,6 +284,8 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
     c->title = label(c->card, &lv_font_montserrat_14, accent);
     lv_label_set_text(c->title, title);
     c->big = label(c->card, &lv_font_montserrat_28, COL_TEXT);
+    lv_obj_set_width(c->big, LV_PCT(100));
+    lv_label_set_long_mode(c->big, LV_LABEL_LONG_SCROLL_CIRCULAR);
     c->line1 = label(c->card, &lv_font_montserrat_16, COL_TEXT);
     c->line2 = label(c->card, &lv_font_montserrat_14, COL_TITLE);
     c->bar = NULL;
@@ -395,13 +397,15 @@ static void ui_update(const display_status_t *s)
     card_stale(&eyes_card, !s->eyes_fresh);
     if (s->eyes_fresh) {
         const nl_eye_telemetry_t *e = &s->eyes;
-        lv_label_set_text_fmt(eyes_card.big, "Preset %d/%d", e->preset + 1, e->preset_count);
+        if (e->name[0]) lv_label_set_text_fmt(eyes_card.big, "%.*s", NL_NAME_LEN, e->name);
+        else lv_label_set_text_fmt(eyes_card.big, "Preset %d/%d", e->preset + 1, e->preset_count);
         lv_label_set_text_fmt(eyes_card.line1, "%s  %s  %d%%", eye_state(e->state), e->linked ? "linked" : "NOT linked",
                               e->brightness);
         lv_obj_set_style_text_color(eyes_card.line1, lv_color_hex(e->linked ? COL_TEXT : COL_WARN), 0);
         // LVGL's printf has no floats.
-        lv_label_set_text_fmt(eyes_card.line2, "%d.%d | %d.%d fps   %d bpm", e->fps_x10[0] / 10, e->fps_x10[0] % 10,
-                              e->fps_x10[1] / 10, e->fps_x10[1] % 10, (int)(e->tempo_bpm + 0.5f));
+        lv_label_set_text_fmt(eyes_card.line2, "%d/%d  %d.%d|%d.%d fps  %d bpm", e->preset + 1, e->preset_count,
+                              e->fps_x10[0] / 10, e->fps_x10[0] % 10, e->fps_x10[1] / 10, e->fps_x10[1] % 10,
+                              (int)(e->tempo_bpm + 0.5f));
         set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, true);
     } else {
         lv_label_set_text(eyes_card.big, "--");
@@ -415,9 +419,10 @@ static void ui_update(const display_status_t *s)
     if (s->wled_fresh) {
         const nl_wled_telemetry_t *w = &s->wled;
         if (!w->on) lv_label_set_text(wled_card.big, "OFF");
+        else if (w->preset && w->name[0]) lv_label_set_text_fmt(wled_card.big, "%.*s", NL_NAME_LEN, w->name);
         else if (w->preset) lv_label_set_text_fmt(wled_card.big, "Preset %d", w->preset);
         else lv_label_set_text(wled_card.big, "No preset");
-        lv_label_set_text_fmt(wled_card.line1, "bri %d  fx %d  pal %d", w->bri, w->fx, w->palette);
+        lv_label_set_text_fmt(wled_card.line1, "#%d  bri %d  fx %d  pal %d", w->preset, w->bri, w->fx, w->palette);
         lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
         lv_label_set_text_fmt(wled_card.line2, "%d fps   %d LEDs", w->fps, w->leds);
         set_slider(wled_card.bar, w->bri, true);
