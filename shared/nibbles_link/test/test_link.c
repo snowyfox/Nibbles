@@ -178,6 +178,43 @@ static void test_chanscan(void)
     CHECK(all && !s.locked, "no anchor: sweeps all 13 channels");
 }
 
+static void test_bump(void)
+{
+    nl_bump_rx_t rx;
+    nl_bump_rx_init(&rx);
+    nl_bump_t b = { .id = 1, .target = NL_TARGET_WLED, .action = NL_BUMP_FLASH, .phase = NL_BUMP_START, .intensity = 255 };
+    // Normal press: start, keepalives, stop.
+    int begins = 0, ends = 0;
+    uint32_t t = 0;
+    begins += nl_bump_rx_message(&rx, &b, t) == NL_BUMP_EV_BEGIN;
+    b.phase = NL_BUMP_HOLD;
+    for (t = 100; t <= 1000; t += 100) {
+        begins += nl_bump_rx_message(&rx, &b, t) == NL_BUMP_EV_BEGIN;
+        ends += nl_bump_rx_tick(&rx, t + 50) == NL_BUMP_EV_END;
+    }
+    b.phase = NL_BUMP_STOP;
+    ends += nl_bump_rx_message(&rx, &b, t) == NL_BUMP_EV_END;
+    CHECK(begins == 1 && ends == 1 && !rx.active, "held bump: one begin, held through keepalives, one end");
+
+    // START lost: the first keepalive starts it.
+    b.id = 2; b.phase = NL_BUMP_HOLD;
+    CHECK(nl_bump_rx_message(&rx, &b, 2000) == NL_BUMP_EV_BEGIN, "lost START: first keepalive begins the bump");
+    // STOP lost: released by timeout, not before.
+    const bool held = nl_bump_rx_tick(&rx, 2000 + NL_BUMP_TIMEOUT_MS - 1) == NL_BUMP_EV_NONE;
+    const bool released = nl_bump_rx_tick(&rx, 2000 + NL_BUMP_TIMEOUT_MS) == NL_BUMP_EV_END;
+    CHECK(held && released && !rx.active, "lost STOP: released after %d ms without messages", NL_BUMP_TIMEOUT_MS);
+    // A late STOP for the finished press is ignored.
+    b.phase = NL_BUMP_STOP;
+    CHECK(nl_bump_rx_message(&rx, &b, 2500) == NL_BUMP_EV_NONE, "late STOP ignored");
+
+    // A new press while one is active replaces it.
+    b.id = 3; b.phase = NL_BUMP_START;
+    nl_bump_rx_message(&rx, &b, 3000);
+    b.id = 4; b.action = NL_BUMP_BLACKOUT;
+    CHECK(nl_bump_rx_message(&rx, &b, 3050) == NL_BUMP_EV_REPLACE && rx.bump.action == NL_BUMP_BLACKOUT,
+          "new press replaces the active bump");
+}
+
 int main(void)
 {
     srand(1);
@@ -187,6 +224,7 @@ int main(void)
     test_resync_and_stream();
     test_radio();
     test_chanscan();
+    test_bump();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

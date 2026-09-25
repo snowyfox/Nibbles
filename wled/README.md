@@ -13,6 +13,14 @@ eyes and base (`shared/nibbles_link`).
   channel it advertises.
 - Takes Nibbles **commands aimed at WLED** (`NL_TARGET_WLED`: preset set,
   next, previous) and acks them. A retry with the same id is acked but applied once.
+  The ack goes out before the preset is applied. Which presets exist is cached
+  from `/presets.json` (re-read when WLED saves presets), so next/previous skip
+  gaps and wrap, and a missing preset is refused (status 2).
+- Plays **bumps** (`NL_MSG_BUMP`, broadcast): flash (all segments solid white),
+  blackout, or a preset, held while the sender keeps sending HOLD every 100 ms.
+  On STOP, or 300 ms without a message, it restores the state (and current
+  preset) saved at the start. A new bump replaces the one playing and keeps the
+  original saved state.
 - Broadcasts **WLED telemetry** twice a second (on, brightness, preset,
   effect, palette, channel, fps, LED count).
 - Shows the radio status and the **eyes' telemetry on WLED's Info page**.

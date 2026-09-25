@@ -46,7 +46,7 @@ idf.py -p /dev/cu.usbmodemNNN flash      # port varies (201, 401 seen): ls /dev/
 Host tests (pure-C analysis, eye behaviour and presets; no hardware needed):
 
 ```sh
-make -C test/host            # 150 checks, prints ok/FAIL, non-zero exit on failure
+make -C test/host            # 151 checks, prints ok/FAIL, non-zero exit on failure
 ```
 
 Reading the board: open the port with pyserial from the activated IDF env and

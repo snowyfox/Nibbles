@@ -30,6 +30,7 @@ typedef enum {
     NL_MSG_CMD = 5,         // a command, unicast, answered with NL_MSG_ACK
     NL_MSG_ACK = 6,
     NL_MSG_WLED_TELEMETRY = 7, // WLED status, WLED -> radio, 2 Hz
+    NL_MSG_BUMP = 8,        // momentary effect while a button is held (broadcast)
 } nl_msg_type_t;
 
 typedef enum {
@@ -137,6 +138,56 @@ typedef struct NL_PACKED {
     uint16_t id;
     uint8_t status;         // nl_ack_status_t
 } nl_ack_t;
+
+// Bumps: DMX-style momentary effects, active only while a button is held.
+// The sender broadcasts START, then HOLD every NL_BUMP_KEEPALIVE_MS, then
+// STOP. A receiver treats HOLD for an unknown bump as a start (START lost)
+// and releases a bump that goes NL_BUMP_TIMEOUT_MS without a message (STOP
+// lost), so an effect can never stick on.
+#define NL_BUMP_KEEPALIVE_MS 100
+#define NL_BUMP_TIMEOUT_MS   300
+
+typedef enum {
+    NL_BUMP_FLASH = 1,      // everything white, full brightness
+    NL_BUMP_BLACKOUT = 2,   // everything off
+    NL_BUMP_PRESET = 3,     // arg = preset to show while held
+} nl_bump_action_t;
+
+typedef enum {
+    NL_BUMP_START = 1,
+    NL_BUMP_HOLD = 2,
+    NL_BUMP_STOP = 3,
+} nl_bump_phase_t;
+
+typedef struct NL_PACKED {
+    uint16_t id;            // one id per press; all messages of a press share it
+    uint8_t target;         // nl_target_t (bit mask: NL_TARGET_EYES | NL_TARGET_WLED)
+    uint8_t action;         // nl_bump_action_t
+    uint8_t phase;          // nl_bump_phase_t
+    uint8_t intensity;      // 0..255
+    int16_t arg;
+} nl_bump_t;
+
+// Receiver side: which bump (if any) is active. One active bump at a time;
+// a new press replaces the current one.
+typedef struct {
+    bool active;
+    nl_bump_t bump;
+    uint32_t last_ms;
+} nl_bump_rx_t;
+
+typedef enum {
+    NL_BUMP_EV_NONE = 0,
+    NL_BUMP_EV_BEGIN,       // apply the effect in rx->bump
+    NL_BUMP_EV_END,         // restore
+    NL_BUMP_EV_REPLACE,     // restore, then apply the new rx->bump
+} nl_bump_event_t;
+
+void nl_bump_rx_init(nl_bump_rx_t *rx);
+// A bump message arrived at now_ms.
+nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_t now_ms);
+// Call regularly; returns NL_BUMP_EV_END when the active bump times out.
+nl_bump_event_t nl_bump_rx_tick(nl_bump_rx_t *rx, uint32_t now_ms);
 
 // ---------------------------------------------------------------- radio packets
 #define NL_NET_ID           0x5348  // "SH"(ark): packets from other networks are ignored

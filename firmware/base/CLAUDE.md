@@ -13,12 +13,17 @@ charger). Demo code: https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49
 SDA 17 / SCL 18 at 0x3B; sensors I2C SDA 47 / SCL 48).
 
 What it does now (`main/main.c`):
-- **Channel anchor** (`BASE_IS_ANCHOR 1`, channel 6) until the WLED usermod
-  takes over; then set it to 0 and the base scans for WLED like the eyes.
-- Logs the eyes' telemetry every 2 s.
-- BOOT = next eye preset, second key = previous; also `next`, `prev`, `set N`
-  over the USB serial port, for testing. Commands go to the leader eye with an
-  ack and up to 3 tries.
+- Scans for the WLED usermod's anchor heartbeat like the eyes
+  (`BASE_IS_ANCHOR 0`). Set it to 1 to make the base the anchor on channel 6
+  when no WLED usermod is around.
+- Logs the eyes' and WLED's telemetry every 2 s.
+- BOOT = next eye preset. Second key (GPIO 16) = a WLED **flash bump** while
+  held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after
+  the last message).
+- USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
+  `wled next`, `wled set N`; `bump flash MS`, `bump black MS`,
+  `bump preset N MS`. Commands are unicast with an ack and up to 3 tries of
+  60 ms.
 
 Build: `idf.py -C firmware/base build`, flash to the base board's port
 (check its serial number, 28:84:85:91:27:08, first).

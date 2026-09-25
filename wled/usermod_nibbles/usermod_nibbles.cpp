@@ -6,6 +6,8 @@
 // - Takes Nibbles commands aimed at WLED (preset set / next / previous) and
 //   acks them.
 // - Broadcasts WLED telemetry, and shows the eyes' telemetry on the Info page.
+// - Bumps: momentary effects (flash, blackout, preset) while a base-station
+//   button is held; WLED's previous state is restored exactly afterwards.
 //
 // Messages come from shared/nibbles_link (the same protocol code as the eyes
 // and base). See docs/architecture.md in the Nibbles repo.
@@ -20,6 +22,7 @@
 #define ANCHOR_HEARTBEAT_MS    250   // 4 Hz: a scanning node dwells 400 ms per channel
 #define TELEMETRY_MS           500
 #define RX_QUEUE               8
+#define JSON_LOCK_NIBBLES      240
 
 class NibblesUsermod : public Usermod {
   private:
@@ -42,7 +45,19 @@ class NibblesUsermod : public Usermod {
     nl_eye_telemetry_t eyes = {};
     unsigned long eyesAt = 0;
     bool haveEyes = false;
-    uint32_t rxCount = 0, cmdCount = 0;
+    uint32_t rxCount = 0, cmdCount = 0, bumpCount = 0;
+
+    // Which preset ids exist, read from presets.json once and again only when
+    // presets change (reading the file per id is far too slow for a command).
+    uint8_t presetBits[32] = { 0 };
+    bool presetBitsValid = false;
+    unsigned long presetBitsTime = 0;
+
+    // Bumps: WLED's state is saved as JSON when one begins and put back when it ends.
+    nl_bump_rx_t bumps;
+    String savedState;
+    bool haveSaved = false;
+    uint8_t savedPreset = 0;
 
     static const char _name[];
 
@@ -79,31 +94,122 @@ class NibblesUsermod : public Usermod {
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_WLED_TELEMETRY, &t, sizeof(t));
     }
 
-    // The next (or previous) preset id that exists, wrapping around.
-    int stepPreset(int from, int dir) {
-      String name;
+    void refreshPresets() {
+      if (presetBitsValid && presetBitsTime == presetsModifiedTime) return;
+      JSONBufferGuard guard(JSON_LOCK_NIBBLES);
+      if (!guard) return;
+      memset(presetBits, 0, sizeof(presetBits));
+      File f = WLED_FS.open(F("/presets.json"), "r");
+      if (!f) {
+        presetBitsValid = true;  // no presets file: no presets
+        presetBitsTime = presetsModifiedTime;
+        return;
+      }
+      pDoc->clear();
+      const DeserializationError err = deserializeJson(*pDoc, f);
+      f.close();
+      if (err) return;  // leave invalid; try again next time
+      for (JsonPair kv : pDoc->as<JsonObject>()) {
+        const int id = atoi(kv.key().c_str());
+        if (id >= 1 && id <= 250) presetBits[id / 8] |= 1 << (id % 8);
+      }
+      presetBitsValid = true;
+      presetBitsTime = presetsModifiedTime;
+    }
+
+    bool presetExists(int id) const {
+      return id >= 1 && id <= 250 && (presetBits[id / 8] & (1 << (id % 8)));
+    }
+
+    // The next (or previous) preset id that exists, wrapping around; 0 if none.
+    int stepPreset(int from, int dir) const {
       for (int i = 1; i <= 250; i++) {
         int id = from + dir * i;
         while (id < 1) id += 250;
         while (id > 250) id -= 250;
-        if (getPresetName(id, name)) return id;
+        if (presetExists(id)) return id;
       }
       return 0;
     }
 
-    uint8_t applyCommand(const nl_cmd_t &cmd) {
+    // Work out what a command means without doing it (fast, so the ack goes out at once).
+    uint8_t resolveCommand(const nl_cmd_t &cmd, int &id) {
       if (cmd.target != NL_TARGET_WLED) return NL_ACK_UNSUPPORTED;
-      int id;
+      refreshPresets();
       switch (cmd.op) {
         case NL_OP_PRESET_SET:  id = cmd.arg; break;
         case NL_OP_PRESET_NEXT: id = stepPreset(currentPreset, +1); break;
         case NL_OP_PRESET_PREV: id = stepPreset(currentPreset, -1); break;
         default: return NL_ACK_UNSUPPORTED;
       }
-      String name;
-      if (id < 1 || id > 250 || !getPresetName(id, name)) return NL_ACK_BAD_ARG;
-      applyPreset(id, CALL_MODE_DIRECT_CHANGE);
-      return NL_ACK_OK;
+      return presetExists(id) ? NL_ACK_OK : NL_ACK_BAD_ARG;
+    }
+
+    bool saveState() {
+      JSONBufferGuard guard(JSON_LOCK_NIBBLES);
+      if (!guard) return false;
+      pDoc->clear();
+      JsonObject st = pDoc->to<JsonObject>();
+      serializeState(st, true);
+      savedState = "";
+      serializeJson(*pDoc, savedState);
+      return true;
+    }
+
+    bool applyJson(const String &json) {
+      JSONBufferGuard guard(JSON_LOCK_NIBBLES);
+      if (!guard) return false;
+      pDoc->clear();
+      if (deserializeJson(*pDoc, json)) return false;
+      deserializeState(pDoc->as<JsonObject>(), CALL_MODE_DIRECT_CHANGE);
+      return true;
+    }
+
+    void bumpBegin(const nl_bump_t &b) {
+      haveSaved = saveState();
+      savedPreset = currentPreset;
+      bumpCount++;
+      if (b.action == NL_BUMP_PRESET) {
+        refreshPresets();
+        if (presetExists(b.arg)) applyPreset(b.arg, CALL_MODE_DIRECT_CHANGE);
+        return;
+      }
+      // Instant change (tt = transition 0 for this call only), every segment.
+      String json = "{\"tt\":0,";
+      if (b.action == NL_BUMP_BLACKOUT) {
+        json += "\"on\":false}";
+      } else {  // NL_BUMP_FLASH
+        json += "\"on\":true,\"bri\":" + String(b.intensity ? b.intensity : 255) + ",\"seg\":[";
+        for (unsigned i = 0; i < strip.getSegmentsNum(); i++) {
+          if (i) json += ",";
+          json += "{\"id\":" + String(i) + ",\"fx\":0,\"col\":[[255,255,255]]}";
+        }
+        json += "]}";
+      }
+      applyJson(json);
+    }
+
+    void bumpEnd() {
+      if (!haveSaved) return;
+      // Put everything back instantly.
+      String json = savedState;
+      if (json.startsWith("{")) json = "{\"tt\":0," + json.substring(1);
+      applyJson(json);
+      currentPreset = savedPreset;  // restoring the state clears it; it's the same look
+      haveSaved = false;
+    }
+
+    void bumpEvent(nl_bump_event_t ev) {
+      if (ev == NL_BUMP_EV_BEGIN) bumpBegin(bumps.bump);
+      else if (ev == NL_BUMP_EV_END) bumpEnd();
+      else if (ev == NL_BUMP_EV_REPLACE) {
+        bumpEnd();
+        bumpBegin(bumps.bump);
+      }
+#ifdef NIBBLES_DEBUG
+      if (ev != NL_BUMP_EV_NONE)
+        Serial.printf("nibbles: bump %s (action %d)\n", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
+#endif
     }
 
     void handle(const RxItem &it) {
@@ -116,28 +222,35 @@ class NibblesUsermod : public Usermod {
         memcpy(&eyes, pl, sizeof(eyes));
         eyesAt = millis();
         haveEyes = true;
+      } else if (h.type == NL_MSG_BUMP && len == sizeof(nl_bump_t)) {
+        nl_bump_t b;
+        memcpy(&b, pl, sizeof(b));
+        if (b.target & NL_TARGET_WLED) bumpEvent(nl_bump_rx_message(&bumps, &b, millis()));
       } else if (h.type == NL_MSG_CMD && len == sizeof(nl_cmd_t)) {
         nl_cmd_t cmd;
         memcpy(&cmd, pl, sizeof(cmd));
         if (cmd.target != NL_TARGET_WLED) return;  // for someone else
         const bool repeat = cmd.id == lastCmdId && memcmp(it.mac, lastCmdMac, 6) == 0;
         static uint8_t lastStatus = NL_ACK_OK;
-        if (!repeat) {
-          lastStatus = applyCommand(cmd);
-          cmdCount++;
-#ifdef NIBBLES_DEBUG
-          Serial.printf("nibbles: command op %d arg %d -> status %d, preset now %d\n", cmd.op, cmd.arg, lastStatus, currentPreset);
-#endif
-        }
+        int id = 0;
+        if (!repeat) lastStatus = resolveCommand(cmd, id);
         lastCmdId = cmd.id;
         memcpy(lastCmdMac, it.mac, 6);
         const nl_ack_t ack = { cmd.id, lastStatus };
-        send(it.mac, NL_MSG_ACK, &ack, sizeof(ack));
+        send(it.mac, NL_MSG_ACK, &ack, sizeof(ack));  // ack first, then act
+        if (!repeat) {
+          cmdCount++;
+          if (lastStatus == NL_ACK_OK) applyPreset(id, CALL_MODE_DIRECT_CHANGE);
+#ifdef NIBBLES_DEBUG
+          Serial.printf("nibbles: command op %d arg %d -> status %d, preset %d\n", cmd.op, cmd.arg, lastStatus, id);
+#endif
+        }
       }
     }
 
   public:
     void setup() override {
+      nl_bump_rx_init(&bumps);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
       if (enabled && !enableESPNow) enableESPNow = true;
     }
@@ -157,6 +270,7 @@ class NibblesUsermod : public Usermod {
         if (!got) break;
         handle(it);
       }
+      bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
       const unsigned long now = millis();
       if (now - lastHeartbeat >= ANCHOR_HEARTBEAT_MS) {
         lastHeartbeat = now;
@@ -201,8 +315,8 @@ class NibblesUsermod : public Usermod {
         radio.add(F("off"));
       } else {
         char buf[48];
-        snprintf(buf, sizeof(buf), "ch %d%s, rx %lu, cmds %lu", WiFi.channel(), anchor ? " (anchor)" : "",
-                 (unsigned long)rxCount, (unsigned long)cmdCount);
+        snprintf(buf, sizeof(buf), "ch %d%s, rx %lu, cmds %lu, bumps %lu", WiFi.channel(), anchor ? " (anchor)" : "",
+                 (unsigned long)rxCount, (unsigned long)cmdCount, (unsigned long)bumpCount);
         radio.add(buf);
       }
       JsonArray e = user.createNestedArray(F("Nibbles eyes"));
