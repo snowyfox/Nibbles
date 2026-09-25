@@ -23,7 +23,8 @@ eyes and base (`shared/nibbles_link`).
   preset) saved at the start. A new bump replaces the one playing and keeps the
   original saved state. Preset and brightness commands that arrive during a bump
   are applied when it ends (instead of the saved preset), so the release
-  doesn't undo them (built; not yet run on hardware).
+  doesn't undo them (verified: preset and brightness sent mid-flash took effect
+  on release).
 - Broadcasts **WLED telemetry** twice a second (on, brightness, preset and its
   name, effect, palette, channel, fps, LED count). Preset names come from the
   same cached read of `/presets.json` as the preset list.

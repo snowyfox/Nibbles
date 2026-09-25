@@ -139,17 +139,36 @@ static void actions_task(void *arg)
     }
 }
 
-// Hold a bump for ms (used by the serial "bump" command).
+// Hold a bump for ms (used by the serial "bump" command, on its own task so
+// the console can take commands while a bump is held).
+typedef struct {
+    uint8_t target, action;
+    int arg, ms;
+} timed_bump_t;
+static QueueHandle_t timed_bumps;
+
 static void bump_for(uint8_t target, uint8_t action, int arg, int ms)
 {
-    bump_start(target, action, arg);
-    for (int t = 0; t < ms; t += NL_BUMP_KEEPALIVE_MS) {
-        vTaskDelay(pdMS_TO_TICKS(NL_BUMP_KEEPALIVE_MS));
-        bump_send(NL_BUMP_HOLD);
+    const timed_bump_t b = { target, action, arg, ms };
+    if (xQueueSend(timed_bumps, &b, 0) != pdTRUE) ESP_LOGW(TAG, "a bump is already being held");
+}
+
+static void timed_bump_task(void *arg)
+{
+    timed_bump_t b;
+    for (;;) {
+        if (xQueueReceive(timed_bumps, &b, portMAX_DELAY) != pdTRUE) continue;
+        const uint8_t target = b.target, action = b.action;
+        const int ms = b.ms;
+        bump_start(target, action, b.arg);
+        for (int t = 0; t < ms; t += NL_BUMP_KEEPALIVE_MS) {
+            vTaskDelay(pdMS_TO_TICKS(NL_BUMP_KEEPALIVE_MS));
+            bump_send(NL_BUMP_HOLD);
+        }
+        bump_send(NL_BUMP_STOP);
+        ESP_LOGI(TAG, "bump %d held %d ms", action, ms);
+        display_event("bump %d held %d ms", action, ms);
     }
-    bump_send(NL_BUMP_STOP);
-    ESP_LOGI(TAG, "bump %d held %d ms", action, ms);
-    display_event("bump %d held %d ms", action, ms);
 }
 
 static void buttons_task(void *arg)
@@ -256,10 +275,12 @@ void app_main(void)
     };
     bump_mutex = xSemaphoreCreateMutex();
     actions = xQueueCreate(4, sizeof(action_t));
+    timed_bumps = xQueueCreate(1, sizeof(timed_bump_t));
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
     xTaskCreate(actions_task, "actions", 4096, NULL, 4, NULL);
+    xTaskCreate(timed_bump_task, "timed_bump", 3072, NULL, 4, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 
     for (int n = 0;; n++) {
