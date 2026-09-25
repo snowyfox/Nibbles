@@ -26,11 +26,17 @@ static const char *TAG = "nibbles";
 static const int brightness_presets[] = BRIGHTNESS_PRESETS;
 #define N_PRESETS ((int)(sizeof(brightness_presets) / sizeof(brightness_presets[0])))
 
-// Preset commands from the radio, handed to the eye task.
-static QueueHandle_t radio_cmds;
+// Preset commands and bumps from the radio, handed to the eye task.
+static QueueHandle_t radio_cmds, radio_bumps;
 
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
+    if (h->type == NL_MSG_BUMP && len == sizeof(nl_bump_t)) {
+        nl_bump_t b;
+        memcpy(&b, pl, sizeof(b));
+        if (b.target & NL_TARGET_EYES) xQueueSend(radio_bumps, &b, 0);
+        return;
+    }
     if (h->type != NL_MSG_CMD || len != sizeof(nl_cmd_t)) return;
     nl_cmd_t cmd;
     memcpy(&cmd, pl, sizeof(cmd));
@@ -95,6 +101,9 @@ static void eye_task(void *arg)
     int64_t last = esp_timer_get_time();
     int64_t last_log = last;
     int preset_index = 0, next_preset = 0;
+    int rendered = 0, bump_preset = -1;  // a preset bump shows bump_preset while held
+    nl_bump_rx_t bumps;
+    nl_bump_rx_init(&bumps);
     int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
     render_set_preset(0);
     ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
@@ -132,6 +141,24 @@ static void eye_task(void *arg)
             ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
         }
 
+        // Bumps: flash and blackout are drawn by the eye; a preset bump swaps
+        // the preset at once (no blink) and puts it back on release.
+        nl_bump_t bmsg;
+        const uint32_t now_ms = (uint32_t)(now / 1000);
+        nl_bump_event_t ev = NL_BUMP_EV_NONE;
+        if (radio_bumps && xQueueReceive(radio_bumps, &bmsg, 0) == pdTRUE) ev = nl_bump_rx_message(&bumps, &bmsg, now_ms);
+        if (ev == NL_BUMP_EV_NONE) ev = nl_bump_rx_tick(&bumps, now_ms);
+        if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
+            eye_set_bump(&eye, 0);
+            bump_preset = -1;
+        }
+        if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
+            eye_set_bump(&eye, bumps.bump.action);
+            if (bumps.bump.action == NL_BUMP_PRESET && bumps.bump.arg >= 0 && bumps.bump.arg < preset_count)
+                bump_preset = bumps.bump.arg;
+        }
+        if (ev != NL_BUMP_EV_NONE) ESP_LOGI(TAG, "bump %s (action %d)", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
+
         // Cycle through the visual presets; the eye blinks to hide each change.
         if (!following && now >= next_swap) {
             next_swap += (int64_t)PRESET_CYCLE_S * 1000000;
@@ -148,16 +175,19 @@ static void eye_task(void *arg)
             eye_apply_shared(&eye, &shared, side, &m);
             if (shared.preset != preset_index && shared.preset < preset_count) {
                 preset_index = shared.preset;
-                render_set_preset(preset_index);
                 ESP_LOGI(TAG, "preset %d: %s (from the leader)", preset_index, presets[preset_index].name);
             }
         } else if (eye.p.swap_now) {
             preset_index = next_preset;
-            render_set_preset(preset_index);
             ESP_LOGI(TAG, "preset %d: %s", preset_index, presets[preset_index].name);
         }
+        const int shown = bump_preset >= 0 && !following ? bump_preset : preset_index;
+        if (shown != rendered) {
+            rendered = shown;
+            render_set_preset(rendered);
+        }
         if (role == NL_ROLE_EYE_LEADER) {
-            eye_export_shared(&eye, preset_index, side, &shared);
+            eye_export_shared(&eye, shown, side, &shared);
             link_send_eye_state(&shared);
         }
         render_frame(&eye.p);
@@ -248,6 +278,7 @@ void app_main(void)
     if (link_start() != ESP_OK) ESP_LOGE(TAG, "eye link unavailable; running standalone");
     if (EYES_RADIO && board_role() == NL_ROLE_EYE_LEADER) {
         radio_cmds = xQueueCreate(4, sizeof(nl_cmd_t));
+        radio_bumps = xQueueCreate(8, sizeof(nl_bump_t));
         const nl_espnow_config_t rcfg = {
             .role = NL_ROLE_EYE_LEADER,
             .side = board_side(),

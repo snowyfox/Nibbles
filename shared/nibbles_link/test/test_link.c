@@ -205,6 +205,16 @@ static void test_fallback_anchor(void)
     for (int c = NL_CHANNEL_MIN; c <= NL_CHANNEL_MAX; c++) all &= seen[c];
     CHECK(all && home * 100 / total >= 85, "anchoring: peeks at all channels, home %d%% of the time", home * 100 / total);
 
+    // Sending bumps keeps it home: no peeks while HOLDs go out every 100 ms,
+    // and a peek in progress ends at once.
+    int away = 0;
+    for (int t = 0; t < 10000; t += 50) {
+        uint8_t ch = nl_chanscan_tick(&s, 50);
+        if (t % 100 == 0) ch = nl_chanscan_busy(&s);
+        away += ch != 6;
+    }
+    CHECK(away == 0, "anchoring: no peeks while sending (%d ticks away)", away);
+
     // WLED appears on channel 11: found on a peek, anchoring ends, follows it.
     int found_ms = -1;
     for (int t = 0; t < 60000 && found_ms < 0; t += 50) {

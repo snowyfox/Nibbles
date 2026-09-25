@@ -62,6 +62,16 @@ uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms)
     return s->channel;
 }
 
+uint8_t nl_chanscan_busy(nl_chanscan_t *s)
+{
+    if (s->anchoring) {
+        s->peeking = false;
+        s->channel = s->home_channel;
+        s->on_channel_ms = 0;
+    }
+    return s->channel;
+}
+
 void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel)
 {
     s->anchoring = s->peeking = false;

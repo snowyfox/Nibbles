@@ -661,6 +661,48 @@ static void test_preset_swap(void)
     CHECK(e.state == EYE_ASLEEP && fabsf(e.p.lid_open - slit) < 0.01f, "preset swap while asleep: still asleep, slit back (lid %.2f)", e.p.lid_open);
 }
 
+static void test_bumps(void)
+{
+    static eye_t e;
+    eye_init(&e, 5);
+    audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.3f, .warmth = 0.5f };
+    motion_features_t still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int i = 0; i < 90; i++) eye_update(&e, &music, &still, dt);
+    const float pupil = e.p.pupil_r;
+
+    // Flash: full glow, open, small pupil, a ripple, straight away.
+    eye_set_bump(&e, NL_BUMP_FLASH);
+    eye_update(&e, &music, &still, dt);
+    int ripple = 0;
+    for (int i = 0; i < EYE_MAX_RIPPLES; i++) ripple |= e.p.ripples[i].amp > 0.9f;
+    CHECK(e.p.intensity > 0.99f && e.p.lid_open > 0.99f && e.p.pupil_r < pupil * 0.7f && ripple,
+          "flash: glow %.2f, lid %.2f, pupil %.0f (was %.0f), ripple %d", e.p.intensity, e.p.lid_open, e.p.pupil_r, pupil, ripple);
+    for (int i = 0; i < 15; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.intensity > 0.99f, "flash: held while the bump is held");
+    eye_set_bump(&e, 0);
+    for (int i = 0; i < 20; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.intensity < 0.9f && fabsf(e.p.pupil_r - pupil) < 3.0f, "flash released: glow %.2f, pupil %.0f after 0.67 s",
+          e.p.intensity, e.p.pupil_r);
+
+    // Blackout: lids shut and dark within 0.1 s, back open within 0.6 s of release.
+    eye_set_bump(&e, NL_BUMP_BLACKOUT);
+    for (int i = 0; i < 3; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.lid_open < 0.05f && e.p.master < 0.05f, "blackout: lid %.2f master %.2f after 0.1 s", e.p.lid_open, e.p.master);
+    nl_eye_state_t st;
+    eye_export_shared(&e, 0, NL_SIDE_STARBOARD, &st);
+    CHECK(st.master < 13, "blackout: shared with the other eye (master %d/255)", st.master);
+    for (int i = 0; i < 30; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.lid_open < 0.01f, "blackout: stays shut while held");
+    eye_set_bump(&e, 0);
+    for (int i = 0; i < 18; i++) eye_update(&e, &music, &still, dt);
+    CHECK(e.p.lid_open > 0.9f && e.p.master > 0.98f, "blackout released: lid %.2f master %.2f after 0.6 s", e.p.lid_open, e.p.master);
+
+    // Any other action is ignored by the eye itself.
+    eye_set_bump(&e, NL_BUMP_PRESET);
+    CHECK(e.bump == 0, "preset bump is left to the caller");
+}
+
 static void test_motion_hype(void)
 {
     // Motion analysis: fast back-and-forth twisting is vigorous, slow isn't.
@@ -874,6 +916,7 @@ int main(void)
     test_twist();
     test_hype();
     test_preset_swap();
+    test_bumps();
     test_eye_link_sharing();
     test_motion_hype();
     test_spiral_tempo();

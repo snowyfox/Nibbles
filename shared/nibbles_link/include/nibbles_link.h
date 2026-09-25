@@ -85,6 +85,7 @@ typedef struct NL_PACKED {
     uint8_t preset;         // current preset index
     uint8_t awake;
     uint8_t side;           // sender's side (nl_side_t), to mirror the glance
+    uint8_t master;         // master level for everything, outline included (255 = normal, 0 = blackout)
 } nl_eye_state_t;
 
 typedef struct NL_PACKED {
@@ -249,6 +250,10 @@ uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms);
 // from a neighbouring channel: move to the channel the anchor advertises
 // (0 = unknown, stay put). Ends fallback anchoring.
 void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel);
+// The node is about to send something that matters (a command or bump): when
+// fallback anchoring, return home now and put off the next peek for a full
+// NL_PEEK_EVERY_MS. Returns the channel to be on.
+uint8_t nl_chanscan_busy(nl_chanscan_t *s);
 
 // Encode one frame into out (at most NL_MAX_FRAME bytes, including the
 // trailing 0x00). Returns the number of bytes, or 0 if it doesn't fit.

@@ -11,7 +11,7 @@ _Static_assert(sizeof(nl_bump_t) == 8, "nl_bump_t layout");
 _Static_assert(sizeof(nl_radio_hdr_t) == 10, "nl_radio_hdr_t layout");
 _Static_assert(NL_RADIO_MAX <= 250, "ESP-NOW packets are at most 250 bytes");
 _Static_assert(sizeof(nl_audio_t) == 36, "nl_audio_t layout");
-_Static_assert(sizeof(nl_eye_state_t) == 80, "nl_eye_state_t layout");
+_Static_assert(sizeof(nl_eye_state_t) == 81, "nl_eye_state_t layout");
 _Static_assert(sizeof(nl_eye_state_t) <= NL_MAX_PAYLOAD, "payload too big");
 
 uint16_t nl_crc16(const uint8_t *data, size_t len)

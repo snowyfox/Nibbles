@@ -68,10 +68,22 @@ static bool anchoring(void)
     return cfg.anchor || scan.anchoring;
 }
 
+// Guards scan and the channel; the radio task and senders both move it.
+static SemaphoreHandle_t chan_mutex;
+
 static void set_channel(uint8_t ch)
 {
     if (ch == channel) return;
     if (esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE) == ESP_OK) channel = ch;
+}
+
+// Before an application send: a fallback anchor comes back from a peek.
+static void about_to_send(void)
+{
+    if (!scan.anchoring) return;
+    xSemaphoreTake(chan_mutex, portMAX_DELAY);
+    set_channel(nl_chanscan_busy(&scan));
+    xSemaphoreGive(chan_mutex);
 }
 
 static esp_err_t ensure_peer(const uint8_t mac[6])
@@ -125,8 +137,10 @@ static void handle(const rx_item_t *it)
         memcpy(&hb, pl, sizeof(hb));
         if ((hb.flags & NL_HB_ANCHOR) && !cfg.anchor) {
             if (scan.anchoring) ESP_LOGI(TAG, "heard an anchor on channel %d: following it", hb.channel);
+            xSemaphoreTake(chan_mutex, portMAX_DELAY);
             nl_chanscan_heard_anchor(&scan, hb.channel);
             set_channel(scan.channel);
+            xSemaphoreGive(chan_mutex);
         }
     } else if (h.type == NL_MSG_ACK && len == sizeof(nl_ack_t)) {
         nl_ack_t ack;
@@ -152,7 +166,9 @@ static void radio_task(void *arg)
             last = now;
             if (!cfg.anchor) {
                 const bool was = scan.anchoring;
+                xSemaphoreTake(chan_mutex, portMAX_DELAY);
                 set_channel(nl_chanscan_tick(&scan, dt_ms));
+                xSemaphoreGive(chan_mutex);
                 if (scan.anchoring && !was) ESP_LOGI(TAG, "no anchor heard: anchoring channel %d", scan.home_channel);
             }
         }
@@ -169,7 +185,8 @@ esp_err_t nl_espnow_start(const nl_espnow_config_t *c)
     rx_queue = xQueueCreate(16, sizeof(rx_item_t));
     cmd_mutex = xSemaphoreCreateMutex();
     ack_sem = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(rx_queue && cmd_mutex && ack_sem, ESP_ERR_NO_MEM, TAG, "no memory");
+    chan_mutex = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(rx_queue && cmd_mutex && ack_sem && chan_mutex, ESP_ERR_NO_MEM, TAG, "no memory");
 
     esp_err_t err = esp_event_loop_create_default();
     ESP_RETURN_ON_FALSE(err == ESP_OK || err == ESP_ERR_INVALID_STATE, err, TAG, "event loop failed");
@@ -199,11 +216,13 @@ esp_err_t nl_espnow_start(const nl_espnow_config_t *c)
 
 esp_err_t nl_espnow_broadcast(uint8_t type, const void *payload, size_t len)
 {
+    about_to_send();
     return send_raw(BROADCAST, type, payload, len);
 }
 
 esp_err_t nl_espnow_send(const uint8_t mac[6], uint8_t type, const void *payload, size_t len)
 {
+    about_to_send();
     return send_raw(mac, type, payload, len);
 }
 
@@ -213,6 +232,7 @@ esp_err_t nl_espnow_command(const uint8_t mac[6], nl_cmd_t *cmd, uint8_t *status
     cmd->id = next_cmd_id++;
     if (!next_cmd_id) next_cmd_id = 1;
     xSemaphoreTake(ack_sem, 0);  // clear a stale ack
+    about_to_send();
     esp_err_t result = ESP_ERR_TIMEOUT;
     for (int i = 0; i < tries && result != ESP_OK; i++) {
         waiting_id = cmd->id;

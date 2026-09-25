@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------- eye link
 // The two eyes are wired together: UART1, GPIO 17 (TX) to the other eye's
 // GPIO 18 (RX) and back, plus GND. See docs/architecture.md.
-#define NIBBLES_FW_BUILD     2
+#define NIBBLES_FW_BUILD 3
 #define LINK_UART            1
 #define LINK_TX_GPIO         17
 #define LINK_RX_GPIO         18
@@ -46,6 +46,12 @@
 #define EYE_PUPIL_RADIUS     38.0f   // base pupil radius
 #define EYE_PUPIL_LOUD_GROW  16.0f   // extra pupil radius at full loudness
 #define EYE_PUPIL_THUMP      14.0f   // extra pupil radius on a beat
+
+// Bumps from the base station (held while the button is held).
+#define BUMP_FLASH_FADE_S    0.15f   // flash glow fades this fast after release
+#define BUMP_FLASH_PUPIL     0.45f   // a flash shrinks the pupil by this fraction
+#define BUMP_BLACK_CLOSE_S   0.03f   // lids snap shut (time constant)
+#define BUMP_BLACK_OPEN_S    0.12f   // and reopen a little slower
 #define EYE_MAX_LOOK_PX      70.0f   // how far the pupil can move from centre
 #define EYE_MAX_RIPPLES      4
 

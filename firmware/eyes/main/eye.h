@@ -28,6 +28,7 @@ typedef struct {
     bool swap_now;            // true for one update: the lids hide the eye, switch preset now
     float gaze_x, gaze_y;     // idle glance part of the pupil offset, -1..1 (shared between eyes)
     bool awake;
+    float master;             // 0..1 master level for everything, outline included (blackout bumps)
 } eye_params_t;
 
 typedef struct {
@@ -48,6 +49,8 @@ typedef struct {
     float dance;              // dance score incl. music-match bonus
     float activity_peak;      // recent motion activity, held then faded
     float activity_hold_s;
+    uint8_t bump;             // nl_bump_action_t being held, 0 = none
+    float flash_amt, black_amt;
     eye_params_t p;
 } eye_t;
 
@@ -58,6 +61,11 @@ const char *eye_state_name(eye_state_t s);
 // Ask for a preset change. The eye blinks and sets p.swap_now for one update
 // while the lids are shut.
 void eye_request_swap(eye_t *e);
+
+// A bump from the base: NL_BUMP_FLASH startles the eye (full glow, pupil
+// snaps small, a ripple), NL_BUMP_BLACKOUT shuts the lids and dims it; 0 ends
+// the bump. Preset bumps are handled by the caller.
+void eye_set_bump(eye_t *e, uint8_t action);
 
 // Pupil offset from this eye's own motion look plus the shared idle glance.
 void eye_compose_pupil(eye_params_t *p, float look_x, float look_y);

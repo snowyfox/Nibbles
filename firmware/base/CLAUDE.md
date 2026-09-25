@@ -17,14 +17,18 @@ What it does now (`main/main.c`):
   (`BASE_IS_ANCHOR 0`). If none is heard for 12 s (`BASE_ANCHOR_FALLBACK_MS`)
   it anchors channel 6 itself, so the eyes still have a channel. It then spends
   300 ms on another channel every 3 s, in turn, looking for WLED, and hands
-  over as soon as it hears it. `BASE_IS_ANCHOR 1` makes it a fixed anchor.
+  over as soon as it hears it. Commands and bumps end a peek at once and put
+  the next one off by 3 s, so held bumps never miss keepalives.
+  `BASE_IS_ANCHOR 1` makes it a fixed anchor.
 - Logs the eyes' and WLED's telemetry every 2 s.
-- BOOT = next eye preset. Second key (GPIO 16) = a WLED **flash bump** while
-  held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after
+- BOOT = next eye preset. Second key (GPIO 16) = a **flash bump** for the
+  eyes and WLED (`BTN_BUMP_TARGET`) while held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after
   the last message).
 - USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
-  `wled next`, `wled set N`; `bump flash MS`, `bump black MS`,
-  `bump preset N MS`. Commands are unicast with an ack and up to 3 tries of
+  `wled next`, `wled set N`; `[eyes|wled] bump flash MS`,
+  `[eyes|wled] bump black MS`, `[eyes|wled] bump preset N MS` (no prefix:
+  flash and blackout go to both, preset bumps to WLED, as the preset numbers
+  differ). Commands are unicast with an ack and up to 3 tries of
   60 ms.
 
 Build: `idf.py -C firmware/base build`, flash to the base board's port

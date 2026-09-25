@@ -15,6 +15,7 @@
 // Buttons (active low): BOOT = next eye preset; the second key is a bump
 // button: WLED flashes white while it is held.
 #define BTN_NEXT_GPIO        0
+#define BTN_BUMP_TARGET      (NL_TARGET_EYES | NL_TARGET_WLED)  // who the bump key flashes
 #define BTN_BUMP_GPIO        16
 
 #define CMD_TRIES            3

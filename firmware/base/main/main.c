@@ -87,9 +87,9 @@ static void bump_start(uint8_t target, uint8_t action, int arg)
 }
 
 // Hold a bump for ms (used by the serial "bump" command).
-static void bump_for(uint8_t action, int arg, int ms)
+static void bump_for(uint8_t target, uint8_t action, int arg, int ms)
 {
-    bump_start(NL_TARGET_WLED, action, arg);
+    bump_start(target, action, arg);
     for (int t = 0; t < ms; t += NL_BUMP_KEEPALIVE_MS) {
         vTaskDelay(pdMS_TO_TICKS(NL_BUMP_KEEPALIVE_MS));
         bump_send(NL_BUMP_HOLD);
@@ -114,7 +114,7 @@ static void buttons_task(void *arg)
         if (n == 0 && prev_next == 1) send_preset(NL_OP_PRESET_NEXT);
         const int64_t now = esp_timer_get_time();
         if (b == 0 && prev_bump == 1) {
-            bump_start(NL_TARGET_WLED, NL_BUMP_FLASH, 0);
+            bump_start(BTN_BUMP_TARGET, NL_BUMP_FLASH, 0);
             next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
         } else if (b == 0 && now >= next_hold) {
             bump_send(NL_BUMP_HOLD);
@@ -129,7 +129,8 @@ static void buttons_task(void *arg)
 
 // Serial commands over USB, for testing without pressing buttons:
 // "next" / "prev" / "set N" (eye presets), "wled next" / "wled set N",
-// "bump flash|black|preset N ms" (hold a WLED bump for ms).
+// "[eyes|wled] bump flash|black|preset N ms" (hold a bump for ms; without a
+// prefix, flash and blackout go to both and preset bumps to WLED).
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -151,13 +152,18 @@ static void console_task(void *arg)
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
         else if (!strncmp(line, "wled set ", 9)) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, atoi(line + 9));
-        else if (!strncmp(line, "bump flash ", 11)) bump_for(NL_BUMP_FLASH, 0, atoi(line + 11));
-        else if (!strncmp(line, "bump black ", 11)) bump_for(NL_BUMP_BLACKOUT, 0, atoi(line + 11));
-        else if (!strncmp(line, "bump preset ", 12)) {
+        else if (strstr(line, "bump ")) {
+            const char *b = strstr(line, "bump ") + 5;
+            uint8_t target = !strncmp(line, "eyes ", 5) ? NL_TARGET_EYES
+                           : !strncmp(line, "wled ", 5) ? NL_TARGET_WLED : NL_TARGET_EYES | NL_TARGET_WLED;
             int preset = 0, ms = 0;
-            sscanf(line + 12, "%d %d", &preset, &ms);
-            bump_for(NL_BUMP_PRESET, preset, ms);
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, bump flash|black MS, bump preset N MS");
+            if (!strncmp(b, "flash ", 6)) bump_for(target, NL_BUMP_FLASH, 0, atoi(b + 6));
+            else if (!strncmp(b, "black ", 6)) bump_for(target, NL_BUMP_BLACKOUT, 0, atoi(b + 6));
+            else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
+                if (target == (NL_TARGET_EYES | NL_TARGET_WLED)) target = NL_TARGET_WLED;
+                bump_for(target, NL_BUMP_PRESET, preset, ms);
+            }
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
     }
 }
 

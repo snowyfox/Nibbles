@@ -71,6 +71,7 @@ void eye_init(eye_t *e, uint32_t seed)
     e->p.pupil_r = EYE_PUPIL_RADIUS;
     e->p.lid_open = 1.0f;
     e->p.intensity = IDLE_INTENSITY;
+    e->p.master = 1.0f;
 }
 
 void eye_request_swap(eye_t *e)
@@ -263,7 +264,31 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     p->gaze_x = idle * e->sacc_x;
     p->gaze_y = idle * e->sacc_y;
     p->awake = awake;
+
+    // Bumps: a flash opens the eye wide at full glow with a small pupil; a
+    // blackout shuts the lids and dims everything. Both ease back on release.
+    e->flash_amt = e->bump == NL_BUMP_FLASH ? 1.0f : e->flash_amt * expf(-dt / BUMP_FLASH_FADE_S);
+    const bool black = e->bump == NL_BUMP_BLACKOUT;
+    e->black_amt = approach(e->black_amt, black ? 1.0f : 0.0f, black ? BUMP_BLACK_CLOSE_S : BUMP_BLACK_OPEN_S, dt);
+    if (e->black_amt < 0.001f) e->black_amt = 0.0f;
+    p->intensity = fmaxf(p->intensity, e->flash_amt);
+    p->lid_open = fmaxf(p->lid_open, e->flash_amt) * (1.0f - e->black_amt);
+    p->master = 1.0f - e->black_amt;
+    p->pupil_r *= 1.0f - BUMP_FLASH_PUPIL * e->flash_amt;
     eye_compose_pupil(p, m->look_x, m->look_y);
+}
+
+void eye_set_bump(eye_t *e, uint8_t action)
+{
+    if (action == NL_BUMP_FLASH && e->bump != NL_BUMP_FLASH) {
+        int slot = 0;  // a ripple bursts out with the flash
+        for (int i = 1; i < EYE_MAX_RIPPLES; i++) {
+            if (e->p.ripples[i].amp < e->p.ripples[slot].amp) slot = i;
+        }
+        e->p.ripples[slot].r = e->p.pupil_r;
+        e->p.ripples[slot].amp = 1.0f;
+    }
+    e->bump = action == NL_BUMP_FLASH || action == NL_BUMP_BLACKOUT ? action : 0;
 }
 
 void eye_compose_pupil(eye_params_t *p, float look_x, float look_y)
@@ -302,6 +327,7 @@ void eye_export_shared(const eye_t *e, int preset, nl_side_t side, nl_eye_state_
     s->preset = (uint8_t)preset;
     s->awake = p->awake;
     s->side = (uint8_t)side;
+    s->master = (uint8_t)lroundf(clampf(p->master, 0.0f, 1.0f) * 255.0f);
 }
 
 void eye_apply_shared(eye_t *e, const nl_eye_state_t *s, nl_side_t my_side, const motion_features_t *m)
@@ -325,6 +351,7 @@ void eye_apply_shared(eye_t *e, const nl_eye_state_t *s, nl_side_t my_side, cons
         p->ripples[i].amp = s->ripple_amp[i];
     }
     p->awake = s->awake;
+    p->master = s->master / 255.0f;
     p->swap_now = false;  // presets follow the leader's index instead
     e->state = (eye_state_t)s->state;
     eye_compose_pupil(p, m->look_x, m->look_y);

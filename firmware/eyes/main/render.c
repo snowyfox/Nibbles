@@ -211,7 +211,7 @@ static void whiten(float c[3], float w)
 
 static void prepare(const eye_params_t *p)
 {
-    const float I = p->intensity;
+    const float I = p->intensity * p->master;
     const float pr = p->pupil_r * preset->pupil_scale;
     const int n = preset->rings;
     float c[3];
@@ -328,8 +328,9 @@ static void prepare(const eye_params_t *p)
 
     // Fixed outline ring around the whole eye.
     preset_color(p, n, c);
-    // Always at full brightness, whatever the music, hype or sleep is doing.
-    const float oamp = 1.0f;
+    // Always at full brightness, whatever the music, hype or sleep is doing
+    // (only a blackout bump dims it).
+    const float oamp = p->master;
     for (int i = 0; i < OUTLINE_LUT_N; i++) {
         float g = outline_profile(OUTLINE_INNER + (float)i / LUT_SCALE - EYE_OUTLINE_RADIUS, oamp);
         outline_lut[i] = to565(g * c[0], g * c[1], g * c[2]);

@@ -46,7 +46,7 @@ idf.py -p /dev/cu.usbmodemNNN flash      # port varies (201, 401 seen): ls /dev/
 Host tests (pure-C analysis, eye behaviour and presets; no hardware needed):
 
 ```sh
-make -C test/host            # 151 checks, prints ok/FAIL, non-zero exit on failure
+make -C test/host            # 159 checks, prints ok/FAIL, non-zero exit on failure
 ```
 
 Reading the board: open the port with pyserial from the activated IDF env and
@@ -196,12 +196,21 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
 ### Radio (`nibbles_espnow`, leader eye only)
 - ESP-NOW via `shared/nibbles_espnow`: Wi-Fi in station mode without joining a
   network. The leader scans channels (from `RADIO_START_CHANNEL`) until it hears
-  an anchor heartbeat (the base prototype today, WLED later), then locks.
+  an anchor heartbeat (the WLED usermod, or the base as a fallback), then locks.
 - Broadcasts `nl_eye_telemetry_t` every 500 ms (preset, state, linked, both
   eyes' fps and late frames, tempo, level, hype).
 - Takes `nl_cmd_t` preset commands (set/next/prev) and acks them; retries with
   the same id are acked but applied once. A command triggers the swap blink
   and holds for a full preset cycle; the port eye follows over the cable.
+- Plays **bumps** aimed at the eyes (`nl_bump_t`, target bit `NL_TARGET_EYES`)
+  through `nl_bump_rx_*` in the eye task, released on STOP or 300 ms of silence:
+  - flash: full glow, lids wide, pupil shrinks by 45%, a ripple bursts out;
+    fades over ~0.15 s after release (`eye_set_bump`);
+  - blackout: lids snap shut and `p.master` (a master level the renderer applies
+    to everything, outline included) goes to 0; reopens over ~0.3 s;
+  - preset: shows preset `arg` at once (no blink) and puts the old one back.
+  Bumps change `eye.p` on the leader, and the shared state
+  (`nl_eye_state_t.master` included) carries them to the port eye.
 - Measured: commands acked in ~2 ms, 0 late frames with Wi-Fi running,
   ~73 KB internal RAM free. A 5 s `radio:` log line shows channel, lock,
   rx/tx/fail and free internal heap.
