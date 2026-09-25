@@ -74,9 +74,9 @@ static bool on_chunk_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_d
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
 {
-    // Full-frame render mode: px holds the whole (landscape) screen and LVGL
-    // keeps it between frames, redrawing only what changed, so it must not be
-    // modified here. Rotate into the panel's orientation, then byte-swap that.
+    // Full-frame render mode: px holds the whole screen and LVGL keeps it
+    // between frames, redrawing only what changed, so it must not be modified
+    // here. Rotate (or copy) into the panel's orientation, then byte-swap that.
     const int32_t w = lv_area_get_width(area), h = lv_area_get_height(area);
     if (shot_wanted && shot_buf) {
         memcpy(shot_buf, px, w * h * 2);
@@ -86,8 +86,11 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
         xSemaphoreGive(shot_ready);
     }
     const lv_color_format_t cf = lv_display_get_color_format(disp);
-    lv_draw_sw_rotate(px, rotated, w, h, lv_draw_buf_width_to_stride(w, cf), lv_draw_buf_width_to_stride(PANEL_W, cf),
-                      lv_display_get_rotation(disp), cf);
+    if (lv_display_get_rotation(disp) == LV_DISPLAY_ROTATION_0)
+        memcpy(rotated, px, FRAME_BYTES);  // already the panel's orientation
+    else
+        lv_draw_sw_rotate(px, rotated, w, h, lv_draw_buf_width_to_stride(w, cf),
+                          lv_draw_buf_width_to_stride(PANEL_W, cf), lv_display_get_rotation(disp), cf);
     lv_draw_sw_rgb565_swap(rotated, PANEL_W * PANEL_H);
     const uint8_t *src = rotated;
     for (int y = 0; y < PANEL_H; y += CHUNK_ROWS, src += CHUNK_BYTES) {
@@ -269,11 +272,15 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 }
 
 // with_bar: a brightness slider along the bottom of the card.
-static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t accent, bool with_bar)
+// Portrait (DISPLAY_ROTATION 0 or 180): the cards stack down the 172-pixel-wide
+// screen. Landscape (90 or 270): they sit side by side.
+#define PORTRAIT (DISPLAY_ROTATION == LV_DISPLAY_ROTATION_0 || DISPLAY_ROTATION == LV_DISPLAY_ROTATION_180)
+
+static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t accent, bool with_bar, int w, int h)
 {
     c->card = lv_obj_create(parent);
     lv_obj_remove_flag(c->card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(c->card, 204, 136);
+    lv_obj_set_size(c->card, w, h);
     lv_obj_set_style_bg_color(c->card, lv_color_hex(COL_CARD), 0);
     lv_obj_set_style_border_width(c->card, 0, 0);
     lv_obj_set_style_radius(c->card, 10, 0);
@@ -283,11 +290,19 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
 
     c->title = label(c->card, &lv_font_montserrat_14, accent);
     lv_label_set_text(c->title, title);
-    c->big = label(c->card, &lv_font_montserrat_28, COL_TEXT);
+    // Preset names: no scrolling. Portrait wraps onto a second line, landscape
+    // cuts the name off with "...".
+    c->big = label(c->card, &lv_font_montserrat_20, COL_TEXT);
     lv_obj_set_width(c->big, LV_PCT(100));
-    lv_label_set_long_mode(c->big, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(c->big, PORTRAIT ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
     c->line1 = label(c->card, &lv_font_montserrat_16, COL_TEXT);
     c->line2 = label(c->card, &lv_font_montserrat_14, COL_TITLE);
+    if (PORTRAIT) {  // narrow cards: let the detail lines wrap
+        lv_obj_set_width(c->line1, LV_PCT(100));
+        lv_obj_set_width(c->line2, LV_PCT(100));
+        lv_label_set_long_mode(c->line1, LV_LABEL_LONG_WRAP);
+        lv_label_set_long_mode(c->line2, LV_LABEL_LONG_WRAP);
+    }
     c->bar = NULL;
     if (with_bar) {
         c->bar = lv_slider_create(c->card);
@@ -306,8 +321,14 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
 static lv_obj_t *make_pad(const char *text, uint32_t color, display_action_t action, int x_ofs)
 {
     lv_obj_t *b = lv_button_create(screen);
-    lv_obj_set_size(b, 96, 26);
-    lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, x_ofs, -3);
+    if (PORTRAIT) {  // two big pads side by side along the bottom
+        lv_obj_set_size(b, 80, 70);
+        lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, x_ofs == -8 ? -4 : -88, -4);
+        lv_obj_set_style_pad_hor(b, 2, 0);
+    } else {
+        lv_obj_set_size(b, 96, 26);
+        lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, x_ofs, -3);
+    }
     lv_obj_set_style_bg_color(b, lv_color_hex(COL_CARD), 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(color), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(b, lv_color_hex(color), 0);
@@ -340,21 +361,37 @@ static void ui_build(void)
 
     lv_obj_t *row = lv_obj_create(screen);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(row, 640, 140);
-    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 4, 0);
-    lv_obj_set_style_pad_column(row, 6, 0);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    make_card(&eyes_card, row, "EYES", COL_EYES, true);
-    make_card(&wled_card, row, "WLED", COL_WLED, true);
-    make_card(&radio_card, row, "RADIO", COL_OK, false);
+    if (PORTRAIT) {
+        lv_obj_set_size(row, 172, 520);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_pad_row(row, 6, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        make_card(&eyes_card, row, "EYES", COL_EYES, true, 164, 172);
+        make_card(&wled_card, row, "WLED", COL_WLED, true, 164, 172);
+        make_card(&radio_card, row, "RADIO", COL_OK, false, 164, 112);
+    } else {
+        lv_obj_set_size(row, 640, 140);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_pad_column(row, 6, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        make_card(&eyes_card, row, "EYES", COL_EYES, true, 204, 136);
+        make_card(&wled_card, row, "WLED", COL_WLED, true, 204, 136);
+        make_card(&radio_card, row, "RADIO", COL_OK, false, 204, 136);
+    }
 
     event_label = label(screen, &lv_font_montserrat_16, COL_TITLE);
-    lv_obj_align(event_label, LV_ALIGN_BOTTOM_LEFT, 12, -8);
+    if (PORTRAIT) {  // above the pads, wrapping onto a second line if needed
+        lv_obj_set_width(event_label, 160);
+        lv_label_set_long_mode(event_label, LV_LABEL_LONG_WRAP);
+        lv_obj_align(event_label, LV_ALIGN_BOTTOM_LEFT, 8, -80);
+    } else {
+        lv_obj_align(event_label, LV_ALIGN_BOTTOM_LEFT, 12, -8);
+    }
     lv_label_set_text(event_label, "Nibbles base");
 
     // Tapping a card steps that side's preset.

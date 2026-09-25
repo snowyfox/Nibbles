@@ -21,14 +21,17 @@ What it does now (`main/main.c`):
   the next one off by 3 s, so held bumps never miss keepalives.
   `BASE_IS_ANCHOR 1` makes it a fixed anchor.
 - **Status screen** (`main/display.c`, LVGL 9.2 + `esp_lcd_axs15231b` from the
-  component manager): landscape 640×172, three cards (EYES: preset, state,
+  component manager): portrait 172×640 by default (`DISPLAY_ROTATION` 0 or
+  180; cards stacked, big FLASH/BLACKOUT pads along the bottom) or landscape
+  640×172 (90 or 270; cards side by side). Preset names use a 20 px font and
+  wrap (portrait) or end in "..." (landscape), never scroll. Three cards (EYES: preset, state,
   link, both fps, bpm, hype bar; WLED: on/preset, brightness, effect, palette,
   fps, LEDs, brightness bar; RADIO: channel, anchoring/locked/scanning,
   counters) and an event line (last command result, held bump, which also
   outlines the screen). Stale cards grey out after 2 s. `DISPLAY_ROTATION`
-  picks which way up. Panel notes: frames go out whole in 64-row QSPI chunks
+  picks the layout and which way up. Panel notes: frames go out whole in 64-row QSPI chunks
   (the AXS15231B takes whole frames in order); LVGL renders full-frame in
-  landscape and `flush_cb` rotates into a separate buffer and byte-swaps that
+  the chosen orientation and `flush_cb` copies (rotation 0) or rotates into a separate buffer and byte-swaps that
   (never the LVGL buffer, which LVGL keeps between frames); set the rotation
   before `lv_display_set_buffers` (the stride comes from the width); LVGL's
   printf has no `%f`.

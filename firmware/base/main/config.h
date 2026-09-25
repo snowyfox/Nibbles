@@ -19,8 +19,9 @@
 #define BTN_BUMP_TARGET      (NL_TARGET_EYES | NL_TARGET_WLED)  // who the bump key flashes
 #define BTN_BUMP_GPIO        16
 
-// Status screen: landscape. LV_DISPLAY_ROTATION_90 or _270 picks which way up.
-#define DISPLAY_ROTATION     LV_DISPLAY_ROTATION_90
+// Status screen: LV_DISPLAY_ROTATION_0 or _180 = portrait (cards stacked),
+// _90 or _270 = landscape (cards side by side); each pair picks which way up.
+#define DISPLAY_ROTATION     LV_DISPLAY_ROTATION_0
 #define DISPLAY_BACKLIGHT_PCT 80
 
 #define CMD_TRIES            3

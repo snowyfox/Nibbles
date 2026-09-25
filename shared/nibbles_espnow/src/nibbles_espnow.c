@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_now.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -201,6 +202,10 @@ esp_err_t nl_espnow_start(const nl_espnow_config_t *c)
     ESP_RETURN_ON_ERROR(esp_now_register_send_cb(on_sent), TAG, "send cb failed");
     ESP_RETURN_ON_ERROR(ensure_peer(BROADCAST), TAG, "broadcast peer failed");
 
+    // Receivers treat a repeated (sender, id) as a retry and don't apply it
+    // again, so start somewhere random: a rebooted sender counting from 1
+    // would otherwise have its first command ignored.
+    next_cmd_id = (uint16_t)(esp_random() | 1);
     nl_chanscan_init(&scan, cfg.anchor_channel);
     nl_chanscan_set_fallback(&scan, cfg.anchor ? 0 : cfg.anchor_fallback_ms);
     channel = 0;
