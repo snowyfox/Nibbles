@@ -160,7 +160,8 @@ typedef struct NL_PACKED {
 typedef enum {
     NL_BUMP_FLASH = 1,      // everything white, full brightness
     NL_BUMP_BLACKOUT = 2,   // everything off
-    NL_BUMP_PRESET = 3,     // arg = preset to show while held
+    NL_BUMP_PRESET = 3,     // arg = preset number to show while held, 1-based on every
+                            // receiver (WLED preset id; eye preset index + 1)
 } nl_bump_action_t;
 
 typedef enum {

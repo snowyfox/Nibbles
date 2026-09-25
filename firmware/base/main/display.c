@@ -226,6 +226,27 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 
 static int64_t slider_hold_until;  // don't let telemetry move a slider just let go
 
+// Preset grid buttons: user data is the button number (1..10). A short tap
+// sets preset N; holding bumps preset N + 10 until release.
+static lv_obj_t *preset_held;
+
+static void on_preset_event(lv_event_t *ev)
+{
+    const int n = (int)(intptr_t)lv_event_get_user_data(ev);
+    lv_obj_t *btn = lv_event_get_target_obj(ev);
+    const lv_event_code_t code = lv_event_get_code(ev);
+    if (!action_cb) return;
+    if (code == LV_EVENT_SHORT_CLICKED) {
+        action_cb(DISPLAY_TAP_PRESET, true, n);
+    } else if (code == LV_EVENT_LONG_PRESSED) {
+        preset_held = btn;
+        action_cb(DISPLAY_HOLD_PRESET, true, n + DISPLAY_PRESET_HOLD_OFFSET);
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && preset_held == btn) {
+        preset_held = NULL;
+        action_cb(DISPLAY_HOLD_PRESET, false, n + DISPLAY_PRESET_HOLD_OFFSET);
+    }
+}
+
 static void on_event(lv_event_t *ev)
 {
     const display_action_t a = (display_action_t)(intptr_t)lv_event_get_user_data(ev);
@@ -260,7 +281,10 @@ typedef struct {
 } card_t;
 
 static card_t eyes_card, wled_card, radio_card;
-static lv_obj_t *event_label, *screen, *pad_flash, *pad_black;
+static lv_obj_t *screen, *pages, *page0, *page1, *pad_flash, *pad_black;
+static lv_obj_t *event_labels[2];  // one per page
+#define event_label event_labels[0]
+static volatile int page_wanted = -1;  // page change asked for over serial
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 {
@@ -320,7 +344,7 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
 
 static lv_obj_t *make_pad(const char *text, uint32_t color, display_action_t action, int x_ofs)
 {
-    lv_obj_t *b = lv_button_create(screen);
+    lv_obj_t *b = lv_button_create(page0);
     if (PORTRAIT) {  // two big pads side by side along the bottom
         lv_obj_set_size(b, 80, 70);
         lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, x_ofs == -8 ? -4 : -88, -4);
@@ -351,6 +375,73 @@ static void card_stale(card_t *c, bool stale)
     lv_obj_set_style_text_color(c->line1, lv_color_hex(col), 0);
 }
 
+// Page 2: square preset buttons, 2 columns by 5 rows in portrait (5 by 2 in
+// landscape), numbered 1-10, styled like the cards.
+static void build_preset_page(void)
+{
+    const int cols = PORTRAIT ? 2 : 5, rows = PORTRAIT ? 5 : 2;
+    const int w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
+    const int gap = 6, top = PORTRAIT ? 30 : 24, bottom = PORTRAIT ? 48 : 22;
+    int side = (w - 8 - gap * (cols - 1)) / cols;
+    const int by_height = (h - top - bottom - gap * (rows - 1)) / rows;
+    if (by_height < side) side = by_height;
+
+    lv_obj_t *title = label(page1, &lv_font_montserrat_14, COL_WLED);
+    lv_label_set_text(title, "PRESETS");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, PORTRAIT ? 8 : 4);
+
+    lv_obj_t *grid = lv_obj_create(page1);
+    lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(grid, 0, 0);
+    lv_obj_set_style_pad_all(grid, 0, 0);
+    lv_obj_set_style_pad_row(grid, gap, 0);
+    lv_obj_set_style_pad_column(grid, gap, 0);
+    lv_obj_set_size(grid, cols * side + (cols - 1) * gap, rows * side + (rows - 1) * gap);
+    const int grid_h = rows * side + (rows - 1) * gap;
+    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, top + (h - top - bottom - grid_h) / 2);  // centred in the space
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+
+    for (int n = 1; n <= 10; n++) {
+        lv_obj_t *b = lv_obj_create(grid);
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(b, side, side);
+        lv_obj_set_style_bg_color(b, lv_color_hex(COL_CARD), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x232733), LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(b, 0, 0);
+        lv_obj_set_style_radius(b, 10, 0);
+        lv_obj_set_style_pad_all(b, 0, 0);
+        lv_obj_t *num = label(b, &lv_font_montserrat_28, COL_TEXT);
+        lv_label_set_text_fmt(num, "%d", n);
+        lv_obj_align(num, LV_ALIGN_CENTER, 0, side >= 60 ? -6 : 0);
+        if (side >= 60) {
+            lv_obj_t *hint = label(b, &lv_font_montserrat_14, COL_DIM);
+            lv_label_set_text_fmt(hint, "hold %d", n + DISPLAY_PRESET_HOLD_OFFSET);
+            lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+        }
+        lv_obj_add_event_cb(b, on_preset_event, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)n);
+        lv_obj_add_event_cb(b, on_preset_event, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)n);
+        lv_obj_add_event_cb(b, on_preset_event, LV_EVENT_RELEASED, (void *)(intptr_t)n);
+        lv_obj_add_event_cb(b, on_preset_event, LV_EVENT_PRESS_LOST, (void *)(intptr_t)n);
+    }
+
+    event_labels[1] = label(page1, &lv_font_montserrat_16, COL_TITLE);
+    lv_obj_set_width(event_labels[1], w - 16);
+    lv_label_set_long_mode(event_labels[1], PORTRAIT ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
+    lv_obj_align(event_labels[1], LV_ALIGN_BOTTOM_LEFT, 8, -6);
+    lv_label_set_text(event_labels[1], "tap: preset  hold: bump");
+}
+
+static void set_event_text(const char *text, uint32_t color)
+{
+    for (int i = 0; i < 2; i++) {
+        if (!event_labels[i]) continue;
+        lv_obj_set_style_text_color(event_labels[i], lv_color_hex(color), 0);
+        lv_label_set_text(event_labels[i], text);
+    }
+}
+
 static void ui_build(void)
 {
     screen = lv_screen_active();
@@ -358,8 +449,16 @@ static void ui_build(void)
     lv_obj_set_style_border_color(screen, lv_color_hex(COL_WARN), 0);
     lv_obj_set_style_border_width(screen, 0, 0);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_post(screen, true, 0);  // the bump outline goes over the pages
 
-    lv_obj_t *row = lv_obj_create(screen);
+    // Two pages side by side: swipe left for the preset grid, right to come back.
+    pages = lv_tileview_create(screen);
+    lv_obj_set_style_bg_opa(pages, LV_OPA_TRANSP, 0);
+    lv_obj_set_scrollbar_mode(pages, LV_SCROLLBAR_MODE_OFF);
+    page0 = lv_tileview_add_tile(pages, 0, 0, LV_DIR_RIGHT);
+    page1 = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT);
+
+    lv_obj_t *row = lv_obj_create(page0);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
@@ -384,7 +483,7 @@ static void ui_build(void)
         make_card(&radio_card, row, "RADIO", COL_OK, false, 204, 136);
     }
 
-    event_label = label(screen, &lv_font_montserrat_16, COL_TITLE);
+    event_label = label(page0, &lv_font_montserrat_16, COL_TITLE);
     if (PORTRAIT) {  // above the pads, wrapping onto a second line if needed
         lv_obj_set_width(event_label, 160);
         lv_label_set_long_mode(event_label, LV_LABEL_LONG_WRAP);
@@ -408,6 +507,8 @@ static void ui_build(void)
     // Bump pads: held while touched.
     pad_black = make_pad("BLACKOUT", 0x5a5f6a, DISPLAY_PAD_BLACKOUT, -8);
     pad_flash = make_pad("FLASH", COL_WARN, DISPLAY_PAD_FLASH, -8 - 104);
+
+    build_preset_page();
 }
 
 static const char *eye_state(uint8_t s)
@@ -482,8 +583,9 @@ static void ui_update(const display_status_t *s)
     // A held bump outlines the whole screen.
     lv_obj_set_style_border_width(screen, s->bump_action ? 4 : 0, 0);
     if (s->bump_action) {
-        lv_obj_set_style_text_color(event_label, lv_color_hex(COL_WARN), 0);
-        lv_label_set_text_fmt(event_label, "BUMP  %s", bump_name(s->bump_action));
+        char text[32];
+        snprintf(text, sizeof(text), "BUMP  %s", bump_name(s->bump_action));
+        set_event_text(text, COL_WARN);
     }
 }
 
@@ -511,10 +613,13 @@ static void display_task(void *arg)
             taskEXIT_CRITICAL(&lock);
             ui_update(&s);
             if (new_event || (last_bump && !s.bump_action)) {
-                lv_obj_set_style_text_color(event_label, lv_color_hex(COL_TITLE), 0);
-                lv_label_set_text(event_label, ev);
+                set_event_text(ev, COL_TITLE);
             }
             last_bump = s.bump_action;
+        }
+        if (page_wanted >= 0) {
+            lv_tileview_set_tile_by_index(pages, page_wanted, 0, LV_ANIM_OFF);
+            page_wanted = -1;
         }
         if (shot_wanted) lv_obj_invalidate(screen);
         const uint32_t wait = lv_timer_handler();
@@ -581,6 +686,11 @@ void display_screenshot(void)
         }
     }
     printf("SHOT END\n");
+}
+
+void display_show_page(int page)
+{
+    page_wanted = page;
 }
 
 void display_update(const display_status_t *s)

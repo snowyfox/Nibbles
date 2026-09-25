@@ -111,6 +111,7 @@ static void bump_start(uint8_t target, uint8_t action, int arg)
 // the display task mustn't); pads are read by the buttons task.
 static QueueHandle_t actions;
 static volatile bool pad_flash, pad_black;
+static volatile int pad_preset;  // preset being held from the grid (1-based), 0 = none
 
 typedef struct {
     display_action_t action;
@@ -122,7 +123,18 @@ static void on_touch(display_action_t a, bool pressed, int value)
     const action_t act = { a, value };
     if (a == DISPLAY_PAD_FLASH) pad_flash = pressed;
     else if (a == DISPLAY_PAD_BLACKOUT) pad_black = pressed;
+    else if (a == DISPLAY_HOLD_PRESET) {
+        if (pressed) pad_preset = value;
+        else if (pad_preset == value) pad_preset = 0;
+    }
     else if (pressed || a == DISPLAY_SLIDE_EYES || a == DISPLAY_SLIDE_WLED) xQueueSend(actions, &act, 0);
+}
+
+// Preset N (1-based) on both: WLED preset id N, eye preset index N - 1.
+static void send_preset_both(int n)
+{
+    send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, n);
+    send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, n - 1);
 }
 
 static void actions_task(void *arg)
@@ -135,6 +147,7 @@ static void actions_task(void *arg)
             case DISPLAY_TAP_WLED:   send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0); break;
             case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_EYES, NL_OP_BRIGHTNESS_SET, a.value); break;
             case DISPLAY_SLIDE_WLED: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
+            case DISPLAY_TAP_PRESET: send_preset_both(a.value); break;
             case DISPLAY_HOLD_EYES: {
                 taskENTER_CRITICAL(&lock);
                 const bool on = eyes.auto_cycle;
@@ -189,6 +202,7 @@ static void buttons_task(void *arg)
     gpio_config(&io);
     int prev_next = 1;
     uint8_t held = 0;  // bump this task is sending
+    int held_arg = 0;
     int64_t next_hold = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -198,14 +212,19 @@ static void buttons_task(void *arg)
             xQueueSend(actions, &a, 0);
         }
         prev_next = n;
-        // The bump key and the FLASH pad flash; the BLACKOUT pad wins over both.
+        // The bump key and the FLASH pad flash; the BLACKOUT pad wins over both;
+        // a held preset-grid button bumps its preset on the eyes and WLED.
+        const int preset = pad_preset;
         const uint8_t want = pad_black ? NL_BUMP_BLACKOUT
-                           : (gpio_get_level(BTN_BUMP_GPIO) == 0 || pad_flash) ? NL_BUMP_FLASH : 0;
+                           : (gpio_get_level(BTN_BUMP_GPIO) == 0 || pad_flash) ? NL_BUMP_FLASH
+                           : preset ? NL_BUMP_PRESET : 0;
+        const int want_arg = want == NL_BUMP_PRESET ? preset : 0;
         const int64_t now = esp_timer_get_time();
-        if (want != held) {
+        if (want != held || want_arg != held_arg) {
             if (held) bump_send(NL_BUMP_STOP);
-            if (want) bump_start(BTN_BUMP_TARGET, want, 0);
+            if (want) bump_start(want == NL_BUMP_PRESET ? (NL_TARGET_EYES | NL_TARGET_WLED) : BTN_BUMP_TARGET, want, want_arg);
             held = want;
+            held_arg = want_arg;
             next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
         } else if (held && now >= next_hold) {
             bump_send(NL_BUMP_HOLD);
@@ -218,7 +237,8 @@ static void buttons_task(void *arg)
 // "next" / "prev" / "set N" (eye presets), "wled next" / "wled set N",
 // "bri N" / "wled bri N" (brightness 0..255; "+N" / "-N" steps),
 // "[eyes|wled] bump flash|black|preset N ms" (hold a bump for ms; without a
-// prefix, flash and blackout go to both and preset bumps to WLED).
+// prefix it goes to both; preset numbers are 1-based on both),
+// "preset N" (preset N on both, as a grid tap), "page N" (0 = status, 1 = grid).
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -239,6 +259,8 @@ static void console_task(void *arg)
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
         else if (!strcmp(line, "shot")) display_screenshot();
+        else if (!strncmp(line, "page ", 5)) display_show_page(atoi(line + 5));
+        else if (!strncmp(line, "preset ", 7)) send_preset_both(atoi(line + 7));
         else if (!strcmp(line, "auto on") || !strcmp(line, "auto off")) send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, line[6] == 'n');
         else if (!strncmp(line, "bri ", 4)) send_cmd_to(NL_TARGET_EYES, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
         else if (!strncmp(line, "wled bri ", 9)) send_cmd_to(NL_TARGET_WLED, line[9] == '+' || line[9] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 9));
@@ -252,10 +274,9 @@ static void console_task(void *arg)
             if (!strncmp(b, "flash ", 6)) bump_for(target, NL_BUMP_FLASH, 0, atoi(b + 6));
             else if (!strncmp(b, "black ", 6)) bump_for(target, NL_BUMP_BLACKOUT, 0, atoi(b + 6));
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
-                if (target == (NL_TARGET_EYES | NL_TARGET_WLED)) target = NL_TARGET_WLED;
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, preset N, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
     }
 }
 

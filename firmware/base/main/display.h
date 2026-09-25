@@ -32,12 +32,18 @@ typedef enum {
     DISPLAY_SLIDE_EYES,       // eyes brightness slider released: value 0..255
     DISPLAY_SLIDE_WLED,       // WLED brightness slider released: value 0..255
     DISPLAY_HOLD_EYES,        // long press on the EYES card (toggle automatic preset changes)
+    DISPLAY_TAP_PRESET,       // preset grid: tap button value (1..10) -> that preset on WLED and the eyes
+    DISPLAY_HOLD_PRESET,      // preset grid: held (pressed) / let go; value = preset to bump (11..20)
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).
 typedef void (*display_action_cb_t)(display_action_t action, bool pressed, int value);
 
+#define DISPLAY_PRESET_HOLD_OFFSET 10  // holding grid button N bumps preset N + 10
+
 esp_err_t display_start(display_action_cb_t on_action);
+// Switch pages (0 = status, 1 = preset grid), e.g. from the serial console.
+void display_show_page(int page);
 // Print the next frame over the console as base64 RGB565 ("SHOT w h" ...
 // "SHOT END"), for checking the layout from a computer.
 void display_screenshot(void);

@@ -197,8 +197,9 @@ static void eye_task(void *arg)
         }
         if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
             eye_set_bump(&eye, bumps.bump.action);
-            if (bumps.bump.action == NL_BUMP_PRESET && bumps.bump.arg >= 0 && bumps.bump.arg < preset_count)
-                bump_preset = bumps.bump.arg;
+            // Preset bumps are 1-based (the same number means the same on WLED).
+            if (bumps.bump.action == NL_BUMP_PRESET && bumps.bump.arg >= 1 && bumps.bump.arg <= preset_count)
+                bump_preset = bumps.bump.arg - 1;
         }
         if (ev != NL_BUMP_EV_NONE) ESP_LOGI(TAG, "bump %s (action %d)", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
 
