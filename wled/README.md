@@ -70,7 +70,7 @@ A **Bong69 8 Port LED Distro v3** (https://github.com/bobko69/8PortLEDDistro):
 a WT32-ETH01 (classic ESP32, 4 MB flash, no PSRAM; LAN8720 clocked by an
 external oscillator on GPIO 0, so ESP-NOW is safe; Ethernet is off in its
 config anyway). Read on 2026-09-24 at 10.7.200.253: WLED 0.15.1
-"ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5),
+"ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5, matching the board's silkscreen "channels 1-5 = GPIO 1-5"; all working),
 button on GPIO 0, AudioReactive with an I2S mic (SD 17, WS 32, SCK 33),
 ESP-NOW on with a linked WiZmote, 42 presets (`presets.json` is 87 KB, so the
 usermod reads it with a names-only filter), Wi-Fi channel 11 at home, AP
