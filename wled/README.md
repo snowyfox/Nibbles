@@ -113,7 +113,15 @@ succeed, so it never showed.) Fixed in commit 581aaeb: the usermod sends with
 the leader eye locks on. `nibbles_shark_debug` sends WLED's debug log over UDP
 to `NIBBLES_DEBUG_HOST` port 7868 for this kind of bench work.
 
-Upgrade plan (retry only after a clean bench soak and the user agrees):
+**Upgraded 2026-09-25 (second attempt, with the fix): working.** After a
+clean 15-minute bench soak, OTA to 16.0.1 + usermod (image from commit
+581aaeb). It came back at 10.7.200.253 with 1194 LEDs at 49 fps,
+AudioReactive running, anchoring channel 11 and hearing the leader eye.
+Presets, LED outputs, WiZmote, mic pins and Wi-Fi all survived. The boot preset
+(230) applies about 15 s after boot, but WLED then reports `ps: -1` instead of
+230 (cosmetic). Pre-upgrade backup: `wled/backup/*-pre-retry/`.
+
+Upgrade plan (for later upgrades):
 1. Back up its config and presets (WLED → Config → Security & Updates →
    Backup). LED and mic pins are in that config, not in the build.
 2. Build `nibbles_shark`; the image is `.pio/build/nibbles_shark/firmware.bin`.
