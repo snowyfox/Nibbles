@@ -14,8 +14,10 @@ SDA 17 / SCL 18 at 0x3B; sensors I2C SDA 47 / SCL 48).
 
 What it does now (`main/main.c`):
 - Scans for the WLED usermod's anchor heartbeat like the eyes
-  (`BASE_IS_ANCHOR 0`). Set it to 1 to make the base the anchor on channel 6
-  when no WLED usermod is around.
+  (`BASE_IS_ANCHOR 0`). If none is heard for 12 s (`BASE_ANCHOR_FALLBACK_MS`)
+  it anchors channel 6 itself, so the eyes still have a channel. It then spends
+  300 ms on another channel every 3 s, in turn, looking for WLED, and hands
+  over as soon as it hears it. `BASE_IS_ANCHOR 1` makes it a fixed anchor.
 - Logs the eyes' and WLED's telemetry every 2 s.
 - BOOT = next eye preset. Second key (GPIO 16) = a WLED **flash bump** while
   held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after

@@ -180,6 +180,7 @@ void app_main(void)
         .fw = BASE_FW_BUILD,
         .anchor = BASE_IS_ANCHOR,
         .anchor_channel = BASE_ANCHOR_CHANNEL,
+        .anchor_fallback_ms = BASE_ANCHOR_FALLBACK_MS,
         .handler = on_packet,
         .core = 0,
     };
@@ -208,7 +209,7 @@ void app_main(void)
         if (wfresh)
             snprintf(wled_s, sizeof(wled_s), "wled: %s bri %d, preset %d, fx %d, %u fps, %u LEDs", w.on ? "on" : "off",
                      w.bri, w.preset, w.fx, w.fps, w.leds);
-        ESP_LOGI(TAG, "ch %d%s | %s | %s | radio rx %lu tx %lu fail %lu", st.channel, st.locked ? "" : " (scanning)",
+        ESP_LOGI(TAG, "ch %d%s | %s | %s | radio rx %lu tx %lu fail %lu", st.channel, st.anchoring ? " (anchor)" : st.locked ? "" : " (scanning)",
                  eyes_s, wled_s, (unsigned long)st.rx, (unsigned long)st.tx, (unsigned long)st.tx_fail);
     }
 }

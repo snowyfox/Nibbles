@@ -221,20 +221,33 @@ bool nl_radio_parse(const uint8_t *in, size_t n, nl_radio_hdr_t *hdr, const uint
 #define NL_CHANNEL_MAX      13
 #define NL_SCAN_DWELL_MS    400     // anchor heartbeats are 4 Hz, so at least one per dwell
 #define NL_LOCK_TIMEOUT_MS  3000
+// Fallback anchoring (the base, when no WLED usermod is running): after
+// fallback_ms without hearing an anchor, anchor on the home channel. While
+// anchoring, visit another channel for NL_PEEK_MS every NL_PEEK_EVERY_MS, in
+// turn, to find a real anchor; on hearing one, stop anchoring and follow it.
+#define NL_PEEK_EVERY_MS    3000
+#define NL_PEEK_MS          300
 
 typedef struct {
     uint8_t channel;
     bool locked;
     uint32_t on_channel_ms, since_heard_ms;
     uint32_t locks;         // times a channel was found (for stats)
+    // fallback anchoring
+    uint32_t fallback_ms;   // 0 = never anchor
+    uint8_t home_channel, peek_channel;
+    bool anchoring, peeking;
+    uint32_t anchorings;    // times fallback anchoring started (for stats)
 } nl_chanscan_t;
 
 void nl_chanscan_init(nl_chanscan_t *s, uint8_t start_channel);
+// Enable fallback anchoring on start_channel after fallback_ms of silence.
+void nl_chanscan_set_fallback(nl_chanscan_t *s, uint32_t fallback_ms);
 // Advance by dt_ms; returns the channel the radio should be on now.
 uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms);
 // An anchor heartbeat was heard. Channels overlap, so it may have been heard
 // from a neighbouring channel: move to the channel the anchor advertises
-// (0 = unknown, stay put).
+// (0 = unknown, stay put). Ends fallback anchoring.
 void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel);
 
 // Encode one frame into out (at most NL_MAX_FRAME bytes, including the

@@ -25,6 +25,8 @@ typedef struct {
     uint16_t fw;
     bool anchor;             // true: stay on anchor_channel and broadcast anchor heartbeats
     uint8_t anchor_channel;  // anchor's channel; followers start scanning here
+    uint32_t anchor_fallback_ms;  // followers: anchor on anchor_channel after this long
+                                  // without hearing one (0 = never); see nl_chanscan_set_fallback
     nl_espnow_handler_t handler;
     int core;                // core for the radio task
 } nl_espnow_config_t;
@@ -47,7 +49,8 @@ void nl_espnow_set_status(uint16_t fps_x10, uint16_t late_frames);
 
 typedef struct {
     uint8_t channel;
-    bool locked;             // hearing the anchor (always true on the anchor itself)
+    bool locked;             // hearing the anchor, or anchoring
+    bool anchoring;          // this node is the anchor (fixed or fallback)
     uint32_t rx, tx, tx_fail, locks, dropped;
 } nl_espnow_stats_t;
 

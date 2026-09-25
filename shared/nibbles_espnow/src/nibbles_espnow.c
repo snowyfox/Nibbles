@@ -63,6 +63,11 @@ static void on_sent(const esp_now_send_info_t *info, esp_now_send_status_t statu
     taskEXIT_CRITICAL(&lock);
 }
 
+static bool anchoring(void)
+{
+    return cfg.anchor || scan.anchoring;
+}
+
 static void set_channel(uint8_t ch)
 {
     if (ch == channel) return;
@@ -96,8 +101,8 @@ static void send_heartbeat(void)
         .side = cfg.side,
         .fw = cfg.fw,
         .uptime_ms = (uint32_t)(esp_timer_get_time() / 1000),
-        .flags = cfg.anchor ? NL_HB_ANCHOR : 0,
-        .channel = channel,
+        .flags = anchoring() ? NL_HB_ANCHOR : 0,
+        .channel = scan.anchoring ? scan.home_channel : channel,
     };
     taskENTER_CRITICAL(&lock);
     hb.fps_x10 = my_fps_x10;
@@ -119,6 +124,7 @@ static void handle(const rx_item_t *it)
         nl_heartbeat_t hb;
         memcpy(&hb, pl, sizeof(hb));
         if ((hb.flags & NL_HB_ANCHOR) && !cfg.anchor) {
+            if (scan.anchoring) ESP_LOGI(TAG, "heard an anchor on channel %d: following it", hb.channel);
             nl_chanscan_heard_anchor(&scan, hb.channel);
             set_channel(scan.channel);
         }
@@ -144,10 +150,14 @@ static void radio_task(void *arg)
         const uint32_t dt_ms = (uint32_t)((now - last) / 1000);
         if (dt_ms >= TICK_MS) {
             last = now;
-            if (!cfg.anchor) set_channel(nl_chanscan_tick(&scan, dt_ms));
+            if (!cfg.anchor) {
+                const bool was = scan.anchoring;
+                set_channel(nl_chanscan_tick(&scan, dt_ms));
+                if (scan.anchoring && !was) ESP_LOGI(TAG, "no anchor heard: anchoring channel %d", scan.home_channel);
+            }
         }
         if (now >= next_hb) {
-            next_hb = now + (cfg.anchor ? ANCHOR_HEARTBEAT_MS : HEARTBEAT_MS) * 1000LL;
+            next_hb = now + (anchoring() ? ANCHOR_HEARTBEAT_MS : HEARTBEAT_MS) * 1000LL;
             send_heartbeat();
         }
     }
@@ -175,6 +185,7 @@ esp_err_t nl_espnow_start(const nl_espnow_config_t *c)
     ESP_RETURN_ON_ERROR(ensure_peer(BROADCAST), TAG, "broadcast peer failed");
 
     nl_chanscan_init(&scan, cfg.anchor_channel);
+    nl_chanscan_set_fallback(&scan, cfg.anchor ? 0 : cfg.anchor_fallback_ms);
     channel = 0;
     set_channel(cfg.anchor ? cfg.anchor_channel : scan.channel);
 
@@ -234,7 +245,8 @@ void nl_espnow_get_stats(nl_espnow_stats_t *out)
 {
     taskENTER_CRITICAL(&lock);
     out->channel = channel;
-    out->locked = cfg.anchor || scan.locked;
+    out->locked = anchoring() || scan.locked;
+    out->anchoring = anchoring();
     out->rx = rx_count;
     out->tx = tx_count;
     out->tx_fail = tx_fail;

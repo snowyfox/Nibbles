@@ -7,6 +7,9 @@
 // Until the WLED usermod exists, the base anchors the radio channel. Once WLED
 // anchors, set this to 0 and the base scans for WLED like the eyes do.
 #define BASE_IS_ANCHOR       0
+// Scanning base: if no anchor (the WLED usermod) is heard for this long, the
+// base anchors BASE_ANCHOR_CHANNEL itself until it finds one.
+#define BASE_ANCHOR_FALLBACK_MS 12000
 #define BASE_ANCHOR_CHANNEL  6
 
 // Buttons (active low): BOOT = next eye preset; the second key is a bump

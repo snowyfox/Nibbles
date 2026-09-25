@@ -178,6 +178,56 @@ static void test_chanscan(void)
     CHECK(all && !s.locked, "no anchor: sweeps all 13 channels");
 }
 
+static void test_fallback_anchor(void)
+{
+    // No anchor anywhere: anchors on the home channel after the fallback time.
+    nl_chanscan_t s;
+    nl_chanscan_init(&s, 6);
+    nl_chanscan_set_fallback(&s, 12000);
+    int start_ms = -1;
+    for (int t = 0; t < 20000 && start_ms < 0; t += 50) {
+        nl_chanscan_tick(&s, 50);
+        if (s.anchoring) start_ms = t;
+    }
+    CHECK(start_ms >= 12000 - 100 && start_ms <= 12100 && s.channel == 6, "fallback anchoring after %d ms on %d",
+          start_ms, s.channel);
+
+    // While anchoring it is on the home channel most of the time and visits
+    // every other channel.
+    int home = 0, total = 0, seen[NL_CHANNEL_MAX + 1] = { 0 };
+    for (int t = 0; t < 12 * (NL_PEEK_EVERY_MS + NL_PEEK_MS); t += 50) {
+        const uint8_t ch = nl_chanscan_tick(&s, 50);
+        seen[ch] = 1;
+        home += ch == 6;
+        total++;
+    }
+    int all = 1;
+    for (int c = NL_CHANNEL_MIN; c <= NL_CHANNEL_MAX; c++) all &= seen[c];
+    CHECK(all && home * 100 / total >= 85, "anchoring: peeks at all channels, home %d%% of the time", home * 100 / total);
+
+    // WLED appears on channel 11: found on a peek, anchoring ends, follows it.
+    int found_ms = -1;
+    for (int t = 0; t < 60000 && found_ms < 0; t += 50) {
+        const uint8_t ch = nl_chanscan_tick(&s, 50);
+        if (ch == 11 && (t % 250) < 50) nl_chanscan_heard_anchor(&s, 11);
+        if (!s.anchoring) found_ms = t;
+    }
+    CHECK(found_ms >= 0 && found_ms <= 12 * (NL_PEEK_EVERY_MS + NL_PEEK_MS) && s.locked && s.channel == 11,
+          "real anchor found while anchoring after %d ms, now on %d", found_ms, s.channel);
+
+    // Following it: no anchoring while it keeps talking.
+    for (int t = 0; t < 30000; t += 50) {
+        nl_chanscan_tick(&s, 50);
+        if ((t % 250) < 50) nl_chanscan_heard_anchor(&s, 11);
+    }
+    CHECK(!s.anchoring && s.channel == 11, "stays with the real anchor");
+
+    // Without the fallback set, never anchors.
+    nl_chanscan_init(&s, 6);
+    for (int t = 0; t < 60000; t += 50) nl_chanscan_tick(&s, 50);
+    CHECK(!s.anchoring, "no fallback: never anchors");
+}
+
 static void test_bump(void)
 {
     nl_bump_rx_t rx;
@@ -224,6 +274,7 @@ int main(void)
     test_resync_and_stream();
     test_radio();
     test_chanscan();
+    test_fallback_anchor();
     test_bump();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

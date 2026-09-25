@@ -66,6 +66,10 @@ eye. Framing: COBS with CRC-16, a message type and a sequence number.
   on whatever channel WLED is on. The leader eye and the base scan channels
   until they hear it, lock on, and rescan after ~3 s of silence. The same code
   works at home (hotspot) and at a festival (WLED's AP).
+- **Fallback anchor**: if the base hears no anchor for 12 s (WLED off, or
+  running without the usermod), it anchors channel 6 itself. It then checks
+  one other channel for 300 ms every 3 s, so it finds WLED within about 40 s
+  and hands over to it.
 - State that can be sent again safely (heartbeats, telemetry, audio features)
   is broadcast at a fixed rate.
 - Commands are unicast to known peers with an ack and retries.
