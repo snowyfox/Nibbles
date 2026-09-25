@@ -56,8 +56,9 @@ in `wled/README.md`.
 
 ## Conventions
 
-- Only commit when asked, and commit **unsigned** (`git commit --no-gpg-sign`);
-  the user's git config signs by default.
+- Only commit when asked. Commits are **unsigned**: this repo's local git
+  config sets `commit.gpgsign` and `tag.gpgsign` to false (the user's global
+  config signs by default), so a plain `git commit` works here.
 - Work in small verified steps: host tests, then build, then flash, then read
   the board's once-a-second status log. The user checks anything visual or
   physical; ask them to confirm.
