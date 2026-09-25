@@ -11,6 +11,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nibbles_espnow.h"
 #include "nvs_flash.h"
@@ -84,18 +86,45 @@ static uint16_t bump_id;
 static nl_bump_t bump;
 
 static volatile uint8_t bump_held;  // action being held, for the screen
+static SemaphoreHandle_t bump_mutex;  // the buttons and console tasks both send bumps
 
 static void bump_send(uint8_t phase)
 {
+    xSemaphoreTake(bump_mutex, portMAX_DELAY);
     bump.phase = phase;
     bump_held = phase == NL_BUMP_STOP ? 0 : bump.action;
     nl_espnow_broadcast(NL_MSG_BUMP, &bump, sizeof(bump));
+    xSemaphoreGive(bump_mutex);
 }
 
 static void bump_start(uint8_t target, uint8_t action, int arg)
 {
+    xSemaphoreTake(bump_mutex, portMAX_DELAY);
     bump = (nl_bump_t){ .id = ++bump_id, .target = target, .action = action, .intensity = 255, .arg = (int16_t)arg };
+    xSemaphoreGive(bump_mutex);
     bump_send(NL_BUMP_START);
+}
+
+// Touch screen: taps go to the actions task (commands wait for acks, which
+// the display task mustn't); pads are read by the buttons task.
+static QueueHandle_t actions;
+static volatile bool pad_flash, pad_black;
+
+static void on_touch(display_action_t a, bool pressed)
+{
+    if (a == DISPLAY_PAD_FLASH) pad_flash = pressed;
+    else if (a == DISPLAY_PAD_BLACKOUT) pad_black = pressed;
+    else if (pressed) xQueueSend(actions, &a, 0);
+}
+
+static void actions_task(void *arg)
+{
+    display_action_t a;
+    for (;;) {
+        if (xQueueReceive(actions, &a, portMAX_DELAY) != pdTRUE) continue;
+        if (a == DISPLAY_TAP_EYES) send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_NEXT, 0);
+        else if (a == DISPLAY_TAP_WLED) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
+    }
 }
 
 // Hold a bump for ms (used by the serial "bump" command).
@@ -119,24 +148,30 @@ static void buttons_task(void *arg)
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&io);
-    int prev_next = 1, prev_bump = 1;
+    int prev_next = 1;
+    uint8_t held = 0;  // bump this task is sending
     int64_t next_hold = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(10));
-        const int n = gpio_get_level(BTN_NEXT_GPIO), b = gpio_get_level(BTN_BUMP_GPIO);
-        if (n == 0 && prev_next == 1) send_preset(NL_OP_PRESET_NEXT);
-        const int64_t now = esp_timer_get_time();
-        if (b == 0 && prev_bump == 1) {
-            bump_start(BTN_BUMP_TARGET, NL_BUMP_FLASH, 0);
-            next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
-        } else if (b == 0 && now >= next_hold) {
-            bump_send(NL_BUMP_HOLD);
-            next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
-        } else if (b == 1 && prev_bump == 0) {
-            bump_send(NL_BUMP_STOP);
+        const int n = gpio_get_level(BTN_NEXT_GPIO);
+        if (n == 0 && prev_next == 1) {
+            const display_action_t a = DISPLAY_TAP_EYES;
+            xQueueSend(actions, &a, 0);
         }
         prev_next = n;
-        prev_bump = b;
+        // The bump key and the FLASH pad flash; the BLACKOUT pad wins over both.
+        const uint8_t want = pad_black ? NL_BUMP_BLACKOUT
+                           : (gpio_get_level(BTN_BUMP_GPIO) == 0 || pad_flash) ? NL_BUMP_FLASH : 0;
+        const int64_t now = esp_timer_get_time();
+        if (want != held) {
+            if (held) bump_send(NL_BUMP_STOP);
+            if (want) bump_start(BTN_BUMP_TARGET, want, 0);
+            held = want;
+            next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
+        } else if (held && now >= next_hold) {
+            bump_send(NL_BUMP_HOLD);
+            next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
+        }
     }
 }
 
@@ -204,9 +239,12 @@ void app_main(void)
         .handler = on_packet,
         .core = 0,
     };
-    if (display_start() != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
+    bump_mutex = xSemaphoreCreateMutex();
+    actions = xQueueCreate(4, sizeof(display_action_t));
+    if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
+    xTaskCreate(actions_task, "actions", 4096, NULL, 4, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 
     for (int n = 0;; n++) {

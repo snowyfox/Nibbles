@@ -32,6 +32,12 @@ What it does now (`main/main.c`):
   (never the LVGL buffer, which LVGL keeps between frames); set the rotation
   before `lv_display_set_buffers` (the stride comes from the width); LVGL's
   printf has no `%f`.
+- **Touch** (AXS15231B touch at 0x3B on I2C SDA 17 / SCL 18, read with the
+  vendor's 11-byte command; native coordinates, LVGL rotates them): tap the
+  EYES or WLED card for that side's next preset; hold the FLASH or BLACKOUT
+  pad to bump (targets `BTN_BUMP_TARGET`; BLACKOUT wins over FLASH). Taps go
+  through a queue to an actions task, since commands block for their ack; the
+  buttons task runs one bump state machine for the key and both pads.
 - `shot` over USB serial prints the next frame as base64 RGB565 (`SHOT 640 172
   rgb565le` … `SHOT END`) to check the layout from a computer.
 - Logs the eyes' and WLED's telemetry every 2 s.

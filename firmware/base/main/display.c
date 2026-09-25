@@ -5,6 +5,7 @@
 #include <string.h>
 #include "config.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
@@ -37,6 +38,10 @@ static const char *TAG = "display";
 #define FRAME_BYTES    (PANEL_W * PANEL_H * 2)
 #define CHUNK_BYTES    (PANEL_W * CHUNK_ROWS * 2)
 
+#define TOUCH_SDA      17
+#define TOUCH_SCL      18
+#define TOUCH_ADDR     0x3B
+
 #define UPDATE_MS      250
 
 static esp_lcd_panel_handle_t panel;
@@ -49,6 +54,9 @@ static volatile bool shot_wanted;
 static uint8_t *shot_buf;
 static int shot_w, shot_h;
 static SemaphoreHandle_t shot_ready;
+
+static i2c_master_dev_handle_t touch_dev;
+static display_action_cb_t action_cb;
 
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static display_status_t status;
@@ -169,6 +177,60 @@ static esp_err_t panel_init(void)
     return esp_lcd_panel_init(panel);
 }
 
+// ------------------------------------------------------------------ touch
+
+static esp_err_t touch_init(void)
+{
+    const i2c_master_bus_config_t bus_cfg = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = I2C_NUM_0,
+        .scl_io_num = TOUCH_SCL,
+        .sda_io_num = TOUCH_SDA,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t bus;
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &bus), TAG, "touch i2c bus");
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = TOUCH_ADDR,
+        .scl_speed_hz = 300000,
+    };
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(bus, &dev_cfg, &touch_dev), TAG, "touch device");
+    ESP_RETURN_ON_ERROR(i2c_master_probe(bus, TOUCH_ADDR, 50), TAG, "touch controller not answering");
+    ESP_LOGI(TAG, "touch controller found");
+    return ESP_OK;
+}
+
+// AXS15231B touch: one read command, returns the number of points and the
+// first point in the panel's native (portrait) frame. LVGL rotates it.
+static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    static const uint8_t cmd[11] = { 0xb5, 0xab, 0xa5, 0x5a, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00 };
+    uint8_t buf[14] = { 0 };
+    data->state = LV_INDEV_STATE_RELEASED;
+    if (i2c_master_transmit_receive(touch_dev, cmd, sizeof(cmd), buf, sizeof(buf), 20) != ESP_OK) return;
+    if (buf[1] == 0 || buf[1] > 4) return;
+    int raw_x = ((buf[2] & 0x0f) << 8) | buf[3];  // along the long side
+    int raw_y = ((buf[4] & 0x0f) << 8) | buf[5];  // along the short side
+    if (raw_x > PANEL_H) raw_x = PANEL_H;
+    if (raw_y > PANEL_W - 1) raw_y = PANEL_W - 1;
+    data->point.x = raw_y;
+    data->point.y = PANEL_H - raw_x;
+    if (data->point.y > PANEL_H - 1) data->point.y = PANEL_H - 1;
+    data->state = LV_INDEV_STATE_PRESSED;
+}
+
+static void on_event(lv_event_t *ev)
+{
+    const display_action_t a = (display_action_t)(intptr_t)lv_event_get_user_data(ev);
+    const lv_event_code_t code = lv_event_get_code(ev);
+    if (!action_cb) return;
+    if (code == LV_EVENT_CLICKED) action_cb(a, true);
+    else if (code == LV_EVENT_PRESSED) action_cb(a, true);
+    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) action_cb(a, false);
+}
+
 // ------------------------------------------------------------------ UI
 
 #define COL_BG      0x000000
@@ -187,7 +249,7 @@ typedef struct {
 } card_t;
 
 static card_t eyes_card, wled_card, radio_card;
-static lv_obj_t *event_label, *screen;
+static lv_obj_t *event_label, *screen, *pad_flash, *pad_black;
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 {
@@ -226,6 +288,26 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
     }
 }
 
+static lv_obj_t *make_pad(const char *text, uint32_t color, display_action_t action, int x_ofs)
+{
+    lv_obj_t *b = lv_button_create(screen);
+    lv_obj_set_size(b, 96, 26);
+    lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, x_ofs, -3);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(color), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(b, 2, 0);
+    lv_obj_set_style_radius(b, 6, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_t *l = label(b, &lv_font_montserrat_14, COL_TEXT);
+    lv_label_set_text(l, text);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, on_event, LV_EVENT_PRESSED, (void *)(intptr_t)action);
+    lv_obj_add_event_cb(b, on_event, LV_EVENT_RELEASED, (void *)(intptr_t)action);
+    lv_obj_add_event_cb(b, on_event, LV_EVENT_PRESS_LOST, (void *)(intptr_t)action);
+    return b;
+}
+
 static void card_stale(card_t *c, bool stale)
 {
     const uint32_t col = stale ? COL_DIM : COL_TEXT;
@@ -259,6 +341,18 @@ static void ui_build(void)
     event_label = label(screen, &lv_font_montserrat_16, COL_TITLE);
     lv_obj_align(event_label, LV_ALIGN_BOTTOM_LEFT, 12, -8);
     lv_label_set_text(event_label, "Nibbles base");
+
+    // Tapping a card steps that side's preset.
+    lv_obj_add_flag(eyes_card.card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(eyes_card.card, on_event, LV_EVENT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_EYES);
+    lv_obj_add_flag(wled_card.card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(wled_card.card, on_event, LV_EVENT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_WLED);
+    lv_obj_set_style_bg_color(eyes_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(wled_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
+
+    // Bump pads: held while touched.
+    pad_black = make_pad("BLACKOUT", 0x5a5f6a, DISPLAY_PAD_BLACKOUT, -8);
+    pad_flash = make_pad("FLASH", COL_WARN, DISPLAY_PAD_FLASH, -8 - 104);
 }
 
 static const char *eye_state(uint8_t s)
@@ -360,8 +454,9 @@ static void display_task(void *arg)
     }
 }
 
-esp_err_t display_start(void)
+esp_err_t display_start(display_action_cb_t on_action)
 {
+    action_cb = on_action;
     backlight_init(DISPLAY_BACKLIGHT_PCT);
     ESP_RETURN_ON_ERROR(panel_init(), TAG, "panel init failed");
 
@@ -375,6 +470,13 @@ esp_err_t display_start(void)
     lv_display_set_buffers(disp, buf, NULL, FRAME_BYTES, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(disp, flush_cb);
     ui_build();
+    if (touch_init() == ESP_OK) {
+        lv_indev_t *touch = lv_indev_create();
+        lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(touch, touch_read);
+    } else {
+        ESP_LOGW(TAG, "no touch");
+    }
 
     BaseType_t ok = xTaskCreatePinnedToCore(display_task, "display", 8192, NULL, 2, NULL, 1);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;

@@ -13,7 +13,8 @@
 #define BASE_ANCHOR_CHANNEL  6
 
 // Buttons (active low): BOOT = next eye preset; the second key is a bump
-// button: the eyes and WLED flash while it is held.
+// button: the eyes and WLED flash while it is held. The touch screen's FLASH
+// and BLACKOUT pads bump the same targets.
 #define BTN_NEXT_GPIO        0
 #define BTN_BUMP_TARGET      (NL_TARGET_EYES | NL_TARGET_WLED)  // who the bump key flashes
 #define BTN_BUMP_GPIO        16

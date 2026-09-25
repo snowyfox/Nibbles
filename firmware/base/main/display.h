@@ -23,7 +23,18 @@ typedef struct {
     uint8_t bump_action;
 } display_status_t;
 
-esp_err_t display_start(void);
+// Touch actions. Cards are tapped; bump pads report press and release.
+typedef enum {
+    DISPLAY_TAP_EYES = 1,     // tap the EYES card
+    DISPLAY_TAP_WLED,         // tap the WLED card
+    DISPLAY_PAD_FLASH,        // hold the FLASH pad
+    DISPLAY_PAD_BLACKOUT,     // hold the BLACKOUT pad
+} display_action_t;
+
+// Called on the display task: must not block (hand work to another task).
+typedef void (*display_action_cb_t)(display_action_t action, bool pressed);
+
+esp_err_t display_start(display_action_cb_t on_action);
 // Print the next frame over the console as base64 RGB565 ("SHOT w h" ...
 // "SHOT END"), for checking the layout from a computer.
 void display_screenshot(void);
