@@ -11,7 +11,7 @@ in. Agreed 2026-09-24; update this file as decisions change.
   other lights and has an external digital mic. It joins a phone hotspot when
   testing (at home or in a hotel) and falls back to its own AP at a festival,
   so **its Wi-Fi channel varies**.
-- **Base station** (to be built): an ESP32 in the pole base with battery
+- **Base station** (prototype on an ESP32-S3-Touch-LCD-3.49): an ESP32 in the pole base with battery
   management, status screen(s), and buttons to change eye and WLED presets;
   later, DMX-style bump buttons for momentary effects.
 
@@ -43,8 +43,8 @@ tools/                    capture, recording and replay helpers
 - Each eye renders its own screen and uses **its own IMU** for pupil look and
   twist (the mounts are mirror images). Roles come from the board's MAC, as the
   side does today.
-- If the link is silent for more than 1 s, each eye runs standalone as it does
-  now, so a broken cable never blanks an eye.
+- If the link is silent for more than 250 ms (`LINK_STATE_MAX_AGE_MS`), each
+  eye runs standalone, so a broken cable never blanks an eye.
 
 Spreading the jobs this way keeps each eye's frame budget: the render path
 has only ~3–7 ms of slack per frame.
@@ -78,6 +78,16 @@ eye. Framing: COBS with CRC-16, a message type and a sequence number.
   so a lost stop can't leave an effect stuck on.
 - Every message carries a network ID, protocol version and sequence number.
   ESP-NOW encryption can be added later.
+- Messages (`shared/nibbles_link/include/nibbles_link.h`, protocol version 3):
+
+  | Message | From → to | When |
+  |---|---|---|
+  | `HEARTBEAT` | everyone → broadcast | 2 Hz; anchors 4 Hz with `NL_HB_ANCHOR` and their channel |
+  | `EYE_TELEMETRY` | leader eye → broadcast | 2 Hz: preset and name, state, link, both fps, bpm, brightness, auto-cycle |
+  | `WLED_TELEMETRY` | WLED → broadcast | 2 Hz: on, brightness, preset and name, effect, palette, fps, LEDs |
+  | `CMD` / `ACK` | base → eyes or WLED, unicast | on demand: preset set/next/prev, brightness set/step, eyes' auto-cycle; up to 3 tries of 60 ms |
+  | `BUMP` | base → broadcast (target mask) | START, HOLD every 100 ms, STOP: flash, blackout, preset while held |
+  | `AUDIO` | WLED → broadcast | every 32 ms when its `audio` setting is on |
 - The WLED usermod receives messages through
   `Usermod::onEspNowMessage(sender, payload, len)`, so WLED's own ESP-NOW
   handling is untouched.
