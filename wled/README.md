@@ -101,13 +101,19 @@ LED channel 1, so there is no log. Recovered over the board's own USB port
   that the CH340 drives) goes dark; it comes back when USB is unplugged.
   Only connect USB for recovery.
 
-Before trying again, find the hang on the bench: a debug build with its log on
-another pin, or a classic ESP32 dev board with this config and presets
-(suspects: the parallel I2S LED output that 0.15 used, `prl`, alongside
-AudioReactive's I2S mic; the 5 buses on GPIO 1-5 including the UART pins).
-Upgrade only after the same build runs on the bench with this config.
+**Cause, found on a bench ESP32 (same chip, the controller's config and
+storage image, joined to the same Wi-Fi): the usermod.** Stock WLED 16 and the
+build with the usermod disabled both ran fine. WLED starts QuickEspNow in
+synchronous mode, where `quickEspNow.send()` busy-waits in WLED's main loop for
+the "sent" callback. A send that fails, as the usermod's first heartbeats do
+while Wi-Fi is still connecting in station mode, never gets one, so the loop
+spun forever. (The dev node always ran as an access point, where sends
+succeed, so it never showed.) Fixed in commit 581aaeb: the usermod sends with
+`esp_now_send()` directly. On the bench it then boots, anchors channel 11 and
+the leader eye locks on. `nibbles_shark_debug` sends WLED's debug log over UDP
+to `NIBBLES_DEBUG_HOST` port 7868 for this kind of bench work.
 
-Upgrade plan (once the hang is understood):
+Upgrade plan (retry only after a clean bench soak and the user agrees):
 1. Back up its config and presets (WLED → Config → Security & Updates →
    Backup). LED and mic pins are in that config, not in the build.
 2. Build `nibbles_shark`; the image is `.pio/build/nibbles_shark/firmware.bin`.
