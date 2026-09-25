@@ -120,6 +120,12 @@ AudioReactive running, anchoring channel 11 and hearing the leader eye.
 Presets, LED outputs, WiZmote, mic pins and Wi-Fi all survived. The boot preset
 (230) applies about 15 s after boot, but WLED then reports `ps: -1` instead of
 230 (cosmetic). Pre-upgrade backup: `wled/backup/*-pre-retry/`.
+After the upgrade the lights toggled on/off every 0.5-3 s (dimming and coming
+back over the 0.7 s transition). Cause: the pushbutton configured on GPIO 0.
+On the WT32-ETH01, GPIO 0 is the Ethernet chip's 50 MHz clock input, and
+WLED 16 read the noise there as button presses (0.15 didn't). The button was
+removed from the config (`hw.btn.ins` now empty; nothing on the board uses
+it) and the toggling stopped. Don't put a button on GPIO 0 on this board.
 
 Upgrade plan (for later upgrades):
 1. Back up its config and presets (WLED → Config → Security & Updates →
