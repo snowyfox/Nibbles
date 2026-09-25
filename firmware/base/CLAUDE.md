@@ -20,6 +20,20 @@ What it does now (`main/main.c`):
   over as soon as it hears it. Commands and bumps end a peek at once and put
   the next one off by 3 s, so held bumps never miss keepalives.
   `BASE_IS_ANCHOR 1` makes it a fixed anchor.
+- **Status screen** (`main/display.c`, LVGL 9.2 + `esp_lcd_axs15231b` from the
+  component manager): landscape 640×172, three cards (EYES: preset, state,
+  link, both fps, bpm, hype bar; WLED: on/preset, brightness, effect, palette,
+  fps, LEDs, brightness bar; RADIO: channel, anchoring/locked/scanning,
+  counters) and an event line (last command result, held bump, which also
+  outlines the screen). Stale cards grey out after 2 s. `DISPLAY_ROTATION`
+  picks which way up. Panel notes: frames go out whole in 64-row QSPI chunks
+  (the AXS15231B takes whole frames in order); LVGL renders full-frame in
+  landscape and `flush_cb` rotates into a separate buffer and byte-swaps that
+  (never the LVGL buffer, which LVGL keeps between frames); set the rotation
+  before `lv_display_set_buffers` (the stride comes from the width); LVGL's
+  printf has no `%f`.
+- `shot` over USB serial prints the next frame as base64 RGB565 (`SHOT 640 172
+  rgb565le` … `SHOT END`) to check the layout from a computer.
 - Logs the eyes' and WLED's telemetry every 2 s.
 - BOOT = next eye preset. Second key (GPIO 16) = a **flash bump** for the
   eyes and WLED (`BTN_BUMP_TARGET`) while held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after

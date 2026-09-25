@@ -1,9 +1,10 @@
-// Nibbles base station (prototype): shows the eyes' and WLED's status in the
-// log, sends preset commands and bumps from its buttons (and USB serial), and
-// can anchor the ESP-NOW channel when there is no WLED usermod.
+// Nibbles base station (prototype): shows the eyes' and WLED's status on its
+// screen and in the log, sends preset commands and bumps from its buttons (and
+// USB serial), and anchors the ESP-NOW channel when there is no WLED usermod.
 #include <stdlib.h>
 #include <string.h>
 #include "config.h"
+#include "display.h"
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -55,6 +56,7 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     taskEXIT_CRITICAL(&lock);
     if (!known) {
         ESP_LOGW(TAG, "%s not heard yet; command not sent", who);
+        display_event("%s not heard yet", who);
         return;
     }
     nl_cmd_t cmd = { .target = target, .op = op, .arg = (int16_t)arg };
@@ -63,8 +65,15 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const esp_err_t err = nl_espnow_command(mac, &cmd, &status, CMD_TRIES, CMD_TIMEOUT_MS);
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     const char *what = op == NL_OP_PRESET_NEXT ? "next" : op == NL_OP_PRESET_PREV ? "previous" : "set";
-    if (err == ESP_OK) ESP_LOGI(TAG, "%s %s preset: acked in %.1f ms (status %d)", who, what, ms, status);
-    else ESP_LOGW(TAG, "%s %s preset: no ack after %d tries", who, what, CMD_TRIES);
+    static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
+    const char *st = status < 4 ? statuses[status] : "?";
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "%s %s preset: acked in %.1f ms (status %d)", who, what, ms, status);
+        display_event("%s %s preset: %s, %.1f ms", who, what, st, ms);
+    } else {
+        ESP_LOGW(TAG, "%s %s preset: no ack after %d tries", who, what, CMD_TRIES);
+        display_event("%s %s preset: no answer", who, what);
+    }
 }
 
 static void send_preset(nl_op_t op) { send_cmd_to(NL_TARGET_EYES, op, 0); }
@@ -74,9 +83,12 @@ static void send_preset_index(int index) { send_cmd_to(NL_TARGET_EYES, NL_OP_PRE
 static uint16_t bump_id;
 static nl_bump_t bump;
 
+static volatile uint8_t bump_held;  // action being held, for the screen
+
 static void bump_send(uint8_t phase)
 {
     bump.phase = phase;
+    bump_held = phase == NL_BUMP_STOP ? 0 : bump.action;
     nl_espnow_broadcast(NL_MSG_BUMP, &bump, sizeof(bump));
 }
 
@@ -96,6 +108,7 @@ static void bump_for(uint8_t target, uint8_t action, int arg, int ms)
     }
     bump_send(NL_BUMP_STOP);
     ESP_LOGI(TAG, "bump %d held %d ms", action, ms);
+    display_event("bump %d held %d ms", action, ms);
 }
 
 static void buttons_task(void *arg)
@@ -150,6 +163,7 @@ static void console_task(void *arg)
         if (!strcmp(line, "next")) send_preset(NL_OP_PRESET_NEXT);
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
+        else if (!strcmp(line, "shot")) display_screenshot();
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
         else if (!strncmp(line, "wled set ", 9)) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, atoi(line + 9));
         else if (strstr(line, "bump ")) {
@@ -190,12 +204,13 @@ void app_main(void)
         .handler = on_packet,
         .core = 0,
     };
+    if (display_start() != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(2000));
+    for (int n = 0;; n++) {
+        vTaskDelay(pdMS_TO_TICKS(250));
         nl_espnow_stats_t st;
         nl_espnow_get_stats(&st);
         nl_eye_telemetry_t e;
@@ -208,6 +223,21 @@ void app_main(void)
         const nl_wled_telemetry_t w = wled;
         const bool wfresh = have_wled && esp_timer_get_time() - wled_us < 2000000;
         taskEXIT_CRITICAL(&lock);
+        display_status_t ds = {
+            .channel = st.channel,
+            .locked = st.locked,
+            .anchoring = st.anchoring,
+            .rx = st.rx,
+            .tx = st.tx,
+            .tx_fail = st.tx_fail,
+            .eyes_fresh = fresh,
+            .eyes = e,
+            .wled_fresh = wfresh,
+            .wled = w,
+            .bump_action = bump_held,
+        };
+        display_update(&ds);
+        if (n % 8) continue;  // log every 2 s
         if (fresh)
             snprintf(eyes_s, sizeof(eyes_s), "eyes: preset %d/%d, %s, %s, fps %.1f / %.1f, late %d / %d, %.0f bpm, hype %.2f",
                      e.preset, e.preset_count, state_name(e.state), e.linked ? "linked" : "NOT linked",
