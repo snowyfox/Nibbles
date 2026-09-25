@@ -224,7 +224,6 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     data->state = LV_INDEV_STATE_PRESSED;
 }
 
-static int64_t slider_hold_until;  // don't let telemetry move a slider just let go
 
 // Preset grid buttons: user data is the button number (1..10). A short tap
 // sets preset N; holding bumps preset N + 10 until release.
@@ -244,6 +243,22 @@ static void on_preset_event(lv_event_t *ev)
     } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && preset_held == btn) {
         preset_held = NULL;
         action_cb(DISPLAY_HOLD_PRESET, false, n + DISPLAY_PRESET_HOLD_OFFSET);
+    }
+}
+
+static int64_t slider_hold_until;  // don't let telemetry move a control just touched
+static lv_obj_t *auto_switch, *react_select;  // preset page controls, follow the eyes' telemetry
+
+static void on_control_event(lv_event_t *ev)
+{
+    lv_obj_t *obj = lv_event_get_target_obj(ev);
+    if (!action_cb) return;
+    slider_hold_until = esp_timer_get_time() + 1500000;
+    if (obj == auto_switch) {
+        action_cb(DISPLAY_SET_AUTO, true, lv_obj_has_state(obj, LV_STATE_CHECKED) ? 1 : 0);
+    } else if (obj == react_select) {
+        const uint32_t sel = lv_buttonmatrix_get_selected_button(obj);
+        if (sel <= NL_REACT_PEAKS) action_cb(DISPLAY_SET_REACT, true, (int)sel);
     }
 }
 
@@ -381,14 +396,48 @@ static void build_preset_page(void)
 {
     const int cols = PORTRAIT ? 2 : 5, rows = PORTRAIT ? 5 : 2;
     const int w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
-    const int gap = 6, top = PORTRAIT ? 30 : 24, bottom = PORTRAIT ? 48 : 22;
+    const int gap = 6, top = PORTRAIT ? 78 : 40, bottom = PORTRAIT ? 48 : 22;
     int side = (w - 8 - gap * (cols - 1)) / cols;
     const int by_height = (h - top - bottom - gap * (rows - 1)) / rows;
     if (by_height < side) side = by_height;
 
     lv_obj_t *title = label(page1, &lv_font_montserrat_14, COL_WLED);
     lv_label_set_text(title, "PRESETS");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, PORTRAIT ? 8 : 4);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, PORTRAIT ? 10 : 8);
+
+    // AUTO: the eyes change presets by themselves (off once a preset is picked).
+    auto_switch = lv_switch_create(page1);
+    lv_obj_set_size(auto_switch, 44, 24);
+    lv_obj_align(auto_switch, LV_ALIGN_TOP_RIGHT, -6, 6);
+    lv_obj_set_style_bg_color(auto_switch, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(auto_switch, lv_color_hex(COL_EYES), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(auto_switch, on_control_event, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_t *auto_label = label(page1, &lv_font_montserrat_14, COL_TITLE);
+    lv_label_set_text(auto_label, "AUTO");
+    lv_obj_align_to(auto_label, auto_switch, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+
+    // How the eyes react to sound: each preset's choice, or all on beats / peaks.
+    static const char *react_map[] = { "Preset", "Beats", "Peaks", "" };
+    react_select = lv_buttonmatrix_create(page1);
+    lv_buttonmatrix_set_map(react_select, react_map);
+    lv_buttonmatrix_set_button_ctrl_all(react_select, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(react_select, true);
+    lv_buttonmatrix_set_button_ctrl(react_select, NL_REACT_PRESET, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_obj_set_size(react_select, PORTRAIT ? w - 8 : 260, 34);
+    if (PORTRAIT) lv_obj_align(react_select, LV_ALIGN_TOP_MID, 0, 36);
+    else lv_obj_align(react_select, LV_ALIGN_TOP_RIGHT, -60, 2);
+    lv_obj_set_style_bg_color(react_select, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_border_width(react_select, 0, 0);
+    lv_obj_set_style_pad_all(react_select, 0, 0);
+    lv_obj_set_style_pad_column(react_select, 4, 0);
+    lv_obj_set_style_bg_color(react_select, lv_color_hex(COL_CARD), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(react_select, lv_color_hex(COL_EYES), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(react_select, lv_color_hex(COL_TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(react_select, lv_color_hex(COL_BG), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_font(react_select, &lv_font_montserrat_14, LV_PART_ITEMS);
+    lv_obj_set_style_radius(react_select, 8, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(react_select, 0, LV_PART_ITEMS);
+    lv_obj_add_event_cb(react_select, on_control_event, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *grid = lv_obj_create(page1);
     lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
@@ -543,10 +592,18 @@ static void ui_update(const display_status_t *s)
         lv_obj_set_style_text_color(eyes_card.line1, lv_color_hex(e->linked ? COL_TEXT : COL_WARN), 0);
         // LVGL's printf has no floats.
         lv_label_set_text_fmt(eyes_card.line2, "%d/%d %s  %d.%d|%d.%d fps  %d bpm", e->preset + 1, e->preset_count,
-                              e->auto_cycle ? "auto" : "held",
+                              (e->flags & NL_EYE_PEAKS_NOW) ? ((e->flags & NL_EYE_AUTO_CYCLE) ? "auto peaks" : "held peaks")
+                                                            : ((e->flags & NL_EYE_AUTO_CYCLE) ? "auto" : "held"),
                               e->fps_x10[0] / 10, e->fps_x10[0] % 10, e->fps_x10[1] / 10, e->fps_x10[1] % 10,
                               (int)(e->tempo_bpm + 0.5f));
         set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, true);
+        if (esp_timer_get_time() >= slider_hold_until) {  // the preset page controls follow the eyes
+            if (e->flags & NL_EYE_AUTO_CYCLE) lv_obj_add_state(auto_switch, LV_STATE_CHECKED);
+            else lv_obj_remove_state(auto_switch, LV_STATE_CHECKED);
+            const uint32_t r = NL_EYE_REACT(e->flags);
+            if (r <= NL_REACT_PEAKS && !lv_buttonmatrix_has_button_ctrl(react_select, r, LV_BUTTONMATRIX_CTRL_CHECKED))
+                lv_buttonmatrix_set_button_ctrl(react_select, r, LV_BUTTONMATRIX_CTRL_CHECKED);
+        }
     } else {
         lv_label_set_text(eyes_card.big, "--");
         lv_label_set_text(eyes_card.line1, "not heard");

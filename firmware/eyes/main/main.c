@@ -59,7 +59,8 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
     if (cmd.target != NL_TARGET_EYES) status = NL_ACK_UNSUPPORTED;
     else if (cmd.op == NL_OP_PRESET_SET && (cmd.arg < 0 || cmd.arg >= preset_count)) status = NL_ACK_BAD_ARG;
     else if (cmd.op == NL_OP_BRIGHTNESS_SET && (cmd.arg < 0 || cmd.arg > 255)) status = NL_ACK_BAD_ARG;
-    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_AUTO_CYCLE) status = NL_ACK_UNSUPPORTED;
+    else if (cmd.op == NL_OP_REACTIVITY && (cmd.arg < NL_REACT_PRESET || cmd.arg > NL_REACT_PEAKS)) status = NL_ACK_BAD_ARG;
+    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_REACTIVITY) status = NL_ACK_UNSUPPORTED;
     else if (!repeat) xQueueSend(radio_cmds, &cmd, 0);
     last_id = cmd.id;
     memcpy(last_mac, mac, 6);
@@ -118,7 +119,10 @@ static void eye_task(void *arg)
     nl_bump_rx_t bumps;
     nl_bump_rx_init(&bumps);
     int64_t bump_rx_us = 0;
-    bool auto_cycle = true;  // presets change every PRESET_CYCLE_S unless the base holds them
+    // Presets change every PRESET_CYCLE_S after boot; choosing one from the base
+    // stops that (the base can turn it back on).
+    bool auto_cycle = true;
+    nl_react_t react = NL_REACT_PRESET;  // sound reactivity override from the base
     int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
     render_set_preset(0);
     ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
@@ -154,7 +158,10 @@ static void eye_task(void *arg)
         // A command from the radio. A preset chosen this way holds for a full cycle.
         nl_cmd_t cmd;
         if (!following && radio_cmds && xQueueReceive(radio_cmds, &cmd, 0) == pdTRUE) {
-            if (cmd.op == NL_OP_AUTO_CYCLE) {
+            if (cmd.op == NL_OP_REACTIVITY) {
+                react = (nl_react_t)cmd.arg;
+                ESP_LOGI(TAG, "radio command: react to %s", react == NL_REACT_BEATS ? "beats" : react == NL_REACT_PEAKS ? "peaks" : "each preset's choice");
+            } else if (cmd.op == NL_OP_AUTO_CYCLE) {
                 auto_cycle = cmd.arg != 0;
                 next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
                 ESP_LOGI(TAG, "radio command: presets %s", auto_cycle ? "cycle" : "held");
@@ -179,6 +186,8 @@ static void eye_task(void *arg)
                 else next_preset = (base + preset_count - 1) % preset_count;
                 eye_request_swap(&eye);
                 next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+                if (auto_cycle) ESP_LOGI(TAG, "presets held (chosen from the base)");
+                auto_cycle = false;  // a preset picked by hand stays until the next pick
                 ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
             }
         }
@@ -244,7 +253,8 @@ static void eye_task(void *arg)
                 }
             }
         }
-        eye_set_peak_beats(&eye, presets[rendered].peak_beats);  // the preset on screen decides
+        const bool peaks = react == NL_REACT_PRESET ? presets[rendered].peak_beats : react == NL_REACT_PEAKS;
+        eye_set_peak_beats(&eye, peaks);  // the preset on screen decides, unless the base overrides
         if (role == NL_ROLE_EYE_LEADER) {
             eye_export_shared(&eye, rendered, side, &shared);
             shared.brightness = (uint8_t)bright_pct;
@@ -272,7 +282,8 @@ static void eye_task(void *arg)
                 .level_db = a.level_db,
                 .hype = eye.p.hype,
                 .brightness = (uint8_t)bright_pct,
-                .auto_cycle = auto_cycle,
+                .flags = (uint8_t)((auto_cycle ? NL_EYE_AUTO_CYCLE : 0) | NL_EYE_REACT_FLAGS(react) |
+                                   (eye.peak_beats ? NL_EYE_PEAKS_NOW : 0)),
             };
             strlcpy(t.name, presets[rendered].name, sizeof(t.name));
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));

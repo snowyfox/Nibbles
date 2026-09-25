@@ -203,8 +203,12 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   the same id are acked but applied once. A command triggers the swap blink
   and holds for a full preset cycle; the port eye follows over the cable.
 - `NL_OP_AUTO_CYCLE` (arg 0/1) stops or restarts the automatic preset change
-  every `PRESET_CYCLE_S`; telemetry's `auto_cycle` reports it. Held presets
-  still change on commands.
+  every `PRESET_CYCLE_S`. The eyes cycle after boot, and a preset command from
+  the base (set/next/prev) turns cycling off: a picked preset stays.
+  `NL_OP_REACTIVITY` overrides sound reactivity for every preset
+  (`nl_react_t`: each preset's choice, beats, peaks). Telemetry `flags`
+  report auto-cycle, the reactivity mode and whether the preset on screen
+  reacts to peaks (`NL_EYE_*`).
 - Brightness commands: `NL_OP_BRIGHTNESS_SET` (0..255 → percent, not saved)
   and `NL_OP_BRIGHTNESS_STEP` (to the next `BRIGHTNESS_PRESETS` level above or
   below the current one, saved like the BOOT button). The leader shares its

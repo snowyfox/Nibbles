@@ -34,6 +34,8 @@ typedef enum {
     DISPLAY_HOLD_EYES,        // long press on the EYES card (toggle automatic preset changes)
     DISPLAY_TAP_PRESET,       // preset grid: tap button value (1..10) -> that preset on WLED and the eyes
     DISPLAY_HOLD_PRESET,      // preset grid: held (pressed) / let go; value = preset to bump (11..20)
+    DISPLAY_SET_AUTO,         // preset page switch: value 1 = eyes change presets by themselves
+    DISPLAY_SET_REACT,        // preset page selector: value = nl_react_t
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).

@@ -104,8 +104,19 @@ typedef struct NL_PACKED {
     float hype;
     uint8_t brightness;     // panel brightness in percent
     char name[NL_NAME_LEN]; // current preset's name, NUL-terminated
-    uint8_t auto_cycle;     // 1 = presets change by themselves
+    uint8_t flags;          // NL_EYE_* below
 } nl_eye_telemetry_t;
+
+#define NL_EYE_AUTO_CYCLE   0x01    // presets change by themselves
+#define NL_EYE_PEAKS_NOW    0x08    // the preset on screen reacts to every sound peak
+#define NL_EYE_REACT(flags) (((flags) >> 1) & 3)  // nl_react_t in use
+#define NL_EYE_REACT_FLAGS(r) (((r) & 3) << 1)
+
+typedef enum {
+    NL_REACT_PRESET = 0,    // each preset's own choice (preset_t.peak_beats)
+    NL_REACT_BEATS = 1,     // every preset reacts to beats
+    NL_REACT_PEAKS = 2,     // every preset reacts to every sound peak
+} nl_react_t;
 
 typedef struct NL_PACKED {
     uint8_t on;             // lights on
@@ -131,6 +142,7 @@ typedef enum {
     NL_OP_BRIGHTNESS_SET = 4,   // arg = 0..255
     NL_OP_BRIGHTNESS_STEP = 5,  // arg = signed step (eyes: through their brightness presets by sign)
     NL_OP_AUTO_CYCLE = 6,       // eyes: arg 1 = cycle presets by themselves, 0 = hold the current one
+    NL_OP_REACTIVITY = 7,       // eyes: arg = nl_react_t
 } nl_op_t;
 
 typedef struct NL_PACKED {

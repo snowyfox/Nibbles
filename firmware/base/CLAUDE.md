@@ -48,7 +48,11 @@ What it does now (`main/main.c`):
   square buttons 1-10, 2 columns by 5 rows in portrait (5 by 2 in landscape).
   Tap N sets preset N on WLED (preset id N) and the eyes (index N-1). Hold N
   bumps preset N+10 on both while held (`DISPLAY_PRESET_HOLD_OFFSET`). The
-  eyes have 18 presets, so holds of 9 and 10 only change WLED. The sliders
+  eyes have 18 presets, so holds of 9 and 10 only change WLED. At the top:
+  an AUTO switch (eyes change presets by themselves; turns off when a preset
+  is picked) and a Preset / Beats / Peaks selector (eye sound reactivity:
+  each preset's choice, or all on beats / on every peak). Both follow the
+  eyes' telemetry flags, but not for 1.5 s after being touched. The sliders
   don't start a page swipe (they don't chain scrolling to the tileview).
 - `shot` over USB serial (or `python tools/base_shot.py PORT out.png`) prints the next frame as base64 RGB565 (`SHOT 640 172
   rgb565le` … `SHOT END`) to check the layout from a computer.
@@ -58,7 +62,7 @@ What it does now (`main/main.c`):
   the last message).
 - USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
   `wled next`, `wled set N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
-  step); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `shot`; `[eyes|wled] bump flash MS`,
+  step); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `shot`; `[eyes|wled] bump flash MS`,
   `[eyes|wled] bump black MS`, `[eyes|wled] bump preset N MS` (no prefix:
   flash and blackout go to both, preset bumps to WLED, as the preset numbers
   differ). Commands are unicast with an ack and up to 3 tries of
