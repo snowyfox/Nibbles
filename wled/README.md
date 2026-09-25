@@ -68,10 +68,19 @@ Build notes:
 ## The shark's real controller
 The existing controller appears (from the user's WLED 0.15.0-b3 build
 settings) to be an **ESP32-S3 on a Lolin S3 Mini** (4 MB flash, 2 MB PSRAM)
-with **AudioReactive**; WLED 16 has a matching `esp32s3_4M_qspi` env. Before
-upgrading it: back up its config and presets (WLED → Config → Security &
-Updates → Backup), confirm the board and pins, then add a
-`nibbles_shark` env here extending `esp32s3_4M_qspi`.
+with **AudioReactive**. `platformio_override.ini` has a matching
+**`nibbles_shark`** env (WLED 16's `esp32s3_4M_qspi` plus the usermod, no
+debug output). It builds and fits: 1.24 MB of the 1.5 MB app partition.
+
+Upgrade plan:
+1. Back up its config and presets (WLED → Config → Security & Updates →
+   Backup). LED and mic pins are in that config, not in the build.
+2. Build `nibbles_shark`; the image is `.pio/build/nibbles_shark/firmware.bin`.
+3. Upload it on WLED's Update page (OTA). 0.15.0-b3 and 16.0.1 use the same
+   partition table (`tools/WLED_ESP32_4MB_1MB_FS.csv`), so the saved config
+   and presets stay. Flashing over USB also works but may erase them.
+4. Check the Info page for "Nibbles radio", then on the base screen that WLED
+   is heard and anchors the channel.
 
 Known WLED issue to watch (fixed only in 17.0.0-dev): "ESP-NOW remote with no
 Wi-Fi reboots every 15–20 min". Test for it in AP-fallback mode.
