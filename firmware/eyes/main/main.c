@@ -29,6 +29,11 @@ static const int brightness_presets[] = BRIGHTNESS_PRESETS;
 // Preset commands and bumps from the radio, handed to the eye task.
 static QueueHandle_t radio_cmds, radio_bumps;
 
+typedef struct {
+    nl_bump_t bump;
+    int64_t rx_us;  // when it arrived, to measure how soon it shows
+} bump_item_t;
+
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
     if (h->type == NL_MSG_AUDIO && len == sizeof(nl_audio_t) && h->role == NL_ROLE_WLED) {
@@ -38,9 +43,9 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
         return;
     }
     if (h->type == NL_MSG_BUMP && len == sizeof(nl_bump_t)) {
-        nl_bump_t b;
-        memcpy(&b, pl, sizeof(b));
-        if (b.target & NL_TARGET_EYES) xQueueSend(radio_bumps, &b, 0);
+        bump_item_t it = { .rx_us = esp_timer_get_time() };
+        memcpy(&it.bump, pl, sizeof(it.bump));
+        if (it.bump.target & NL_TARGET_EYES) xQueueSend(radio_bumps, &it, 0);
         return;
     }
     if (h->type != NL_MSG_CMD || len != sizeof(nl_cmd_t)) return;
@@ -112,6 +117,7 @@ static void eye_task(void *arg)
     int rendered = 0, bump_preset = -1;  // a preset bump shows bump_preset while held
     nl_bump_rx_t bumps;
     nl_bump_rx_init(&bumps);
+    int64_t bump_rx_us = 0;
     int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
     render_set_preset(0);
     ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
@@ -174,10 +180,11 @@ static void eye_task(void *arg)
 
         // Bumps: flash and blackout are drawn by the eye; a preset bump swaps
         // the preset at once (no blink) and puts it back on release.
-        nl_bump_t bmsg;
+        bump_item_t bmsg;
         const uint32_t now_ms = (uint32_t)(now / 1000);
         nl_bump_event_t ev = NL_BUMP_EV_NONE;
-        if (radio_bumps && xQueueReceive(radio_bumps, &bmsg, 0) == pdTRUE) ev = nl_bump_rx_message(&bumps, &bmsg, now_ms);
+        if (radio_bumps && xQueueReceive(radio_bumps, &bmsg, 0) == pdTRUE) ev = nl_bump_rx_message(&bumps, &bmsg.bump, now_ms);
+        if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) bump_rx_us = bmsg.rx_us;
         if (ev == NL_BUMP_EV_NONE) ev = nl_bump_rx_tick(&bumps, now_ms);
         if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
             eye_set_bump(&eye, 0);
@@ -224,6 +231,10 @@ static void eye_task(void *arg)
         }
         render_frame(&eye.p);
         frames++;
+        if (bump_rx_us) {
+            ESP_LOGI(TAG, "bump shown %.1f ms after it arrived", (esp_timer_get_time() - bump_rx_us) / 1000.0f);
+            bump_rx_us = 0;
+        }
 
         if (radio_cmds && now >= next_telemetry) {
             next_telemetry = now + TELEMETRY_MS * 1000LL;
@@ -317,7 +328,7 @@ void app_main(void)
     if (link_start() != ESP_OK) ESP_LOGE(TAG, "eye link unavailable; running standalone");
     if (EYES_RADIO && board_role() == NL_ROLE_EYE_LEADER) {
         radio_cmds = xQueueCreate(4, sizeof(nl_cmd_t));
-        radio_bumps = xQueueCreate(8, sizeof(nl_bump_t));
+        radio_bumps = xQueueCreate(8, sizeof(bump_item_t));
         const nl_espnow_config_t rcfg = {
             .role = NL_ROLE_EYE_LEADER,
             .side = board_side(),

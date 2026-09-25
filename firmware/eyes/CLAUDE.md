@@ -217,7 +217,9 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   - blackout: lids snap shut and `p.master` (a master level the renderer applies
     to everything, outline included) goes to 0; reopens over ~0.3 s;
   - preset: shows preset `arg` at once (no blink) and puts the old one back.
-  Bumps change `eye.p` on the leader, and the shared state
+  The leader logs `bump shown N ms after it arrived` (measured 35–68 ms,
+  median 54: up to a frame of waiting, the TE wait, then ~26 ms to send the
+  frame). Bumps change `eye.p` on the leader, and the shared state
   (`nl_eye_state_t.master` included) carries them to the port eye.
 - Measured: commands acked in ~2 ms, 0 late frames with Wi-Fi running,
   ~73 KB internal RAM free. A 5 s `radio:` log line shows channel, lock,
