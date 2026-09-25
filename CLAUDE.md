@@ -56,7 +56,9 @@ in `wled/README.md`.
 
 ## Conventions
 
-- Only commit when asked. Commits are **unsigned**: this repo's local git
+- Only commit when asked, and **push every commit to `origin`**
+  (github.com/snowyfox/Nibbles, branch `master`) right after committing.
+  Commits are **unsigned**: this repo's local git
   config sets `commit.gpgsign` and `tag.gpgsign` to false (the user's global
   config signs by default), so a plain `git commit` works here.
 - Work in small verified steps: host tests, then build, then flash, then read
