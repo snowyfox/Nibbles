@@ -83,4 +83,7 @@ Upgrade plan:
    is heard and anchors the channel.
 
 Known WLED issue to watch (fixed only in 17.0.0-dev): "ESP-NOW remote with no
-Wi-Fi reboots every 15–20 min". Test for it in AP-fallback mode.
+Wi-Fi reboots every 15–20 min". Soak test 2026-09-24: the dev node (16.0.1 +
+usermod, no Wi-Fi network configured so on its own AP, ESP-NOW anchoring and
+receiving eye telemetry) ran 35 min with no reboot. Repeat on the real
+controller after upgrading.
