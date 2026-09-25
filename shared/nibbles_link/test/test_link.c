@@ -287,6 +287,7 @@ static void test_wled_audio(void)
         if (t == 0) b0 = a.beat_count;
     }
     CHECK(a.beat_count - b0 <= 41, "WLED audio: rapid peaks limited to %lu beats in 10 s", (unsigned long)(a.beat_count - b0));
+    CHECK(a.peak_count >= 100, "WLED audio: every peak still counted as a peak (%lu in 10 s)", (unsigned long)a.peak_count);
 
     // Silence after music: the tempo is dropped.
     nl_ar_init(&s);

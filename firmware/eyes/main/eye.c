@@ -117,8 +117,11 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     p->time_s += dt;
     e->state_t += dt;
 
-    bool beat = a->beat_count != e->last_beat;
+    // A "beat" drives the ripple and pupil thump: every detected beat, or with
+    // a peak-reactive preset every sound peak.
+    bool beat = e->peak_beats ? a->peak_count != e->last_peak : a->beat_count != e->last_beat;
     e->last_beat = a->beat_count;
+    e->last_peak = a->peak_count;
 
     // Sleep only in a genuinely quiet room; wake on any clear sound, a steady
     // beat or a bump. Single "beats" are ignored: near-silence produces false ones.
@@ -276,6 +279,11 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     p->master = 1.0f - e->black_amt;
     p->pupil_r *= 1.0f - BUMP_FLASH_PUPIL * e->flash_amt;
     eye_compose_pupil(p, m->look_x, m->look_y);
+}
+
+void eye_set_peak_beats(eye_t *e, bool on)
+{
+    e->peak_beats = on;
 }
 
 void eye_set_bump(eye_t *e, uint8_t action)

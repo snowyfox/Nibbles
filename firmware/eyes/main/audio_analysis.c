@@ -271,6 +271,11 @@ void audio_analysis_process(audio_analysis_t *a, const float *samples)
             var += d * d;
         }
         const float thresh = mean + BEAT_THRESHOLD_K * sqrtf(var / a->flux_filled);
+        // Peaks: every rise above the threshold while there is real sound,
+        // without the rhythm and minimum-interval gates that beats have.
+        const bool above = flux > thresh && level_db > a->noise_floor_db + 3.0f;
+        if (above && !a->above_thresh) o->peak_count++;
+        a->above_thresh = above;
         if (flux > thresh && o->beat_confidence >= BEAT_MIN_CONFIDENCE &&
             level_db > a->noise_floor_db + 3.0f && a->since_beat_s >= BEAT_MIN_INTERVAL_S) {
             if (a->since_beat_s < 1.5f) {

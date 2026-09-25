@@ -47,6 +47,7 @@ void nl_ar_update(nl_ar_state_t *s, float volume, const uint8_t fft[16], bool pe
     // Beats: AudioReactive flags peaks, often several per beat (seen live:
     // about 9 a second). A peak within MIN_INTERVAL_MS of the last counted
     // beat is part of the same beat, so at most 240 beats a minute count.
+    if (peak && !s->peak_was) s->peak_count++;  // every peak, for peak-reactive presets
     if (peak && !s->peak_was && (!s->last_peak_ms || now_ms - s->last_peak_ms >= MIN_INTERVAL_MS)) {
         s->beat_count++;
         if (s->last_peak_ms) {
@@ -92,5 +93,6 @@ void nl_ar_update(nl_ar_state_t *s, float volume, const uint8_t fft[16], bool pe
         .beat_period_s = period,
         .beat_confidence = confidence,
         .beat_count = s->beat_count,
+        .peak_count = s->peak_count,
     };
 }

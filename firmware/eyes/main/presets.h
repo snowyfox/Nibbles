@@ -11,6 +11,7 @@ typedef struct {
 
 typedef struct {
     const char *name;
+    bool peak_beats;         // ripple and thump on every sound peak instead of every beat
 
     // Colour. Rainbow presets colour ring n with hue + n * hue_spread (hue
     // drifts with time and music). Palette presets sample a cyclic 4-colour

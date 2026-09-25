@@ -119,6 +119,8 @@ static void test_beats(float bpm, float amp, float secs, float measure, const ch
     const float want = fold_bpm(bpm);
     CHECK(fabsf(period_bpm - want) < want * 0.08f, "%s %.0f bpm: tempo %.1f bpm (expect %.0f)", label, bpm, period_bpm, want);
     CHECK(loud_avg > 0.3f, "%s %.0f bpm: average loudness %.2f", label, bpm, loud_avg);
+    CHECK(m.a.out.peak_count >= m.a.out.beat_count, "%s %.0f bpm: %lu peaks >= %lu beats", label, bpm,
+          (unsigned long)m.a.out.peak_count, (unsigned long)m.a.out.beat_count);
 }
 
 // A more realistic dance track: kick sweeping 150 -> 50 Hz with a click,
@@ -703,6 +705,32 @@ static void test_bumps(void)
     CHECK(e.bump == 0, "preset bump is left to the caller");
 }
 
+static void test_peak_beats(void)
+{
+    // Peaks arriving 9 times a second with no beats: a normal eye ignores
+    // them, a peak-reactive one ripples on each.
+    motion_features_t still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int mode = 0; mode < 2; mode++) {
+        static eye_t e;
+        eye_init(&e, 11);
+        eye_set_peak_beats(&e, mode == 1);
+        audio_features_t a = { .level_db = -30.0f, .avg_db = -30.0f, .loudness = 0.6f, .warmth = 0.5f };
+        for (int i = 0; i < 60; i++) eye_update(&e, &a, &still, dt);
+        int ripples = 0;
+        for (int i = 0; i < 90; i++) {  // 3 s
+            if (i % 3 == 0) a.peak_count++;
+            float before = 0.0f, after = 0.0f;
+            for (int r = 0; r < EYE_MAX_RIPPLES; r++) before += e.p.ripples[r].amp;
+            eye_update(&e, &a, &still, dt);
+            for (int r = 0; r < EYE_MAX_RIPPLES; r++) after += e.p.ripples[r].amp;
+            ripples += after > before + 0.3f;  // a new ripple started
+        }
+        if (mode == 0) CHECK(ripples == 0, "normal preset: peaks without beats make no ripples (%d)", ripples);
+        else CHECK(ripples >= 25, "peak-reactive preset: a ripple on every peak (%d new in 3 s, 30 peaks)", ripples);
+    }
+}
+
 static void test_motion_hype(void)
 {
     // Motion analysis: fast back-and-forth twisting is vigorous, slow isn't.
@@ -757,7 +785,7 @@ static void test_spiral_tempo(void)
     CHECK(spirals > 0, "%d spiral presets", spirals);
 
     // Variants of a spiral share everything with the family's first preset
-    // (same arms) except their name and palette.
+    // (same arms) except their name, palette and sound reactivity.
     for (int k = 0; k < preset_count; k++) {
         if (presets[k].spiral_arms <= 0) continue;
         const preset_t *base = NULL;
@@ -766,9 +794,10 @@ static void test_spiral_tempo(void)
         if (!base) continue;
         preset_t a = presets[k], b = *base;
         a.name = b.name = NULL;
+        a.peak_beats = b.peak_beats = false;
         memset(a.palette, 0, sizeof(a.palette));
         memset(b.palette, 0, sizeof(b.palette));
-        CHECK(memcmp(&a, &b, sizeof(a)) == 0, "%s matches %s apart from its palette", presets[k].name, base->name);
+        CHECK(memcmp(&a, &b, sizeof(a)) == 0, "%s matches %s apart from its palette and reactivity", presets[k].name, base->name);
     }
 }
 
@@ -917,6 +946,7 @@ int main(void)
     test_hype();
     test_preset_swap();
     test_bumps();
+    test_peak_beats();
     test_eye_link_sharing();
     test_motion_hype();
     test_spiral_tempo();

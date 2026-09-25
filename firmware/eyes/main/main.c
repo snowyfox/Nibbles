@@ -244,6 +244,7 @@ static void eye_task(void *arg)
                 }
             }
         }
+        eye_set_peak_beats(&eye, presets[rendered].peak_beats);  // the preset on screen decides
         if (role == NL_ROLE_EYE_LEADER) {
             eye_export_shared(&eye, rendered, side, &shared);
             shared.brightness = (uint8_t)bright_pct;

@@ -39,6 +39,7 @@ const preset_t presets[] = {
         // Fire: soft thick bands in red, orange and gold, flowing outward
         // like heat, with white-hot beat ripples.
         .name = "Inferno",
+        .peak_beats = true,  // twitchy: reacts to every sound peak
         .palette = { { 0.55f, 0.0f, 0.0f }, { 1.0f, 0.3f, 0.0f }, { 1.0f, 0.75f, 0.1f }, { 0.9f, 0.15f, 0.0f } },
         .palette_step = 0.2f, .palette_music = 0.5f,
         .rings = 7, .ring_width = 3.5f, .halo_sigma = 14.0f, .halo_amp = 0.35f,
@@ -90,6 +91,7 @@ const preset_t presets[] = {
         // Acid: hard-edged bands in lime, green and yellow pulled inward
         // toward a small pinpoint pupil, wobbling hard.
         .name = "Toxic",
+        .peak_beats = true,  // twitchy: reacts to every sound peak
         .palette = { { 0.2f, 1.0f, 0.0f }, { 0.8f, 1.0f, 0.0f }, { 0.0f, 0.6f, 0.1f }, { 0.5f, 1.0f, 0.3f } },
         .palette_step = 0.3f, .palette_music = 0.3f,
         .rings = 6, .ring_width = 3.0f, .bands = true, .halo_sigma = 12.0f, .halo_amp = 0.3f,
@@ -100,6 +102,7 @@ const preset_t presets[] = {
     {
         // Hypno in lime, green, yellow and teal.
         .name = "Hypno Acid",
+        .peak_beats = true,  // twitchy: reacts to every sound peak
         .palette = { { 0.3f, 1.0f, 0.0f }, { 0.9f, 1.0f, 0.0f }, { 0.0f, 0.8f, 0.3f }, { 0.0f, 0.9f, 0.7f } },
         HYPNO_FAMILY,
     },
@@ -162,6 +165,7 @@ const preset_t presets[] = {
     {
         // Vortex in deep red, orange and yellow.
         .name = "Vortex Magma",
+        .peak_beats = true,  // twitchy: reacts to every sound peak
         .palette = { { 0.7f, 0.0f, 0.0f }, { 1.0f, 0.4f, 0.0f }, { 1.0f, 0.9f, 0.2f }, { 0.9f, 0.1f, 0.0f } },
         VORTEX_FAMILY,
     },

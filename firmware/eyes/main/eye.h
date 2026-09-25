@@ -49,6 +49,8 @@ typedef struct {
     float dance;              // dance score incl. music-match bonus
     float activity_peak;      // recent motion activity, held then faded
     float activity_hold_s;
+    uint32_t last_peak;
+    bool peak_beats;          // react to every sound peak instead of every beat (per preset)
     uint8_t bump;             // nl_bump_action_t being held, 0 = none
     float flash_amt, black_amt;
     eye_params_t p;
@@ -66,6 +68,10 @@ void eye_request_swap(eye_t *e);
 // snaps small, a ripple), NL_BUMP_BLACKOUT shuts the lids and dims it; 0 ends
 // the bump. Preset bumps are handled by the caller.
 void eye_set_bump(eye_t *e, uint8_t action);
+
+// Presets choose how the eye reacts to sound: on every beat (false) or on
+// every sound peak, several per beat (true): a much busier, twitchier eye.
+void eye_set_peak_beats(eye_t *e, bool on);
 
 // Pupil offset from this eye's own motion look plus the shared idle glance.
 void eye_compose_pupil(eye_params_t *p, float look_x, float look_y);

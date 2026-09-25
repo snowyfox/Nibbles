@@ -210,6 +210,13 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   below the current one, saved like the BOOT button). The leader shares its
   brightness in `nl_eye_state_t.brightness`; the port eye matches it and
   ignores its own BOOT button while following. Telemetry reports it.
+- Sound reactivity per preset (`preset_t.peak_beats`): most presets ripple
+  and thump on each **beat** (`beat_count`); peak-reactive presets (Inferno,
+  Toxic, Hypno Acid, Vortex Magma = presets 3, 9, 10, 18) do it on every
+  **sound peak** (`peak_count`, several per beat), a much twitchier eye. The
+  eyes' own analysis counts a peak on every rise of the onset flux above the
+  beat threshold (with real sound), without the rhythm and minimum-interval
+  gates beats have; WLED's audio sends AudioReactive's raw peaks.
 - Audio source on the leader (`audio_get`): WLED's AudioReactive features over
   the radio if `EYES_AUDIO_FROM_WLED` is 1 and they are fresh, else the port
   eye's over the cable, else its own mic. The `link:` log line names it.

@@ -20,6 +20,7 @@ typedef struct {
     float loudness;        // 0..1, automatic-gain normalised
     float warmth;          // 0 = treble-heavy, 0.5 = balanced, 1 = bass-heavy
     uint32_t beat_count;   // increments on every detected beat
+    uint32_t peak_count;   // increments on every sound peak (raw onset, no rhythm gate)
     float beat_period_s;   // musical beat period (see TEMPO_FOLD_*), 0 if unknown
     float beat_confidence; // 0..1 how strongly periodic the recent onsets are
 } audio_features_t;
@@ -39,6 +40,7 @@ typedef struct {
     float onset_mean;
     int eval_countdown;
     float since_beat_s;
+    bool above_thresh;            // onset flux above the beat threshold last frame
     float intervals[BEAT_HISTORY];
     int interval_pos, interval_filled;
     float noise_floor_db;

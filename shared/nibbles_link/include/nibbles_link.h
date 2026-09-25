@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define NL_VERSION          3
+#define NL_VERSION          4
 #define NL_MAX_PAYLOAD      128
 #define NL_HEADER_LEN       4   // type, version, seq
 #define NL_CRC_LEN          2
@@ -72,6 +72,8 @@ typedef struct NL_PACKED {
     float beat_period_s;    // 0 when there is no steady tempo
     float beat_confidence;  // rhythm strength 0..1
     uint32_t beat_count;    // increments on every beat
+    uint32_t peak_count;    // increments on every sound peak (raw onsets, many per beat);
+                            // presets that react to every peak use this instead of beats
 } nl_audio_t;
 
 #define NL_RIPPLES 4
@@ -272,7 +274,7 @@ uint8_t nl_chanscan_busy(nl_chanscan_t *s);
 #define NL_AR_INTERVALS 8
 
 typedef struct {
-    uint32_t last_ms, last_peak_ms, beat_count;
+    uint32_t last_ms, last_peak_ms, beat_count, peak_count;
     float avg_db;
     float intervals[NL_AR_INTERVALS];
     int pos, filled;

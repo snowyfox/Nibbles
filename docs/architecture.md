@@ -108,7 +108,10 @@ the leader switched to "audio from WLED" with 0 late frames, but
 AudioReactive's peak flag fired about 9 times a second. The converter now
 counts at most one beat per 250 ms, and needs 75% of intervals within 8% of
 the median before it reports a tempo. Loudness reads 0.6-0.8 after
-AudioReactive's gain control; still to be compared on real music.
+AudioReactive's gain control; still to be compared on real music. The raw
+peaks looked great on the eyes, so `nl_audio_t` (protocol version 4) carries
+both `beat_count` (steady beats) and `peak_count` (every peak), and each eye
+preset picks which one it reacts to (`peak_beats`).
 
 ## Roadmap
 | Phase | Work | Status |

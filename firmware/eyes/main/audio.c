@@ -81,6 +81,7 @@ static void audio_task(void *arg)
                 .gain_db = o->gain_db, .loudness = o->loudness, .warmth = o->warmth,
                 .beat_period_s = o->beat_period_s, .beat_confidence = o->beat_confidence,
                 .beat_count = o->beat_count,
+                .peak_count = o->peak_count,
             };
             link_send_audio(&msg);
         }
@@ -112,6 +113,7 @@ audio_source_t audio_get(audio_features_t *out)
         out->beat_period_s = r.beat_period_s;
         out->beat_confidence = r.beat_confidence;
         out->beat_count = r.beat_count;
+        out->peak_count = r.peak_count;
         return src;
     }
     taskENTER_CRITICAL(&lock);
