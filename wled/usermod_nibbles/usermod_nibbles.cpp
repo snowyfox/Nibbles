@@ -129,8 +129,12 @@ class NibblesUsermod : public Usermod {
         presetBitsTime = presetsModifiedTime;
         return;
       }
+      // Only the ids and names: a real presets.json (87 KB on the shark) is
+      // far bigger than WLED's JSON buffer.
+      StaticJsonDocument<64> filter;
+      filter["*"]["n"] = true;
       pDoc->clear();
-      const DeserializationError err = deserializeJson(*pDoc, f);
+      const DeserializationError err = deserializeJson(*pDoc, f, DeserializationOption::Filter(filter));
       f.close();
       if (err) return;  // leave invalid; try again next time
       for (JsonPair kv : pDoc->as<JsonObject>()) {

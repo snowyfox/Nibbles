@@ -66,19 +66,28 @@ Build notes:
   and platforms.
 
 ## The shark's real controller
-The existing controller appears (from the user's WLED 0.15.0-b3 build
-settings) to be an **ESP32-S3 on a Lolin S3 Mini** (4 MB flash, 2 MB PSRAM)
-with **AudioReactive**. `platformio_override.ini` has a matching
-**`nibbles_shark`** env (WLED 16's `esp32s3_4M_qspi` plus the usermod, no
-debug output). It builds and fits: 1.24 MB of the 1.5 MB app partition.
+A **Bong69 8 Port LED Distro v3** (https://github.com/bobko69/8PortLEDDistro):
+a WT32-ETH01 (classic ESP32, 4 MB flash, no PSRAM; LAN8720 clocked by an
+external oscillator on GPIO 0, so ESP-NOW is safe; Ethernet is off in its
+config anyway). Read on 2026-09-24 at 10.7.200.253: WLED 0.15.1
+"ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5),
+button on GPIO 0, AudioReactive with an I2S mic (SD 17, WS 32, SCK 33),
+ESP-NOW on with a linked WiZmote, 42 presets (`presets.json` is 87 KB, so the
+usermod reads it with a names-only filter), Wi-Fi channel 11 at home, AP
+"Nibbles" on channel 1. A backup of its `cfg.json`, `presets.json` and the
+0.15.1 release image for rolling back is in `wled/backup/` (not committed).
+
+**`nibbles_shark`** env: WLED 16's `esp32_eth` plus the usermod. It builds and
+fits: 1.33 MB of the 1.5 MB app partition.
 
 Upgrade plan:
 1. Back up its config and presets (WLED → Config → Security & Updates →
    Backup). LED and mic pins are in that config, not in the build.
 2. Build `nibbles_shark`; the image is `.pio/build/nibbles_shark/firmware.bin`.
-3. Upload it on WLED's Update page (OTA). 0.15.0-b3 and 16.0.1 use the same
-   partition table (`tools/WLED_ESP32_4MB_1MB_FS.csv`), so the saved config
-   and presets stay. Flashing over USB also works but may erase them.
+3. Upload it on WLED's Update page (OTA; GPIO 1 and 3 drive LEDs, so there is
+   no USB serial). 0.15 and 16.0.1 use the same partition table
+   (`tools/WLED_ESP32_4MB_1MB_FS.csv`; its filesystem shows 983 KB), so the
+   saved config and presets stay. To roll back, upload the 0.15.1 image.
 4. Check the Info page for "Nibbles radio", then on the base screen that WLED
    is heard and anchors the channel.
 
