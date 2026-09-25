@@ -1,0 +1,12 @@
+{
+  "name": "nibbles_link",
+  "version": "0.2.0",
+  "description": "Nibbles link protocol: messages, framing, radio packets, channel scanning",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include",
+    "libArchive": false
+  }
+}

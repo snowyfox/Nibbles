@@ -1,0 +1,7 @@
+{
+  "name": "wled-nibbles",
+  "version": "0.1.0",
+  "description": "Nibbles shark integration: ESP-NOW channel anchor, commands and telemetry",
+  "build": { "libArchive": false },
+  "dependencies": {}
+}

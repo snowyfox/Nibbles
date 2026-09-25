@@ -118,7 +118,10 @@ static void handle(const rx_item_t *it)
     if (h.type == NL_MSG_HEARTBEAT && len == sizeof(nl_heartbeat_t)) {
         nl_heartbeat_t hb;
         memcpy(&hb, pl, sizeof(hb));
-        if ((hb.flags & NL_HB_ANCHOR) && !cfg.anchor) nl_chanscan_heard_anchor(&scan);
+        if ((hb.flags & NL_HB_ANCHOR) && !cfg.anchor) {
+            nl_chanscan_heard_anchor(&scan, hb.channel);
+            set_channel(scan.channel);
+        }
     } else if (h.type == NL_MSG_ACK && len == sizeof(nl_ack_t)) {
         nl_ack_t ack;
         memcpy(&ack, pl, sizeof(ack));

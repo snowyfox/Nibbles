@@ -10,7 +10,7 @@ of Nibbles' own code; WLED itself stays upstream.
 | Part | Hardware | Code | Status |
 |---|---|---|---|
 | **Eyes** (port + starboard) | 2× Waveshare ESP32-S3-Touch-AMOLED-1.75, back to back | `firmware/eyes/` (ESP-IDF 5.5.5) | Working; linked by a 3-wire cable (starboard leads, port is the ears) |
-| **Lights** | Existing ESP32 running WLED (0.15, to be upgraded to 16.x), external digital mic | `wled/usermod_nibbles/` (planned) | Stock WLED today |
+| **Lights** | Existing ESP32 running WLED (0.15, to be upgraded to 16.x), external digital mic | `wled/usermod_nibbles/` + `wled/platformio_override.ini` (see `wled/README.md`) | Usermod works on a dev node (WLED 16.0.1); the real controller still runs stock 0.15 |
 | **Base station** | New ESP32 in the pole base: batteries, status screen(s), buttons | `firmware/base/` (ESP-IDF 5.5.5) | Prototype on a Waveshare ESP32-S3-Touch-LCD-3.49: anchors the radio channel, logs eye telemetry, BOOT/second key = next/previous eye preset; no screen yet |
 | **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing, radio packets, eye messages, commands, channel scanning; host tests (`make -C shared/nibbles_link`) |
 | **Radio transport** | ESP-IDF boards (eyes, base) | `shared/nibbles_espnow/` | ESP-NOW: anchor or scan, broadcast, commands with ack/retry |

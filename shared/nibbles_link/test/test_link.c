@@ -142,7 +142,7 @@ static void test_chanscan(void)
     int found_ms = -1;
     for (int t = 0; t < 20000; t += 50) {
         const uint8_t ch = nl_chanscan_tick(&s, 50);
-        if (ch == 11 && (t % 250) < 50) nl_chanscan_heard_anchor(&s);  // 4 Hz heartbeat
+        if (ch == 11 && (t % 250) < 50) nl_chanscan_heard_anchor(&s, 11);  // 4 Hz heartbeat
         if (s.locked && found_ms < 0) found_ms = t;
     }
     CHECK(found_ms >= 0 && found_ms <= 13 * NL_SCAN_DWELL_MS, "anchor on channel 11 found after %d ms", found_ms);
@@ -152,11 +152,22 @@ static void test_chanscan(void)
     int relock_ms = -1;
     for (int t = 0; t < 30000; t += 50) {
         const uint8_t ch = nl_chanscan_tick(&s, 50);
-        if (ch == 3 && (t % 250) < 50) nl_chanscan_heard_anchor(&s);
+        if (ch == 3 && (t % 250) < 50) nl_chanscan_heard_anchor(&s, 3);
         if (s.locked && s.channel == 3 && relock_ms < 0) relock_ms = t;
     }
     CHECK(relock_ms >= NL_LOCK_TIMEOUT_MS && relock_ms <= NL_LOCK_TIMEOUT_MS + 13 * NL_SCAN_DWELL_MS,
           "anchor moved to channel 3: relocked after %d ms", relock_ms);
+
+    // Heard from a neighbouring channel (channels overlap): jump to the
+    // channel the anchor advertises instead of locking where it was heard.
+    nl_chanscan_init(&s, 1);
+    int landed = 0;
+    for (int t = 0; t < 20000 && !landed; t += 50) {
+        const uint8_t ch = nl_chanscan_tick(&s, 50);
+        if ((ch == 5 || ch == 6 || ch == 7) && (t % 250) < 50) nl_chanscan_heard_anchor(&s, 6);
+        if (s.locked) landed = s.channel;
+    }
+    CHECK(landed == 6, "anchor on 6 first heard from channel 5: locked on %d", landed);
 
     // No anchor: keeps sweeping every channel.
     nl_chanscan_init(&s, 5);

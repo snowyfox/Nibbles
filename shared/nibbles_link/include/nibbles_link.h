@@ -29,6 +29,7 @@ typedef enum {
     NL_MSG_EYE_TELEMETRY = 4, // eye status, leader eye -> radio, 2 Hz
     NL_MSG_CMD = 5,         // a command, unicast, answered with NL_MSG_ACK
     NL_MSG_ACK = 6,
+    NL_MSG_WLED_TELEMETRY = 7, // WLED status, WLED -> radio, 2 Hz
 } nl_msg_type_t;
 
 typedef enum {
@@ -96,6 +97,17 @@ typedef struct NL_PACKED {
     float level_db;
     float hype;
 } nl_eye_telemetry_t;
+
+typedef struct NL_PACKED {
+    uint8_t on;             // lights on
+    uint8_t bri;            // master brightness 0..255
+    uint8_t preset;         // current preset id (0 = none)
+    uint8_t fx;             // main segment effect
+    uint8_t palette;        // main segment palette
+    uint8_t channel;        // radio channel
+    uint16_t fps;
+    uint16_t leds;          // total LED count
+} nl_wled_telemetry_t;
 
 typedef enum {
     NL_TARGET_EYES = 1,
@@ -169,8 +181,10 @@ typedef struct {
 void nl_chanscan_init(nl_chanscan_t *s, uint8_t start_channel);
 // Advance by dt_ms; returns the channel the radio should be on now.
 uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms);
-// An anchor heartbeat was heard on the current channel.
-void nl_chanscan_heard_anchor(nl_chanscan_t *s);
+// An anchor heartbeat was heard. Channels overlap, so it may have been heard
+// from a neighbouring channel: move to the channel the anchor advertises
+// (0 = unknown, stay put).
+void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel);
 
 // Encode one frame into out (at most NL_MAX_FRAME bytes, including the
 // trailing 0x00). Returns the number of bytes, or 0 if it doesn't fit.

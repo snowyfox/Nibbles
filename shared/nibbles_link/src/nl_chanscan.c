@@ -24,8 +24,9 @@ uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms)
     return s->channel;
 }
 
-void nl_chanscan_heard_anchor(nl_chanscan_t *s)
+void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel)
 {
+    if (anchor_channel >= NL_CHANNEL_MIN && anchor_channel <= NL_CHANNEL_MAX) s->channel = anchor_channel;
     if (!s->locked) s->locks++;
     s->locked = true;
     s->since_heard_ms = 0;
