@@ -21,7 +21,9 @@ eyes and base (`shared/nibbles_link`).
   blackout, or a preset, held while the sender keeps sending HOLD every 100 ms.
   On STOP, or 300 ms without a message, it restores the state (and current
   preset) saved at the start. A new bump replaces the one playing and keeps the
-  original saved state.
+  original saved state. Preset and brightness commands that arrive during a bump
+  are applied when it ends (instead of the saved preset), so the release
+  doesn't undo them (built; not yet run on hardware).
 - Broadcasts **WLED telemetry** twice a second (on, brightness, preset and its
   name, effect, palette, channel, fps, LED count). Preset names come from the
   same cached read of `/presets.json` as the preset list.

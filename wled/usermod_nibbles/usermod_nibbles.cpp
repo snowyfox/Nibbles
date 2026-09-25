@@ -64,6 +64,7 @@ class NibblesUsermod : public Usermod {
     String savedState;
     bool haveSaved = false;
     uint8_t savedPreset = 0;
+    int pendingPreset = 0, pendingBri = -1;  // commands received during a bump
 
     static const char _name[];
 
@@ -184,6 +185,13 @@ class NibblesUsermod : public Usermod {
     }
 
     void applyCommand(int id) {
+      // During a bump the saved state comes back on release, which would undo
+      // the command: keep it for then instead.
+      if (haveSaved) {
+        if (id > 0) pendingPreset = id;
+        else pendingBri = -id;
+        return;
+      }
       if (id > 0) {
         applyPreset(id, CALL_MODE_DIRECT_CHANGE);
       } else {
@@ -238,12 +246,22 @@ class NibblesUsermod : public Usermod {
 
     void bumpEnd() {
       if (!haveSaved) return;
-      // Put everything back instantly.
-      String json = savedState;
-      if (json.startsWith("{")) json = "{\"tt\":0," + json.substring(1);
-      applyJson(json);
-      currentPreset = savedPreset;  // restoring the state clears it; it's the same look
       haveSaved = false;
+      if (pendingPreset) {
+        applyPreset(pendingPreset, CALL_MODE_DIRECT_CHANGE);  // a preset command came in during the bump
+      } else {
+        // Put everything back instantly.
+        String json = savedState;
+        if (json.startsWith("{")) json = "{\"tt\":0," + json.substring(1);
+        applyJson(json);
+        currentPreset = savedPreset;  // restoring the state clears it; it's the same look
+      }
+      if (pendingBri >= 0) {
+        bri = pendingBri;
+        stateUpdated(CALL_MODE_DIRECT_CHANGE);
+      }
+      pendingPreset = 0;
+      pendingBri = -1;
     }
 
     void bumpEvent(nl_bump_event_t ev) {
