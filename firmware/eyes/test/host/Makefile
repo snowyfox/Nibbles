@@ -1,5 +1,5 @@
 SRC = ../../main
-CFLAGS = -O2 -Wall -Wextra -I$(SRC)
+CFLAGS = -O2 -Wall -Wextra -I$(SRC) -I../../../../shared/nibbles_link/include
 
 test: build/test
 	./build/test

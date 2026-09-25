@@ -6,7 +6,9 @@
 #include "motion_analysis.h"
 
 esp_err_t audio_start(void);
-void audio_get(audio_features_t *out);
+// Latest audio features. On the leader eye these come from the port eye while
+// the link is up (returns true); otherwise from this eye's own mic.
+bool audio_get(audio_features_t *out);
 
 esp_err_t motion_start(void);
 void motion_get(motion_features_t *out);

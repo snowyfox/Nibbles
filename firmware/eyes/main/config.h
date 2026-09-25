@@ -16,6 +16,18 @@
 #define BRIGHTNESS_PRESETS   { 30, 60, 100 }
 #define BRIGHTNESS_DEFAULT_INDEX 2
 
+// ---------------------------------------------------------------- eye link
+// The two eyes are wired together: UART1, GPIO 17 (TX) to the other eye's
+// GPIO 18 (RX) and back, plus GND. See docs/architecture.md.
+#define NIBBLES_FW_BUILD     2
+#define LINK_UART            1
+#define LINK_TX_GPIO         17
+#define LINK_RX_GPIO         18
+#define LINK_BAUD            1000000
+#define LINK_HEARTBEAT_HZ    2
+#define LINK_PEER_TIMEOUT_MS 1500    // other eye counts as gone after this long without a heartbeat
+#define LINK_STATE_MAX_AGE_MS 250    // shared state / audio older than this is ignored (fall back to standalone)
+
 // ---------------------------------------------------------------- presets
 #define PRESET_CYCLE_S       10      // move to the next visual preset this often (see presets.c)
 #define SPIN_EASE_S          1.0f    // how quickly a spiral's spin follows tempo changes

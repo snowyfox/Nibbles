@@ -260,11 +260,72 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     }
     e->sacc_x = approach(e->sacc_x, e->sacc_tx, 0.04f, dt);
     e->sacc_y = approach(e->sacc_y, e->sacc_ty, 0.04f, dt);
-    float lx = m->look_x + idle * e->sacc_x;
-    float ly = m->look_y + idle * e->sacc_y;
-    if (!awake) { lx *= 0.3f; ly = ly * 0.3f + 0.3f; }
+    p->gaze_x = idle * e->sacc_x;
+    p->gaze_y = idle * e->sacc_y;
+    p->awake = awake;
+    eye_compose_pupil(p, m->look_x, m->look_y);
+}
+
+void eye_compose_pupil(eye_params_t *p, float look_x, float look_y)
+{
+    float lx = look_x + p->gaze_x;
+    float ly = look_y + p->gaze_y;
+    if (!p->awake) { lx *= 0.3f; ly = ly * 0.3f + 0.3f; }
     float r = sqrtf(lx * lx + ly * ly);
     if (r > 1.0f) { lx /= r; ly /= r; }
     p->pupil_x = lx * EYE_MAX_LOOK_PX;
     p->pupil_y = ly * EYE_MAX_LOOK_PX;
+}
+
+_Static_assert(EYE_MAX_RIPPLES == NL_RIPPLES, "ripple count must match the link protocol");
+
+void eye_export_shared(const eye_t *e, int preset, nl_side_t side, nl_eye_state_t *s)
+{
+    const eye_params_t *p = &e->p;
+    memset(s, 0, sizeof(*s));
+    s->time_s = p->time_s;
+    s->hue = p->hue;
+    s->intensity = p->intensity;
+    s->lid_open = p->lid_open;
+    s->hype = p->hype;
+    s->ring_phase = p->ring_phase;
+    s->tempo_bpm = p->tempo_bpm;
+    s->wobble = p->wobble;
+    s->pupil_r = p->pupil_r;
+    s->gaze_x = p->gaze_x;
+    s->gaze_y = p->gaze_y;
+    for (int i = 0; i < NL_RIPPLES; i++) {
+        s->ripple_r[i] = p->ripples[i].r;
+        s->ripple_amp[i] = p->ripples[i].amp;
+    }
+    s->state = (uint8_t)e->state;
+    s->preset = (uint8_t)preset;
+    s->awake = p->awake;
+    s->side = (uint8_t)side;
+}
+
+void eye_apply_shared(eye_t *e, const nl_eye_state_t *s, nl_side_t my_side, const motion_features_t *m)
+{
+    eye_params_t *p = &e->p;
+    p->time_s = s->time_s;
+    p->hue = s->hue;
+    p->intensity = s->intensity;
+    p->lid_open = s->lid_open;
+    p->hype = s->hype;
+    p->ring_phase = s->ring_phase;
+    p->tempo_bpm = s->tempo_bpm;
+    p->wobble = s->wobble;
+    p->pupil_r = s->pupil_r;
+    // The eyes face opposite ways, so "toward the nose" is +x on one screen
+    // and -x on the other.
+    p->gaze_x = s->side != my_side ? -s->gaze_x : s->gaze_x;
+    p->gaze_y = s->gaze_y;
+    for (int i = 0; i < NL_RIPPLES; i++) {
+        p->ripples[i].r = s->ripple_r[i];
+        p->ripples[i].amp = s->ripple_amp[i];
+    }
+    p->awake = s->awake;
+    p->swap_now = false;  // presets follow the leader's index instead
+    e->state = (eye_state_t)s->state;
+    eye_compose_pupil(p, m->look_x, m->look_y);
 }

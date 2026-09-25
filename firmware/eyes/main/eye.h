@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "audio_analysis.h"
 #include "motion_analysis.h"
+#include "nibbles_link.h"
 
 typedef enum { EYE_AWAKE, EYE_DROWSY, EYE_ASLEEP, EYE_WAKING } eye_state_t;
 
@@ -25,6 +26,8 @@ typedef struct {
     float wobble;             // 0..1 ring wobble, follows loudness
     eye_ripple_t ripples[EYE_MAX_RIPPLES];
     bool swap_now;            // true for one update: the lids hide the eye, switch preset now
+    float gaze_x, gaze_y;     // idle glance part of the pupil offset, -1..1 (shared between eyes)
+    bool awake;
 } eye_params_t;
 
 typedef struct {
@@ -55,3 +58,13 @@ const char *eye_state_name(eye_state_t s);
 // Ask for a preset change. The eye blinks and sets p.swap_now for one update
 // while the lids are shut.
 void eye_request_swap(eye_t *e);
+
+// Pupil offset from this eye's own motion look plus the shared idle glance.
+void eye_compose_pupil(eye_params_t *p, float look_x, float look_y);
+
+// Linked eyes: the leader exports everything both eyes should show alike;
+// the other eye applies it, keeping its own motion look. The glance is
+// mirrored when the sender is on the other side, so both eyes glance the
+// same way in the world.
+void eye_export_shared(const eye_t *e, int preset, nl_side_t side, nl_eye_state_t *s);
+void eye_apply_shared(eye_t *e, const nl_eye_state_t *s, nl_side_t my_side, const motion_features_t *m);

@@ -176,6 +176,21 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   arm per beat), calm spin 0.3 turns/s with no tempo, doubled in hype, eased
   over 1 s; each spiral preset starts at its own speed when selected.
 
+### Eye link (`link.c`, `board.c`)
+- The two eyes share one brain over a 3-wire cable: UART1 at 1 Mbaud, GPIO 17
+  TX / 18 RX crossed, plus GND; frames from `shared/nibbles_link` (COBS + CRC-16).
+- Roles by MAC: port = **ears** (runs mic analysis, sends `nl_audio_t` each
+  32 ms frame); starboard = **leader** (uses the port eye's audio while it
+  arrives and skips its own analysis; sends `nl_eye_state_t` every frame).
+- The port eye still runs its own `eye_update`, then `eye_apply_shared()`
+  overwrites everything shared (lids, blinks, swap, preset index, ripples, hue,
+  glow, hype, ring phase, tempo, time, idle glance mirrored for the other side)
+  and keeps its own IMU look. If shared state is older than 250 ms, it runs
+  standalone; the log says "following the leader eye" / "running standalone".
+- Heartbeats at 2 Hz; a 5-second `link:` log line shows peer up/down, rx/tx
+  frames, CRC and bad-frame counts, own echoes (a loopback jumper), the audio
+  source and total late frames.
+
 ### Controls
 BOOT button cycles brightness 30/60/100% (saved to NVS; default 100%).
 

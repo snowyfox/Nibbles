@@ -1,3 +1,4 @@
+#include <string.h>
 // Microphone capture task.
 #include "bsp_board_extra.h"
 #include "esp_check.h"
@@ -5,6 +6,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sensors.h"
+#include "board.h"
+#include "link.h"
 
 static const char *TAG = "audio";
 #define CHANNELS 2
@@ -24,6 +27,10 @@ static void audio_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+        // While the port eye's analysis is arriving, the leader's own is idle:
+        // the mic keeps running so it can take over at once if the link drops.
+        nl_audio_t remote;
+        if (board_role() == NL_ROLE_EYE_LEADER && link_get_audio(&remote, LINK_STATE_MAX_AGE_MS)) continue;
         for (int i = 0; i < AUDIO_FRAME; i++) {
             mono[i] = (raw[i * CHANNELS] + raw[i * CHANNELS + 1]) / (2.0f * 32768.0f);
         }
@@ -36,6 +43,16 @@ static void audio_task(void *arg)
         taskENTER_CRITICAL(&lock);
         latest = analysis.out;
         taskEXIT_CRITICAL(&lock);
+        if (board_role() == NL_ROLE_EYE_EARS) {
+            const audio_features_t *o = &analysis.out;
+            const nl_audio_t msg = {
+                .level_db = o->level_db, .avg_db = o->avg_db, .noise_floor_db = o->noise_floor_db,
+                .gain_db = o->gain_db, .loudness = o->loudness, .warmth = o->warmth,
+                .beat_period_s = o->beat_period_s, .beat_confidence = o->beat_confidence,
+                .beat_count = o->beat_count,
+            };
+            link_send_audio(&msg);
+        }
     }
 }
 
@@ -49,9 +66,24 @@ esp_err_t audio_start(void)
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-void audio_get(audio_features_t *out)
+bool audio_get(audio_features_t *out)
 {
+    nl_audio_t r;
+    if (board_role() == NL_ROLE_EYE_LEADER && link_get_audio(&r, LINK_STATE_MAX_AGE_MS)) {
+        memset(out, 0, sizeof(*out));
+        out->level_db = r.level_db;
+        out->avg_db = r.avg_db;
+        out->noise_floor_db = r.noise_floor_db;
+        out->gain_db = r.gain_db;
+        out->loudness = r.loudness;
+        out->warmth = r.warmth;
+        out->beat_period_s = r.beat_period_s;
+        out->beat_confidence = r.beat_confidence;
+        out->beat_count = r.beat_count;
+        return true;
+    }
     taskENTER_CRITICAL(&lock);
     *out = latest;
     taskEXIT_CRITICAL(&lock);
+    return false;
 }

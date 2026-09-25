@@ -88,7 +88,7 @@ beats better. Raw audio over ESP-NOW isn't worth it.
 | Phase | Work | Status |
 |---|---|---|
 | 0 | Restructure into this layout | done |
-| 1 | Eye-to-eye link: protocol + framing with host tests; UART link task; leader/ears roles; shared-state vs local-state split; standalone fallback; link stats in the status log. One-board loopback test (jumper GPIO 17 → 18), then both boards on a cable | next |
+| 1 | Eye-to-eye link: protocol + framing with host tests; UART link task; leader/ears roles; shared-state vs local-state split; standalone fallback; link stats in the status log | done: both boards linked (0 CRC errors, 0 late frames); visual sync confirmed; unplugging either data wire falls back to standalone at once and re-links on reconnect |
 | 2 | ESP-NOW on the leader eye: channel scan and lock, heartbeat, telemetry; measure Wi-Fi's cost to the frame rate (keep Wi-Fi on core 0) | |
 | 3 | WLED 16.x upgrade (back up config and presets first) + usermod: channel-anchor heartbeat, preset commands, bump effects, optional AudioReactive features. Watch for: "ESP-NOW remote with no Wi-Fi reboots every 15–20 min" (fixed only in 17.0.0-dev) | |
 | 4 | Base station: choose hardware (display, battery chemistry/BMS, how battery state is read, buttons); firmware for status screens and preset buttons | |

@@ -730,6 +730,45 @@ static void test_spiral_tempo(void)
     }
 }
 
+static void test_eye_link_sharing(void)
+{
+    static eye_t lead, port;
+    eye_init(&lead, 11);
+    eye_init(&port, 99);  // different random blinks and glances unless shared
+    audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.6f, .warmth = 0.7f,
+                               .beat_period_s = 0.44f };
+    motion_features_t m_lead = { .look_x = 0.2f, .look_y = 0.1f }, m_port = { .look_x = -0.3f, .look_y = 0.05f };
+    const float dt = 1.0f / 30;
+    int mismatches = 0, frames = 0, preset = 0;
+    bool swapped = false;
+    float max_lid_diff = 0.0f;
+    for (int i = 0; i < 30 * 12; i++) {
+        if (i % 15 == 0) music.beat_count++;
+        if (i == 30 * 5) eye_request_swap(&lead);
+        eye_update(&lead, &music, &m_lead, dt);
+        if (lead.p.swap_now) { preset = 3; swapped = true; }
+        eye_update(&port, &music, &m_port, dt);  // the port eye still runs its own brain...
+        nl_eye_state_t s;
+        eye_export_shared(&lead, preset, NL_SIDE_STARBOARD, &s);
+        eye_apply_shared(&port, &s, NL_SIDE_PORT, &m_port);  // ...but shows the leader's
+        frames++;
+        const eye_params_t *a = &lead.p, *b = &port.p;
+        if (a->time_s != b->time_s || a->hue != b->hue || a->intensity != b->intensity || a->hype != b->hype ||
+            a->ring_phase != b->ring_phase || a->pupil_r != b->pupil_r || a->wobble != b->wobble ||
+            a->ripples[0].r != b->ripples[0].r || lead.state != port.state || s.preset != preset)
+            mismatches++;
+        max_lid_diff = fmaxf(max_lid_diff, fabsf(a->lid_open - b->lid_open));
+        if (i == 30 * 11) {
+            CHECK(fabsf(b->gaze_x + a->gaze_x) < 1e-6f && fabsf(b->gaze_y - a->gaze_y) < 1e-6f,
+                  "port eye mirrors the leader's glance (%+.2f vs %+.2f)", b->gaze_x, a->gaze_x);
+            const float want_x = (m_port.look_x + b->gaze_x) * EYE_MAX_LOOK_PX;
+            CHECK(fabsf(b->pupil_x - want_x) < 0.5f, "port eye's pupil uses its own motion look (%.1f px)", b->pupil_x);
+        }
+    }
+    CHECK(mismatches == 0, "shared eye state identical on both eyes (%d of %d frames differ)", mismatches, frames);
+    CHECK(max_lid_diff == 0.0f && swapped, "lids and the preset swap blink match exactly (max lid difference %.3f)", max_lid_diff);
+}
+
 static void test_sleep_wake(void)
 {
     static eye_t e;
@@ -835,6 +874,7 @@ int main(void)
     test_twist();
     test_hype();
     test_preset_swap();
+    test_eye_link_sharing();
     test_motion_hype();
     test_spiral_tempo();
     test_sleep_wake();
