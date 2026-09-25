@@ -103,7 +103,12 @@ Built (not yet tried on real music): the usermod's `audio` setting broadcasts
 beat peaks (`nl_ar_update`: warmth from bass vs treble bands, tempo from the
 median peak interval, folded to 100–200 bpm like the eyes'). The leader eye
 uses it instead of the eyes' mics when built with `EYES_AUDIO_FROM_WLED 1`,
-falling back to the port eye, then its own mic, when it stops.
+falling back to the port eye, then its own mic, when it stops. First live run (2026-09-25):
+the leader switched to "audio from WLED" with 0 late frames, but
+AudioReactive's peak flag fired about 9 times a second. The converter now
+counts at most one beat per 250 ms, and needs 75% of intervals within 8% of
+the median before it reports a tempo. Loudness reads 0.6-0.8 after
+AudioReactive's gain control; still to be compared on real music.
 
 ## Roadmap
 | Phase | Work | Status |

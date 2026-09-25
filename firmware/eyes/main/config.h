@@ -35,7 +35,7 @@
 #define EYES_RADIO           1
 // 1: when the WLED usermod publishes AudioReactive's analysis (its "audio"
 // setting), the leader eye uses it instead of the eyes' own mics.
-#define EYES_AUDIO_FROM_WLED 0
+#define EYES_AUDIO_FROM_WLED 1
 #define RADIO_START_CHANNEL  6       // first channel tried when scanning
 #define TELEMETRY_MS         500
 

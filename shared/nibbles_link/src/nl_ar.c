@@ -6,7 +6,7 @@
 // Beat intervals outside this range are ignored (double hits, long gaps).
 #define MIN_INTERVAL_MS  250
 #define MAX_INTERVAL_MS  1500
-#define TOLERANCE        0.12f   // intervals within 12% of the median count as steady
+#define TOLERANCE        0.08f   // intervals within 8% of the median count as steady
 #define MIN_CONFIDENT    4       // intervals needed before a tempo is reported
 #define AVG_TAU_S        1.5f
 #define STALE_MS         3000    // no peaks for this long: the tempo is forgotten
@@ -44,12 +44,14 @@ void nl_ar_update(nl_ar_state_t *s, float volume, const uint8_t fft[16], bool pe
     const float level_db = 20.0f * log10f(fmaxf(volume, 0.5f) / 255.0f);
     s->avg_db += (level_db - s->avg_db) * (1.0f - expf(-dt / AVG_TAU_S));
 
-    // Beats: AudioReactive flags peaks; time them.
-    if (peak && !s->peak_was) {
+    // Beats: AudioReactive flags peaks, often several per beat (seen live:
+    // about 9 a second). A peak within MIN_INTERVAL_MS of the last counted
+    // beat is part of the same beat, so at most 240 beats a minute count.
+    if (peak && !s->peak_was && (!s->last_peak_ms || now_ms - s->last_peak_ms >= MIN_INTERVAL_MS)) {
         s->beat_count++;
         if (s->last_peak_ms) {
             const uint32_t iv = now_ms - s->last_peak_ms;
-            if (iv >= MIN_INTERVAL_MS && iv <= MAX_INTERVAL_MS) {
+            if (iv <= MAX_INTERVAL_MS) {
                 s->intervals[s->pos] = iv / 1000.0f;
                 s->pos = (s->pos + 1) % NL_AR_INTERVALS;
                 if (s->filled < NL_AR_INTERVALS) s->filled++;
@@ -69,7 +71,7 @@ void nl_ar_update(nl_ar_state_t *s, float volume, const uint8_t fft[16], bool pe
         int steady = 0;
         for (int i = 0; i < s->filled; i++) steady += fabsf(v[i] - median) <= TOLERANCE * median;
         confidence = (float)steady / s->filled;
-        if (confidence >= 0.5f) period = fold_period(median);
+        if (confidence >= 0.75f) period = fold_period(median);
     }
 
     // Warmth: bass (bands 0-3) against treble (bands 8-15).

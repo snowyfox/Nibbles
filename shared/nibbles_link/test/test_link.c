@@ -263,11 +263,30 @@ static void test_wled_audio(void)
     for (uint32_t t = 0; t < 12000; t += 32) nl_ar_update(&s, 150.0f, bassy, (t % 857) < 32, t, &a);
     CHECK(fabsf(60.0f / a.beat_period_s - 140.0f) < 8.0f, "WLED audio: 70 bpm folds to %.0f bpm", 60.0f / a.beat_period_s);
 
-    // Random peaks: no tempo.
+    // Random peaks: rarely a tempo (a single run can be unlucky, so count
+    // over 20 of them).
+    int fake = 0, samples = 0;
+    for (int seed = 1; seed <= 20; seed++) {
+        nl_ar_init(&s);
+        srand(seed);
+        for (uint32_t t = 0; t < 20000; t += 32) {
+            nl_ar_update(&s, 120.0f, bassy, rand() % 12 == 0, t, &a);
+            if (t > 5000 && t % 1000 < 32) {
+                samples++;
+                fake += a.beat_period_s > 0.0f;
+            }
+        }
+    }
+    CHECK(fake * 20 <= samples, "WLED audio: random peaks give a tempo in %d of %d samples", fake, samples);
+
+    // Peaks every ~100 ms (AudioReactive on noise): at most 4 beats a second.
     nl_ar_init(&s);
-    srand(7);
-    for (uint32_t t = 0; t < 10000; t += 32) nl_ar_update(&s, 120.0f, bassy, rand() % 12 == 0, t, &a);
-    CHECK(a.beat_period_s == 0.0f, "WLED audio: random peaks give no tempo (confidence %.2f)", a.beat_confidence);
+    uint32_t b0 = 0;
+    for (uint32_t t = 0; t < 10000; t += 32) {
+        nl_ar_update(&s, 180.0f, bassy, (t / 32) % 3 == 0, t, &a);
+        if (t == 0) b0 = a.beat_count;
+    }
+    CHECK(a.beat_count - b0 <= 41, "WLED audio: rapid peaks limited to %lu beats in 10 s", (unsigned long)(a.beat_count - b0));
 
     // Silence after music: the tempo is dropped.
     nl_ar_init(&s);
