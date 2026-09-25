@@ -1,4 +1,5 @@
 // Host tests for the Nibbles link protocol. Run with `make` in this folder.
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -238,6 +239,44 @@ static void test_fallback_anchor(void)
     CHECK(!s.anchoring, "no fallback: never anchors");
 }
 
+static void test_wled_audio(void)
+{
+    nl_ar_state_t s;
+    nl_ar_init(&s);
+    nl_audio_t a;
+    uint8_t bassy[16] = { 200, 200, 180, 160, 80, 60, 40, 30, 20, 20, 15, 10, 10, 5, 5, 5 };
+    // 128 bpm kick: a peak (one 32 ms frame) every 469 ms.
+    uint32_t beats = 0;
+    for (uint32_t t = 0; t < 8000; t += 32) {
+        const bool peak = (t % 469) < 32;
+        nl_ar_update(&s, 180.0f, bassy, peak, t, &a);
+        beats += peak;
+    }
+    CHECK(fabsf(60.0f / a.beat_period_s - 128.0f) < 6.0f && a.beat_confidence > 0.8f,
+          "WLED audio: 128 bpm peaks -> %.0f bpm, confidence %.2f", a.beat_period_s > 0 ? 60.0f / a.beat_period_s : 0.0f,
+          a.beat_confidence);
+    CHECK(a.beat_count >= beats - 1 && a.warmth > 0.8f && a.loudness > 0.6f,
+          "WLED audio: %lu beats, warmth %.2f, loudness %.2f", (unsigned long)a.beat_count, a.warmth, a.loudness);
+
+    // 70 bpm half-time folds into the eyes' 100..200 range (140).
+    nl_ar_init(&s);
+    for (uint32_t t = 0; t < 12000; t += 32) nl_ar_update(&s, 150.0f, bassy, (t % 857) < 32, t, &a);
+    CHECK(fabsf(60.0f / a.beat_period_s - 140.0f) < 8.0f, "WLED audio: 70 bpm folds to %.0f bpm", 60.0f / a.beat_period_s);
+
+    // Random peaks: no tempo.
+    nl_ar_init(&s);
+    srand(7);
+    for (uint32_t t = 0; t < 10000; t += 32) nl_ar_update(&s, 120.0f, bassy, rand() % 12 == 0, t, &a);
+    CHECK(a.beat_period_s == 0.0f, "WLED audio: random peaks give no tempo (confidence %.2f)", a.beat_confidence);
+
+    // Silence after music: the tempo is dropped.
+    nl_ar_init(&s);
+    for (uint32_t t = 0; t < 6000; t += 32) nl_ar_update(&s, 180.0f, bassy, (t % 469) < 32, t, &a);
+    for (uint32_t t = 6000; t < 10000; t += 32) nl_ar_update(&s, 0.0f, bassy, false, t, &a);
+    CHECK(a.beat_period_s == 0.0f && a.loudness == 0.0f && a.level_db < -40.0f, "WLED audio: silence drops the tempo (%.0f dB)",
+          a.level_db);
+}
+
 static void test_bump(void)
 {
     nl_bump_rx_t rx;
@@ -286,6 +325,7 @@ int main(void)
     test_chanscan();
     test_fallback_anchor();
     test_bump();
+    test_wled_audio();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

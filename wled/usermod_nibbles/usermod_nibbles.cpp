@@ -22,6 +22,7 @@
 #define NIBBLES_WLED_FW        1
 #define ANCHOR_HEARTBEAT_MS    250   // 4 Hz: a scanning node dwells 400 ms per channel
 #define TELEMETRY_MS           500
+#define AUDIO_MS               32     // audio features, like the port eye sends them
 #define RX_QUEUE               8
 #define JSON_LOCK_NIBBLES      240
 
@@ -29,7 +30,10 @@ class NibblesUsermod : public Usermod {
   private:
     bool enabled = true;
     bool anchor = true;
-    unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0;
+    bool audio = false;  // publish AudioReactive's analysis for the eyes
+    unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0, lastAudio = 0;
+    nl_ar_state_t arState;
+    uint32_t audioSent = 0;
     uint16_t seq = 0;
 
     // Packets arrive on the ESP-NOW callback; handle them in loop().
@@ -81,6 +85,19 @@ class NibblesUsermod : public Usermod {
       hb.flags = anchor ? NL_HB_ANCHOR : 0;
       hb.channel = WiFi.channel();
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_HEARTBEAT, &hb, sizeof(hb));
+    }
+
+    // AudioReactive's analysis as Nibbles audio features (see nl_ar_update).
+    void sendAudio() {
+      um_data_t *um = nullptr;
+      if (!UsermodManager::getUMData(&um, USERMOD_ID_AUDIOREACTIVE) || !um) return;
+      const float volume = *(float *)um->u_data[0];
+      const uint8_t *fft = (const uint8_t *)um->u_data[2];
+      const bool peak = *(uint8_t *)um->u_data[3];
+      nl_audio_t a;
+      nl_ar_update(&arState, volume, fft, peak, millis(), &a);
+      send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AUDIO, &a, sizeof(a));
+      audioSent++;
     }
 
     void sendTelemetry() {
@@ -281,6 +298,7 @@ class NibblesUsermod : public Usermod {
   public:
     void setup() override {
       nl_bump_rx_init(&bumps);
+      nl_ar_init(&arState);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
       if (enabled && !enableESPNow) enableESPNow = true;
     }
@@ -309,6 +327,10 @@ class NibblesUsermod : public Usermod {
       if (now - lastTelemetry >= TELEMETRY_MS) {
         lastTelemetry = now;
         sendTelemetry();
+      }
+      if (audio && now - lastAudio >= AUDIO_MS) {
+        lastAudio = now;
+        sendAudio();
       }
 #ifdef NIBBLES_DEBUG
       if (now - lastDebug >= 5000) {
@@ -344,9 +366,10 @@ class NibblesUsermod : public Usermod {
       if (!radioUp()) {
         radio.add(F("off"));
       } else {
-        char buf[48];
-        snprintf(buf, sizeof(buf), "ch %d%s, rx %lu, cmds %lu, bumps %lu", WiFi.channel(), anchor ? " (anchor)" : "",
-                 (unsigned long)rxCount, (unsigned long)cmdCount, (unsigned long)bumpCount);
+        char buf[80];
+        snprintf(buf, sizeof(buf), "ch %d%s, rx %lu, cmds %lu, bumps %lu, audio %s", WiFi.channel(),
+                 anchor ? " (anchor)" : "", (unsigned long)rxCount, (unsigned long)cmdCount, (unsigned long)bumpCount,
+                 !audio ? "off" : audioSent ? "sending" : "no AudioReactive");
         radio.add(buf);
       }
       JsonArray e = user.createNestedArray(F("Nibbles eyes"));
@@ -364,6 +387,7 @@ class NibblesUsermod : public Usermod {
       JsonObject top = root.createNestedObject(FPSTR(_name));
       top[F("enabled")] = enabled;
       top[F("anchor")] = anchor;
+      top[F("audio")] = audio;
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -371,6 +395,7 @@ class NibblesUsermod : public Usermod {
       bool complete = !top.isNull();
       complete &= getJsonValue(top[F("enabled")], enabled, true);
       complete &= getJsonValue(top[F("anchor")], anchor, true);
+      complete &= getJsonValue(top[F("audio")], audio, false);
       return complete;
     }
 

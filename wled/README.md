@@ -27,7 +27,12 @@ eyes and base (`shared/nibbles_link`).
   same cached read of `/presets.json` as the preset list.
 - Shows the radio status and the **eyes' telemetry on WLED's Info page**.
 - Leaves other ESP-NOW traffic (e.g. WiZ remotes) to WLED.
-- Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`.
+- With the `audio` setting on, publishes **AudioReactive's analysis** of the
+  controller's mic as Nibbles audio features every 32 ms (`nl_ar_update`), for
+  eyes built with `EYES_AUDIO_FROM_WLED 1`. The Info page shows whether it is
+  sending. Untested on real music so far.
+- Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
+  (default off).
 
 ## Building
 Tested with **WLED v16.0.1**, PlatformIO 6.2.0 and Node.js 20 (WLED's web UI

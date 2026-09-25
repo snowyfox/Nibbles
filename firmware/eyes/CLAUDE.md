@@ -207,6 +207,9 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   below the current one, saved like the BOOT button). The leader shares its
   brightness in `nl_eye_state_t.brightness`; the port eye matches it and
   ignores its own BOOT button while following. Telemetry reports it.
+- Audio source on the leader (`audio_get`): WLED's AudioReactive features over
+  the radio if `EYES_AUDIO_FROM_WLED` is 1 and they are fresh, else the port
+  eye's over the cable, else its own mic. The `link:` log line names it.
 - Plays **bumps** aimed at the eyes (`nl_bump_t`, target bit `NL_TARGET_EYES`)
   through `nl_bump_rx_*` in the eye task, released on STOP or 300 ms of silence:
   - flash: full glow, lids wide, pupil shrinks by 45%, a ripple bursts out;

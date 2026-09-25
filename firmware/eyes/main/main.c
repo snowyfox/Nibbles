@@ -31,6 +31,12 @@ static QueueHandle_t radio_cmds, radio_bumps;
 
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
+    if (h->type == NL_MSG_AUDIO && len == sizeof(nl_audio_t) && h->role == NL_ROLE_WLED) {
+        nl_audio_t a;
+        memcpy(&a, pl, sizeof(a));
+        audio_set_radio(&a);
+        return;
+    }
     if (h->type == NL_MSG_BUMP && len == sizeof(nl_bump_t)) {
         nl_bump_t b;
         memcpy(&b, pl, sizeof(b));
@@ -193,7 +199,7 @@ static void eye_task(void *arg)
 
         audio_features_t a;
         motion_features_t m;
-        const bool remote_audio = audio_get(&a);
+        const audio_source_t audio_src = audio_get(&a);
         motion_get(&m);
         eye_update(&eye, &a, &m, dt);
         if (following) {
@@ -277,7 +283,7 @@ static void eye_task(void *arg)
                      side == NL_SIDE_PORT ? "port" : "starboard", role == NL_ROLE_EYE_LEADER ? "leader" : "ears",
                      ls.peer_up ? "up" : "down", following ? " (following)" : "",
                      (unsigned long)ls.rx_frames, (unsigned long)ls.tx_frames, (unsigned long)ls.crc_errors,
-                     (unsigned long)ls.bad_frames, (unsigned long)ls.own_frames, remote_audio ? "port eye" : "own mic", late_total);
+                     (unsigned long)ls.bad_frames, (unsigned long)ls.own_frames, audio_source_name(audio_src), late_total);
             if (radio_cmds) {
                 nl_espnow_stats_t rs;
                 nl_espnow_get_stats(&rs);

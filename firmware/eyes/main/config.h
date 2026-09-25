@@ -30,9 +30,12 @@
 
 // ---------------------------------------------------------------- radio (leader eye only)
 // ESP-NOW to the rest of the shark: scans for the channel anchor (WLED, or the
-// base station until the WLED usermod exists), sends telemetry, takes preset
-// commands. The port eye has no radio; it follows the leader over the cable.
+// base station as a fallback), sends telemetry, takes commands and bumps. The
+// port eye has no radio; it follows the leader over the cable.
 #define EYES_RADIO           1
+// 1: when the WLED usermod publishes AudioReactive's analysis (its "audio"
+// setting), the leader eye uses it instead of the eyes' own mics.
+#define EYES_AUDIO_FROM_WLED 0
 #define RADIO_START_CHANNEL  6       // first channel tried when scanning
 #define TELEMETRY_MS         500
 

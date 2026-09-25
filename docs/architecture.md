@@ -88,6 +88,13 @@ can publish WLED AudioReactive's analysis of its external mic (through AR's
 `um_data`), and the eyes can use that instead of their own mics if it detects
 beats better. Raw audio over ESP-NOW isn't worth it.
 
+Built (not yet tried on real music): the usermod's `audio` setting broadcasts
+`nl_audio_t` every 32 ms from AudioReactive's smoothed volume, FFT bands and
+beat peaks (`nl_ar_update`: warmth from bass vs treble bands, tempo from the
+median peak interval, folded to 100–200 bpm like the eyes'). The leader eye
+uses it instead of the eyes' mics when built with `EYES_AUDIO_FROM_WLED 1`,
+falling back to the port eye, then its own mic, when it stops.
+
 ## Roadmap
 | Phase | Work | Status |
 |---|---|---|

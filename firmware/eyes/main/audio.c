@@ -7,6 +7,8 @@
 #include "freertos/task.h"
 #include "sensors.h"
 #include "board.h"
+#include "config.h"
+#include "esp_timer.h"
 #include "link.h"
 
 static const char *TAG = "audio";
@@ -15,6 +17,35 @@ static const char *TAG = "audio";
 static audio_analysis_t analysis;
 static audio_features_t latest;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
+static nl_audio_t radio_audio;
+static int64_t radio_audio_us;
+
+void audio_set_radio(const nl_audio_t *a)
+{
+    taskENTER_CRITICAL(&lock);
+    radio_audio = *a;
+    radio_audio_us = esp_timer_get_time();
+    taskEXIT_CRITICAL(&lock);
+}
+
+// Features from elsewhere, if any are fresh: WLED's (when enabled), then the port eye's.
+static audio_source_t remote_audio(nl_audio_t *out)
+{
+    if (board_role() != NL_ROLE_EYE_LEADER) return AUDIO_OWN_MIC;
+    if (EYES_AUDIO_FROM_WLED) {
+        taskENTER_CRITICAL(&lock);
+        const bool fresh = radio_audio_us && esp_timer_get_time() - radio_audio_us < LINK_STATE_MAX_AGE_MS * 1000LL;
+        if (fresh) *out = radio_audio;
+        taskEXIT_CRITICAL(&lock);
+        if (fresh) return AUDIO_WLED;
+    }
+    return link_get_audio(out, LINK_STATE_MAX_AGE_MS) ? AUDIO_PORT_EYE : AUDIO_OWN_MIC;
+}
+
+const char *audio_source_name(audio_source_t s)
+{
+    return s == AUDIO_WLED ? "WLED" : s == AUDIO_PORT_EYE ? "port eye" : "own mic";
+}
 
 static void audio_task(void *arg)
 {
@@ -27,10 +58,10 @@ static void audio_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
-        // While the port eye's analysis is arriving, the leader's own is idle:
-        // the mic keeps running so it can take over at once if the link drops.
+        // While features arrive from elsewhere, the leader's own analysis is
+        // idle: the mic keeps running so it can take over at once.
         nl_audio_t remote;
-        if (board_role() == NL_ROLE_EYE_LEADER && link_get_audio(&remote, LINK_STATE_MAX_AGE_MS)) continue;
+        if (remote_audio(&remote) != AUDIO_OWN_MIC) continue;
         for (int i = 0; i < AUDIO_FRAME; i++) {
             mono[i] = (raw[i * CHANNELS] + raw[i * CHANNELS + 1]) / (2.0f * 32768.0f);
         }
@@ -66,10 +97,11 @@ esp_err_t audio_start(void)
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-bool audio_get(audio_features_t *out)
+audio_source_t audio_get(audio_features_t *out)
 {
     nl_audio_t r;
-    if (board_role() == NL_ROLE_EYE_LEADER && link_get_audio(&r, LINK_STATE_MAX_AGE_MS)) {
+    const audio_source_t src = remote_audio(&r);
+    if (src != AUDIO_OWN_MIC) {
         memset(out, 0, sizeof(*out));
         out->level_db = r.level_db;
         out->avg_db = r.avg_db;
@@ -80,10 +112,10 @@ bool audio_get(audio_features_t *out)
         out->beat_period_s = r.beat_period_s;
         out->beat_confidence = r.beat_confidence;
         out->beat_count = r.beat_count;
-        return true;
+        return src;
     }
     taskENTER_CRITICAL(&lock);
     *out = latest;
     taskEXIT_CRITICAL(&lock);
-    return false;
+    return AUDIO_OWN_MIC;
 }

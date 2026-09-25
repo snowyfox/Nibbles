@@ -262,6 +262,23 @@ void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel);
 // NL_PEEK_EVERY_MS. Returns the channel to be on.
 uint8_t nl_chanscan_busy(nl_chanscan_t *s);
 
+// ---------------------------------------------------------------- WLED audio
+// The WLED usermod turns AudioReactive's analysis (smoothed volume 0..255, 16
+// FFT bands 0..255, a beat-peak flag) into the same nl_audio_t the port eye
+// sends, timing the peaks to estimate a tempo. Call about every 30 ms.
+#define NL_AR_INTERVALS 8
+
+typedef struct {
+    uint32_t last_ms, last_peak_ms, beat_count;
+    float avg_db;
+    float intervals[NL_AR_INTERVALS];
+    int pos, filled;
+    bool peak_was;
+} nl_ar_state_t;
+
+void nl_ar_init(nl_ar_state_t *s);
+void nl_ar_update(nl_ar_state_t *s, float volume, const uint8_t fft[16], bool peak, uint32_t now_ms, nl_audio_t *out);
+
 // Encode one frame into out (at most NL_MAX_FRAME bytes, including the
 // trailing 0x00). Returns the number of bytes, or 0 if it doesn't fit.
 size_t nl_encode(uint8_t type, uint16_t seq, const void *payload, size_t len, uint8_t *out, size_t cap);
