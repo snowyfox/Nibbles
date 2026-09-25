@@ -133,8 +133,20 @@ class NibblesUsermod : public Usermod {
     }
 
     // Work out what a command means without doing it (fast, so the ack goes out at once).
+    // Works out what a command will do: a preset id, or a brightness (id < 0
+    // means -brightness). Returns the ack status.
     uint8_t resolveCommand(const nl_cmd_t &cmd, int &id) {
       if (cmd.target != NL_TARGET_WLED) return NL_ACK_UNSUPPORTED;
+      switch (cmd.op) {
+        case NL_OP_BRIGHTNESS_SET:
+          if (cmd.arg < 0 || cmd.arg > 255) return NL_ACK_BAD_ARG;
+          id = -cmd.arg;
+          return NL_ACK_OK;
+        case NL_OP_BRIGHTNESS_STEP:
+          id = -constrain((int)bri + cmd.arg, 1, 255);
+          return NL_ACK_OK;
+        default: break;
+      }
       refreshPresets();
       switch (cmd.op) {
         case NL_OP_PRESET_SET:  id = cmd.arg; break;
@@ -143,6 +155,15 @@ class NibblesUsermod : public Usermod {
         default: return NL_ACK_UNSUPPORTED;
       }
       return presetExists(id) ? NL_ACK_OK : NL_ACK_BAD_ARG;
+    }
+
+    void applyCommand(int id) {
+      if (id > 0) {
+        applyPreset(id, CALL_MODE_DIRECT_CHANGE);
+      } else {
+        bri = -id;
+        stateUpdated(CALL_MODE_DIRECT_CHANGE);
+      }
     }
 
     bool saveState() {
@@ -240,7 +261,7 @@ class NibblesUsermod : public Usermod {
         send(it.mac, NL_MSG_ACK, &ack, sizeof(ack));  // ack first, then act
         if (!repeat) {
           cmdCount++;
-          if (lastStatus == NL_ACK_OK) applyPreset(id, CALL_MODE_DIRECT_CHANGE);
+          if (lastStatus == NL_ACK_OK) applyCommand(id);
 #ifdef NIBBLES_DEBUG
           Serial.printf("nibbles: command op %d arg %d -> status %d, preset %d\n", cmd.op, cmd.arg, lastStatus, id);
 #endif

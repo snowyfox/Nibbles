@@ -66,15 +66,16 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const int64_t t0 = esp_timer_get_time();
     const esp_err_t err = nl_espnow_command(mac, &cmd, &status, CMD_TRIES, CMD_TIMEOUT_MS);
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
-    const char *what = op == NL_OP_PRESET_NEXT ? "next" : op == NL_OP_PRESET_PREV ? "previous" : "set";
+    static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness" };
+    const char *what = op <= NL_OP_BRIGHTNESS_STEP ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "%s %s preset: acked in %.1f ms (status %d)", who, what, ms, status);
-        display_event("%s %s preset: %s, %.1f ms", who, what, st, ms);
+        ESP_LOGI(TAG, "%s %s %d: acked in %.1f ms (status %d)", who, what, arg, ms, status);
+        display_event("%s %s: %s, %.1f ms", who, what, st, ms);
     } else {
-        ESP_LOGW(TAG, "%s %s preset: no ack after %d tries", who, what, CMD_TRIES);
-        display_event("%s %s preset: no answer", who, what);
+        ESP_LOGW(TAG, "%s %s: no ack after %d tries", who, what, CMD_TRIES);
+        display_event("%s %s: no answer", who, what);
     }
 }
 
@@ -110,20 +111,31 @@ static void bump_start(uint8_t target, uint8_t action, int arg)
 static QueueHandle_t actions;
 static volatile bool pad_flash, pad_black;
 
-static void on_touch(display_action_t a, bool pressed)
+typedef struct {
+    display_action_t action;
+    int value;
+} action_t;
+
+static void on_touch(display_action_t a, bool pressed, int value)
 {
+    const action_t act = { a, value };
     if (a == DISPLAY_PAD_FLASH) pad_flash = pressed;
     else if (a == DISPLAY_PAD_BLACKOUT) pad_black = pressed;
-    else if (pressed) xQueueSend(actions, &a, 0);
+    else if (pressed || a == DISPLAY_SLIDE_EYES || a == DISPLAY_SLIDE_WLED) xQueueSend(actions, &act, 0);
 }
 
 static void actions_task(void *arg)
 {
-    display_action_t a;
+    action_t a;
     for (;;) {
         if (xQueueReceive(actions, &a, portMAX_DELAY) != pdTRUE) continue;
-        if (a == DISPLAY_TAP_EYES) send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_NEXT, 0);
-        else if (a == DISPLAY_TAP_WLED) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
+        switch (a.action) {
+            case DISPLAY_TAP_EYES:   send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_NEXT, 0); break;
+            case DISPLAY_TAP_WLED:   send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0); break;
+            case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_EYES, NL_OP_BRIGHTNESS_SET, a.value); break;
+            case DISPLAY_SLIDE_WLED: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
+            default: break;
+        }
     }
 }
 
@@ -155,7 +167,7 @@ static void buttons_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(10));
         const int n = gpio_get_level(BTN_NEXT_GPIO);
         if (n == 0 && prev_next == 1) {
-            const display_action_t a = DISPLAY_TAP_EYES;
+            const action_t a = { DISPLAY_TAP_EYES, 0 };
             xQueueSend(actions, &a, 0);
         }
         prev_next = n;
@@ -177,6 +189,7 @@ static void buttons_task(void *arg)
 
 // Serial commands over USB, for testing without pressing buttons:
 // "next" / "prev" / "set N" (eye presets), "wled next" / "wled set N",
+// "bri N" / "wled bri N" (brightness 0..255; "+N" / "-N" steps),
 // "[eyes|wled] bump flash|black|preset N ms" (hold a bump for ms; without a
 // prefix, flash and blackout go to both and preset bumps to WLED).
 static void console_task(void *arg)
@@ -199,6 +212,8 @@ static void console_task(void *arg)
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
         else if (!strcmp(line, "shot")) display_screenshot();
+        else if (!strncmp(line, "bri ", 4)) send_cmd_to(NL_TARGET_EYES, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
+        else if (!strncmp(line, "wled bri ", 9)) send_cmd_to(NL_TARGET_WLED, line[9] == '+' || line[9] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 9));
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
         else if (!strncmp(line, "wled set ", 9)) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, atoi(line + 9));
         else if (strstr(line, "bump ")) {
@@ -212,7 +227,7 @@ static void console_task(void *arg)
                 if (target == (NL_TARGET_EYES | NL_TARGET_WLED)) target = NL_TARGET_WLED;
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
     }
 }
 
@@ -240,7 +255,7 @@ void app_main(void)
         .core = 0,
     };
     bump_mutex = xSemaphoreCreateMutex();
-    actions = xQueueCreate(4, sizeof(display_action_t));
+    actions = xQueueCreate(4, sizeof(action_t));
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);

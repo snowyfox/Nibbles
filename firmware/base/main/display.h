@@ -29,10 +29,12 @@ typedef enum {
     DISPLAY_TAP_WLED,         // tap the WLED card
     DISPLAY_PAD_FLASH,        // hold the FLASH pad
     DISPLAY_PAD_BLACKOUT,     // hold the BLACKOUT pad
+    DISPLAY_SLIDE_EYES,       // eyes brightness slider released: value 0..255
+    DISPLAY_SLIDE_WLED,       // WLED brightness slider released: value 0..255
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).
-typedef void (*display_action_cb_t)(display_action_t action, bool pressed);
+typedef void (*display_action_cb_t)(display_action_t action, bool pressed, int value);
 
 esp_err_t display_start(display_action_cb_t on_action);
 // Print the next frame over the console as base64 RGB565 ("SHOT w h" ...

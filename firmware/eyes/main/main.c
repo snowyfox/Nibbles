@@ -47,7 +47,8 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
     uint8_t status = NL_ACK_OK;
     if (cmd.target != NL_TARGET_EYES) status = NL_ACK_UNSUPPORTED;
     else if (cmd.op == NL_OP_PRESET_SET && (cmd.arg < 0 || cmd.arg >= preset_count)) status = NL_ACK_BAD_ARG;
-    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_PRESET_PREV) status = NL_ACK_UNSUPPORTED;
+    else if (cmd.op == NL_OP_BRIGHTNESS_SET && (cmd.arg < 0 || cmd.arg > 255)) status = NL_ACK_BAD_ARG;
+    else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_BRIGHTNESS_STEP) status = NL_ACK_UNSUPPORTED;
     else if (!repeat) xQueueSend(radio_cmds, &cmd, 0);
     last_id = cmd.id;
     memcpy(last_mac, mac, 6);
@@ -95,8 +96,9 @@ static void eye_task(void *arg)
     eye_init(&eye, esp_random());
 
     int bright_idx = load_brightness_index();
-    render_set_brightness(brightness_presets[bright_idx]);
-    ESP_LOGI(TAG, "brightness %d%%", brightness_presets[bright_idx]);
+    int bright_pct = brightness_presets[bright_idx];  // can also be set to any level over the radio
+    render_set_brightness(bright_pct);
+    ESP_LOGI(TAG, "brightness %d%%", bright_pct);
 
     int64_t last = esp_timer_get_time();
     int64_t last_log = last;
@@ -129,16 +131,39 @@ static void eye_task(void *arg)
             next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
         }
 
-        // A preset chosen over the radio; it then holds for a full cycle.
+        // Brightness: the port eye matches the leader while linked.
+        if (following && shared.brightness != bright_pct && shared.brightness <= 100) {
+            bright_pct = shared.brightness;
+            render_set_brightness(bright_pct);
+            ESP_LOGI(TAG, "brightness %d%% (from the leader)", bright_pct);
+        }
+
+        // A command from the radio. A preset chosen this way holds for a full cycle.
         nl_cmd_t cmd;
         if (!following && radio_cmds && xQueueReceive(radio_cmds, &cmd, 0) == pdTRUE) {
-            const int base = eye.swap_pending ? next_preset : preset_index;
-            if (cmd.op == NL_OP_PRESET_SET) next_preset = cmd.arg;
-            else if (cmd.op == NL_OP_PRESET_NEXT) next_preset = (base + 1) % preset_count;
-            else next_preset = (base + preset_count - 1) % preset_count;
-            eye_request_swap(&eye);
-            next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
-            ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
+            if (cmd.op == NL_OP_BRIGHTNESS_SET || cmd.op == NL_OP_BRIGHTNESS_STEP) {
+                if (cmd.op == NL_OP_BRIGHTNESS_SET) {
+                    bright_pct = (cmd.arg * 100 + 127) / 255;  // not saved: the presets are what BOOT cycles
+                } else {
+                    // To the next brightness preset above (or below) the current level.
+                    int i = cmd.arg > 0 ? 0 : N_PRESETS - 1;
+                    if (cmd.arg > 0) while (i < N_PRESETS - 1 && brightness_presets[i] <= bright_pct) i++;
+                    else while (i > 0 && brightness_presets[i] >= bright_pct) i--;
+                    bright_idx = i;
+                    bright_pct = brightness_presets[bright_idx];
+                    save_brightness_index(bright_idx);
+                }
+                render_set_brightness(bright_pct);
+                ESP_LOGI(TAG, "radio command: brightness %d%%", bright_pct);
+            } else {
+                const int base = eye.swap_pending ? next_preset : preset_index;
+                if (cmd.op == NL_OP_PRESET_SET) next_preset = cmd.arg;
+                else if (cmd.op == NL_OP_PRESET_NEXT) next_preset = (base + 1) % preset_count;
+                else next_preset = (base + preset_count - 1) % preset_count;
+                eye_request_swap(&eye);
+                next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+                ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
+            }
         }
 
         // Bumps: flash and blackout are drawn by the eye; a preset bump swaps
@@ -188,6 +213,7 @@ static void eye_task(void *arg)
         }
         if (role == NL_ROLE_EYE_LEADER) {
             eye_export_shared(&eye, shown, side, &shared);
+            shared.brightness = (uint8_t)bright_pct;
             link_send_eye_state(&shared);
         }
         render_frame(&eye.p);
@@ -207,15 +233,21 @@ static void eye_task(void *arg)
                 .tempo_bpm = eye.p.tempo_bpm,
                 .level_db = a.level_db,
                 .hype = eye.p.hype,
+                .brightness = (uint8_t)bright_pct,
             };
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));
         }
 
         if (button_pressed()) {
-            bright_idx = (bright_idx + 1) % N_PRESETS;
-            render_set_brightness(brightness_presets[bright_idx]);
-            save_brightness_index(bright_idx);
-            ESP_LOGI(TAG, "brightness %d%%", brightness_presets[bright_idx]);
+            if (following) {
+                ESP_LOGI(TAG, "brightness follows the leader eye; use its BOOT button");
+            } else {
+                bright_idx = (bright_idx + 1) % N_PRESETS;
+                bright_pct = brightness_presets[bright_idx];
+                render_set_brightness(bright_pct);
+                save_brightness_index(bright_idx);
+                ESP_LOGI(TAG, "brightness %d%%", bright_pct);
+            }
         }
 
         if (now - last_log >= 1000000) {

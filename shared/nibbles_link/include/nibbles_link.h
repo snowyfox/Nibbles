@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define NL_VERSION          2
+#define NL_VERSION          3
 #define NL_MAX_PAYLOAD      128
 #define NL_HEADER_LEN       4   // type, version, seq
 #define NL_CRC_LEN          2
@@ -86,6 +86,7 @@ typedef struct NL_PACKED {
     uint8_t awake;
     uint8_t side;           // sender's side (nl_side_t), to mirror the glance
     uint8_t master;         // master level for everything, outline included (255 = normal, 0 = blackout)
+    uint8_t brightness;     // panel brightness in percent; the other eye matches it
 } nl_eye_state_t;
 
 typedef struct NL_PACKED {
@@ -98,6 +99,7 @@ typedef struct NL_PACKED {
     float tempo_bpm;        // 0 = no steady beat
     float level_db;
     float hype;
+    uint8_t brightness;     // panel brightness in percent
 } nl_eye_telemetry_t;
 
 typedef struct NL_PACKED {
@@ -120,6 +122,8 @@ typedef enum {
     NL_OP_PRESET_SET = 1,   // arg = preset index
     NL_OP_PRESET_NEXT = 2,
     NL_OP_PRESET_PREV = 3,
+    NL_OP_BRIGHTNESS_SET = 4,   // arg = 0..255
+    NL_OP_BRIGHTNESS_STEP = 5,  // arg = signed step (eyes: through their brightness presets by sign)
 } nl_op_t;
 
 typedef struct NL_PACKED {

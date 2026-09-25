@@ -202,6 +202,11 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
 - Takes `nl_cmd_t` preset commands (set/next/prev) and acks them; retries with
   the same id are acked but applied once. A command triggers the swap blink
   and holds for a full preset cycle; the port eye follows over the cable.
+- Brightness commands: `NL_OP_BRIGHTNESS_SET` (0..255 → percent, not saved)
+  and `NL_OP_BRIGHTNESS_STEP` (to the next `BRIGHTNESS_PRESETS` level above or
+  below the current one, saved like the BOOT button). The leader shares its
+  brightness in `nl_eye_state_t.brightness`; the port eye matches it and
+  ignores its own BOOT button while following. Telemetry reports it.
 - Plays **bumps** aimed at the eyes (`nl_bump_t`, target bit `NL_TARGET_EYES`)
   through `nl_bump_rx_*` in the eye task, released on STOP or 300 ms of silence:
   - flash: full glow, lids wide, pupil shrinks by 45%, a ripple bursts out;

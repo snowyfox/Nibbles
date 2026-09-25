@@ -221,14 +221,22 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     data->state = LV_INDEV_STATE_PRESSED;
 }
 
+static int64_t slider_hold_until;  // don't let telemetry move a slider just let go
+
 static void on_event(lv_event_t *ev)
 {
     const display_action_t a = (display_action_t)(intptr_t)lv_event_get_user_data(ev);
     const lv_event_code_t code = lv_event_get_code(ev);
     if (!action_cb) return;
-    if (code == LV_EVENT_CLICKED) action_cb(a, true);
-    else if (code == LV_EVENT_PRESSED) action_cb(a, true);
-    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) action_cb(a, false);
+    if (a == DISPLAY_SLIDE_EYES || a == DISPLAY_SLIDE_WLED) {
+        if (code == LV_EVENT_RELEASED) {
+            action_cb(a, false, lv_slider_get_value(lv_event_get_target_obj(ev)));
+            slider_hold_until = esp_timer_get_time() + 1500000;
+        }
+        return;
+    }
+    if (code == LV_EVENT_CLICKED || code == LV_EVENT_PRESSED) action_cb(a, true, 0);
+    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) action_cb(a, false, 0);
 }
 
 // ------------------------------------------------------------------ UI
@@ -260,6 +268,7 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
     return l;
 }
 
+// with_bar: a brightness slider along the bottom of the card.
 static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t accent, bool with_bar)
 {
     c->card = lv_obj_create(parent);
@@ -279,12 +288,16 @@ static void make_card(card_t *c, lv_obj_t *parent, const char *title, uint32_t a
     c->line2 = label(c->card, &lv_font_montserrat_14, COL_TITLE);
     c->bar = NULL;
     if (with_bar) {
-        c->bar = lv_bar_create(c->card);
-        lv_obj_set_size(c->bar, LV_PCT(100), 6);
-        lv_bar_set_range(c->bar, 0, 255);
+        c->bar = lv_slider_create(c->card);
+        lv_obj_set_size(c->bar, LV_PCT(92), 8);
+        lv_obj_set_style_margin_top(c->bar, 8, 0);
+        lv_obj_set_style_margin_left(c->bar, 6, 0);
+        lv_slider_set_range(c->bar, 0, 255);
         lv_obj_set_style_bg_color(c->bar, lv_color_hex(COL_DIM), LV_PART_MAIN);
         lv_obj_set_style_bg_color(c->bar, lv_color_hex(accent), LV_PART_INDICATOR);
-        lv_obj_set_style_margin_top(c->bar, 4, 0);
+        lv_obj_set_style_bg_color(c->bar, lv_color_hex(COL_TEXT), LV_PART_KNOB);
+        lv_obj_set_style_pad_all(c->bar, 3, LV_PART_KNOB);
+        lv_obj_set_ext_click_area(c->bar, 14);  // easier to grab
     }
 }
 
@@ -349,6 +362,8 @@ static void ui_build(void)
     lv_obj_add_event_cb(wled_card.card, on_event, LV_EVENT_CLICKED, (void *)(intptr_t)DISPLAY_TAP_WLED);
     lv_obj_set_style_bg_color(eyes_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(wled_card.card, lv_color_hex(0x232733), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(eyes_card.bar, on_event, LV_EVENT_RELEASED, (void *)(intptr_t)DISPLAY_SLIDE_EYES);
+    lv_obj_add_event_cb(wled_card.bar, on_event, LV_EVENT_RELEASED, (void *)(intptr_t)DISPLAY_SLIDE_WLED);
 
     // Bump pads: held while touched.
     pad_black = make_pad("BLACKOUT", 0x5a5f6a, DISPLAY_PAD_BLACKOUT, -8);
@@ -366,6 +381,14 @@ static const char *bump_name(uint8_t a)
     return a == NL_BUMP_FLASH ? "FLASH" : a == NL_BUMP_BLACKOUT ? "BLACKOUT" : a == NL_BUMP_PRESET ? "PRESET" : "";
 }
 
+static void set_slider(lv_obj_t *slider, int value, bool enabled)
+{
+    if (enabled) lv_obj_remove_state(slider, LV_STATE_DISABLED);
+    else lv_obj_add_state(slider, LV_STATE_DISABLED);
+    if (lv_obj_has_state(slider, LV_STATE_PRESSED) || esp_timer_get_time() < slider_hold_until) return;
+    lv_slider_set_value(slider, value, LV_ANIM_OFF);
+}
+
 static void ui_update(const display_status_t *s)
 {
     // Eyes
@@ -373,17 +396,18 @@ static void ui_update(const display_status_t *s)
     if (s->eyes_fresh) {
         const nl_eye_telemetry_t *e = &s->eyes;
         lv_label_set_text_fmt(eyes_card.big, "Preset %d/%d", e->preset + 1, e->preset_count);
-        lv_label_set_text_fmt(eyes_card.line1, "%s  %s", eye_state(e->state), e->linked ? "linked" : "NOT linked");
+        lv_label_set_text_fmt(eyes_card.line1, "%s  %s  %d%%", eye_state(e->state), e->linked ? "linked" : "NOT linked",
+                              e->brightness);
         lv_obj_set_style_text_color(eyes_card.line1, lv_color_hex(e->linked ? COL_TEXT : COL_WARN), 0);
         // LVGL's printf has no floats.
         lv_label_set_text_fmt(eyes_card.line2, "%d.%d | %d.%d fps   %d bpm", e->fps_x10[0] / 10, e->fps_x10[0] % 10,
                               e->fps_x10[1] / 10, e->fps_x10[1] % 10, (int)(e->tempo_bpm + 0.5f));
-        lv_bar_set_value(eyes_card.bar, (int32_t)(e->hype * 255.0f), LV_ANIM_OFF);
+        set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, true);
     } else {
         lv_label_set_text(eyes_card.big, "--");
         lv_label_set_text(eyes_card.line1, "not heard");
         lv_label_set_text(eyes_card.line2, "");
-        lv_bar_set_value(eyes_card.bar, 0, LV_ANIM_OFF);
+        set_slider(eyes_card.bar, 0, false);
     }
 
     // WLED
@@ -396,12 +420,12 @@ static void ui_update(const display_status_t *s)
         lv_label_set_text_fmt(wled_card.line1, "bri %d  fx %d  pal %d", w->bri, w->fx, w->palette);
         lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
         lv_label_set_text_fmt(wled_card.line2, "%d fps   %d LEDs", w->fps, w->leds);
-        lv_bar_set_value(wled_card.bar, w->on ? w->bri : 0, LV_ANIM_OFF);
+        set_slider(wled_card.bar, w->bri, true);
     } else {
         lv_label_set_text(wled_card.big, "--");
         lv_label_set_text(wled_card.line1, "not heard");
         lv_label_set_text(wled_card.line2, "");
-        lv_bar_set_value(wled_card.bar, 0, LV_ANIM_OFF);
+        set_slider(wled_card.bar, 0, false);
     }
 
     // Radio

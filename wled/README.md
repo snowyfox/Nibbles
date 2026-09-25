@@ -12,7 +12,8 @@ eyes and base (`shared/nibbles_link`).
   festival). The eyes and base scan until they hear one and move to the
   channel it advertises.
 - Takes Nibbles **commands aimed at WLED** (`NL_TARGET_WLED`: preset set,
-  next, previous) and acks them. A retry with the same id is acked but applied once.
+  next, previous; brightness set 0..255 or step by a signed amount) and acks
+  them. A retry with the same id is acked but applied once.
   The ack goes out before the preset is applied. Which presets exist is cached
   from `/presets.json` (re-read when WLED saves presets), so next/previous skip
   gaps and wrap, and a missing preset is refused (status 2).
