@@ -56,3 +56,17 @@ The 3D views (and the side view) also show each eye's picture on its screen at
 the eye opening; **Head** zooms in on them. Where the screens sit is set in
 `make_layout.py` (`eye_screen_radius_mm`, `eye_screen_x_mm`). Rebuild
 after changing the eye code: `./build.sh` (Emscripten).
+
+## The live shark
+**Lights: the shark, live** (WLED card) shows exactly what the shark's own
+controller shows, instead of the bench simulator. `server.py` asks the
+controller's Nibbles usermod to stream its LEDs (see `wled/README.md`,
+"Mirrors the lights to the simulator") and passes them to the page; the
+controller listens with its own mic, so the page's sound isn't used for the
+lights. The eyes switch to **Hears: the shark, live**: they run on the audio
+features the controller sends the real eyes and follow the real leader eye's
+preset and reactivity (their blinks and glances are their own). As on the
+shark, the eyes' brightness always follows the shown WLED's master brightness.
+In this mode the preset and brightness controls change the real shark.
+The controller's address comes from `server.py --shark` (default
+10.7.200.253); the controller needs a usermod build with the mirror.

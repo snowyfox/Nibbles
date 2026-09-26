@@ -17,7 +17,7 @@
 #include "presets.h"
 #include "render_core.h"
 
-enum { SRC_WLED = 0, SRC_PORT_MIC = 1 };
+enum { SRC_WLED = 0, SRC_PORT_MIC = 1, SRC_SHARK = 2 };
 
 static audio_analysis_t ears;          // the port eye's mic analysis
 static float mic_block[AUDIO_FRAME];
@@ -25,6 +25,7 @@ static nl_ar_state_t ar;
 static nl_audio_t wled_audio;
 static uint32_t wled_ms;
 static int source = SRC_WLED;
+static nl_audio_t shark_audio;         // the real controller's features, streamed by the usermod
 
 static eye_t lead, port;
 static int preset_index, next_preset, rendered, bump_preset = -1;
@@ -77,6 +78,17 @@ EMSCRIPTEN_KEEPALIVE void eyes_wled_audio(float volume, const uint8_t *fft, int 
 }
 
 EMSCRIPTEN_KEEPALIVE void eyes_source(int s) { source = s; }
+
+// The shark's own audio features (what its WLED sends the real eyes).
+EMSCRIPTEN_KEEPALIVE void eyes_shark_audio(float level_db, float avg_db, float floor_db, float gain_db, float loudness,
+                                           float warmth, float period_s, float confidence, uint32_t beats, uint32_t peaks)
+{
+    shark_audio = (nl_audio_t){
+        .level_db = level_db, .avg_db = avg_db, .noise_floor_db = floor_db, .gain_db = gain_db,
+        .loudness = loudness, .warmth = warmth, .beat_period_s = period_s, .beat_confidence = confidence,
+        .beat_count = beats, .peak_count = peaks,
+    };
+}
 EMSCRIPTEN_KEEPALIVE void eyes_brightness(int pct) { brightness = pct; }
 
 // Radio commands, as from the base station.
@@ -118,7 +130,9 @@ static void from_nl(const nl_audio_t *r, audio_features_t *out)
 
 static void to_rgba(uint32_t *dst)
 {
-    const int k = brightness * 256 / 100;
+    // The panel's brightness scales its light output; pixel values are on a
+    // gamma curve, so the same light is value * (brightness ^ 1/2.2).
+    const int k = (int)(256.0f * powf(brightness / 100.0f, 1.0f / 2.2f));
     for (int i = 0; i < DISP_W * DISP_H; i++) {
         const uint16_t v = (uint16_t)((rows[i] >> 8) | (rows[i] << 8));  // the panel's byte order
         const uint32_t r = ((v >> 11) & 31) * 255 / 31, g = ((v >> 5) & 63) * 255 / 63, b = (v & 31) * 255 / 31;
@@ -138,6 +152,7 @@ EMSCRIPTEN_KEEPALIVE void eyes_frame(float dt)
     }
     audio_features_t mic = ears.out, a;
     if (source == SRC_WLED) from_nl(&wled_audio, &a);
+    else if (source == SRC_SHARK) from_nl(&shark_audio, &a);
     else a = mic;
     const motion_features_t still = { 0 };  // the simulator doesn't move
 

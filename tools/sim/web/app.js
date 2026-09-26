@@ -23,6 +23,8 @@ function setDimBoost(boost) {  // 0..1
   for (let v = 0; v < 256; v++) toScreen[v] = v ? Math.max(1, Math.round(255 * Math.pow(v / 255, g))) : 0;
 }
 setDimBoost(0.25);
+let ledScale = 1.5;  // LED size on screen (the LED size slider)
+window.nibblesLedScale = ledScale;  // for view3d.js
 let canvas3d = false;                      // no WebGL: draw the 3D view on the 2D canvas
 // Default view: level with the shark (its XY plane edge-on), from the
 // starboard front quarter: X points left and Y (the nose) right, both 45°
@@ -57,6 +59,12 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {  // the lights' source, or the live shark's state
+      const m = JSON.parse(e.data);
+      if ('source' in m) showSource(m);
+      else eyesFromShark(m);
+      return;
+    }
     leds = new Uint8Array(e.data);
     for (let i = 0; i < leds.length; i++) leds[i] = toScreen[leds[i]];
     frames++;
@@ -160,6 +168,29 @@ function showAudio() {
 
 const wled = () => `http://${$('wledip').value.trim()}`;
 
+// Where the lights come from: the bench simulator WLED (driven by the sound
+// above), or the shark's own controller, mirrored live (server.py).
+let config = { bench: '10.7.200.226', shark: '10.7.200.253' };
+fetch('config.json').then((r) => r.json()).then((c) => { config = { ...config, ...c }; }).catch(() => {});
+let lightsFrom = null;  // 'sim' or 'shark'
+function showSource(m) {
+  const changed = m.source !== lightsFrom;
+  lightsFrom = m.source;
+  $('source').value = m.source;
+  const live = m.source === 'shark';
+  $('wledtitle').textContent = live ? 'WLED (THE SHARK, LIVE: CONTROLS CHANGE IT)' : 'WLED (BENCH SIMULATOR)';
+  $('wledip').value = live ? m.ip : config.bench;
+  if (changed) {
+    loadWled();
+    eyesFollowShark(live);
+    status(live ? `showing the shark live (${m.ip})` : 'showing the bench simulator');
+  }
+}
+$('source').onchange = () => {
+  const live = $('source').value === 'shark';
+  ws.send(JSON.stringify({ source: $('source').value, ip: live ? ($('wledip').value.trim() !== config.bench ? $('wledip').value.trim() : config.shark) : null }));
+};
+
 async function wledPost(state) {
   // text/plain keeps it a "simple" request (no CORS preflight); WLED reads the JSON anyway.
   await fetch(`${wled()}/json/state`, { method: 'POST', body: JSON.stringify(state) });
@@ -177,15 +208,32 @@ async function loadWled() {
       .sort((a, b) => a[1].n.localeCompare(b[1].n))
       .forEach(([id, p]) => sel.add(new Option(`${p.n} (${id})`, id)));
     sel.value = state.ps > 0 ? String(state.ps) : '';
-    $('bri').value = state.bri;
-    $('briv').textContent = state.bri;
+    showWledState(state);
   } catch (e) {
     $('preset').innerHTML = '<option>WLED not reachable</option>';
   }
 }
 
 $('preset').onchange = () => { if ($('preset').value) wledPost({ ps: +$('preset').value }); };
-$('bri').oninput = () => { $('briv').textContent = $('bri').value; wledPost({ bri: +$('bri').value }); };
+$('bri').oninput = () => {
+  $('briv').textContent = $('bri').value;
+  wledOn = true;  // WLED turns on when given a brightness
+  eyesWledBrightness(wledOn, +$('bri').value);
+  wledPost({ bri: +$('bri').value });
+};
+// WLED's brightness and on/off, which the eyes follow as on the shark.
+let wledOn = true;
+function showWledState(state) {
+  if (document.activeElement !== $('bri')) { $('bri').value = state.bri; $('briv').textContent = state.bri; }
+  wledOn = state.on;
+  eyesWledBrightness(state.on, state.bri);
+}
+// The bench WLED can be changed elsewhere (its own page); check now and then.
+// (The live shark's state arrives with every mirrored frame.)
+setInterval(() => {
+  if (lightsFrom === 'shark') return;
+  fetch(`${wled()}/json/state`).then((r) => r.json()).then(showWledState).catch(() => {});
+}, 2000);
 $('wledip').onchange = loadWled;
 
 // ------------------------------------------------------------------ LED layout and drawing
@@ -236,7 +284,7 @@ function showView() {
   try {
     window.nibbles3d.show(layout);
     $('ledview').hidden = true;
-  } catch (e) {  // e.g. no WebGL: draw the 3D view without it (LEDs, tubes, pole; no body)
+  } catch (e) {  // e.g. no WebGL: draw the 3D view without it (LEDs and tubes; no body)
     console.error('WebGL 3D view failed:', e);
     canvas3d = true;
     window.nibbles3d.hide();
@@ -344,7 +392,7 @@ function behindBody(p, w) {
 }
 window.nibblesBehindBody = behindBody;  // for view3d.js
 
-// The tubes and the pole cut into short pieces (3D, the page's y-up mm), for
+// The tubes cut into short pieces (3D, the page's y-up mm), for
 // drawing in depth order in the canvas views.
 function tubePieces() {
   if (tubePieces.cache && tubePieces.cache.layout === layout) return tubePieces.cache.pieces;
@@ -360,7 +408,6 @@ function tubePieces() {
     }
   };
   for (const line of layout.outlines || []) add(line, 13, 6);  // tube diameter
-  if (layout.pole && layout.pole.line) add(layout.pole.line, 15, 15);
   tubePieces.cache = { layout, pieces };
   return pieces;
 }
@@ -370,7 +417,7 @@ function draw() {
   if (layout && !centre) {  // middle of the LEDs, the orbit's pivot
     const n = layout.leds.length;
     centre = [0, 1, 2].map((k) => layout.leds.reduce((a, p) => a + p[k], 0) / n);
-    radius3d = Math.max(...layout.leds.concat((layout.pole && layout.pole.line) || []).map((p) => Math.hypot(p[0] - centre[0], p[1] - centre[1], p[2] - centre[2])));
+    radius3d = Math.max(...layout.leds.map((p) => Math.hypot(p[0] - centre[0], p[1] - centre[1], p[2] - centre[2])));
   }
   const c = $('ledview');
   const dpr = window.devicePixelRatio || 1;
@@ -385,7 +432,6 @@ function draw() {
   if (layout) {
     const pts = layout.leds.map(project);
     const extras = (layout.outlines || []).map((line) => line.map(project));
-    if (layout.pole && layout.pole.line) extras.push(layout.pole.line.map(project));
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const [x, y] of pts.concat(...extras)) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
     const pad = 30 * dpr;
@@ -396,10 +442,10 @@ function draw() {
       x0 = y0 = 0;
       ox = c.width / 2; oy = c.height / 2;
     }
-    const r = Math.max(1.2 * dpr, Math.min(6 * dpr, s * 2));
+    const r = Math.max(1.2 * dpr, Math.min(6 * dpr, s * 2)) * ledScale;
     const X = (p) => ox + (p[0] - x0) * s, Y = (p) => c.height - (oy + (p[1] - y0) * s);
     // What gets drawn, far to near (painter's order), so nearer things cover
-    // farther ones: the grey tubes and the pole are opaque, the LEDs glow
+    // farther ones: the grey tubes are opaque, the LEDs glow
     // (added light), the eye screens are opaque discs. A tube piece sorts as
     // if TUBE_R further back, so it never covers the LEDs inside it.
     const TUBE_R = 6.5;
@@ -534,6 +580,19 @@ function drawGizmo() {
   g.beginPath(); g.arc(m, m, 2.5 * dpr, 0, 6.2832); g.fill();
 }
 requestAnimationFrame(drawGizmo);
+
+// LED size slider (remembered in this browser)
+(() => {
+  const b = $('ledsize');
+  try { const v = localStorage.getItem('nibbles.ledSize'); if (v !== null) b.value = v; } catch (e) {}
+  const apply = () => {
+    ledScale = window.nibblesLedScale = +b.value;
+    $('ledsizev').textContent = `×${(+b.value).toFixed(1)}`;
+    try { localStorage.setItem('nibbles.ledSize', b.value); } catch (e) {}
+  };
+  b.oninput = apply;
+  apply();
+})();
 
 // Dim boost slider (remembered in this browser)
 (() => {

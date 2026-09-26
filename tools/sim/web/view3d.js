@@ -9,6 +9,7 @@ let renderer, scene, camera, controls, container, home;
 let core, glow, colors, count = 0, shown = false, hidden = null;
 let rgbNow = null, offPlane = [], leds3 = null;  // latest WLED frame; LEDs off the body's plane
 const eyeTextures = [];
+const CORE_SIZE = 6, GLOW_SIZE = 22;  // mm, times the page's LED size setting
 const EYE_BACK_DIM = 0.4;  // an eye screen seen from behind: this bright
 
 // Soft round dot, drawn once, used for both the glow and the bright core.
@@ -58,8 +59,8 @@ function build(layout) {
     size, map: tex, vertexColors: true, transparent: true, opacity,
     blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
   });
-  glow = new THREE.Points(geo, mat(22, 0.35));  // the diffuser's soft spread
-  core = new THREE.Points(geo, mat(6, 1.0));
+  glow = new THREE.Points(geo, mat(GLOW_SIZE, 0.5));  // the diffuser's soft spread
+  core = new THREE.Points(geo, mat(CORE_SIZE, 1.0));
   scene.add(glow, core);
 
   // Frame the LEDs
@@ -88,16 +89,6 @@ function build(layout) {
       obj.traverse((m) => { if (m.isMesh) { m.material = body; m.renderOrder = -1; } });
       scene.add(obj);
     });
-  }
-  // The pole
-  if (layout.pole && layout.pole.line) {
-    const [a, b] = layout.pole.line.map((p) => new THREE.Vector3(...p));
-    const len = a.distanceTo(b);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, len, 16),
-                                new THREE.MeshStandardMaterial({ color: 0x20242c, roughness: 0.6 }));
-    pole.position.copy(a.clone().add(b).multiplyScalar(0.5));
-    pole.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    scene.add(pole);
   }
   // The eyes: each screen a disc showing its eye canvas (see eyes.js), in
   // front of a dark bezel.
@@ -139,6 +130,9 @@ function frame() {
   controls.update();
   for (const t of eyeTextures) t.needsUpdate = true;  // the eyes redraw ~30 times a second
   shadeLeds();
+  const k = window.nibblesLedScale || 1;  // the LED size slider
+  core.material.size = CORE_SIZE * k;
+  glow.material.size = GLOW_SIZE * k;
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

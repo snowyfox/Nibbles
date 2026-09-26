@@ -25,6 +25,7 @@ function eyesStart() {
     sel.appendChild(o);
   }
   eyesReady = true;
+  sim._eyes_brightness(eyeBriPct);
   requestAnimationFrame(eyesTick);
 }
 
@@ -86,8 +87,43 @@ function showEyeStatus() {
   $('eyestatus').textContent =
     `${rendered + 1}. ${name} · ${sim.UTF8ToString(sim._eyes_state_name(state))} · ` +
     `${tempo ? tempo.toFixed(0) + ' bpm' : 'no tempo'} · ${level.toFixed(0)} dB · loud ${loud.toFixed(2)} · ` +
-    `hype ${hype.toFixed(2)} · ${peaksNow ? 'peaks' : 'beats'}` +
-    ($('eyesrc').value === '1' ? ` · mic gain ${gain.toFixed(0)} dB` : '');
+    `hype ${hype.toFixed(2)} · ${peaksNow ? 'peaks' : 'beats'} · brightness ${eyeBriPct}% (WLED's)` +
+    ($('eyesrc').value === '1' ? ` · mic gain ${gain.toFixed(0)} dB` : '') +
+    ($('eyesrc').value === '2' ? (performance.now() - shark.at < 2000 ? ` · following the real eyes` : ' · real eyes not heard') : '');
+}
+
+// Following the real eyes: the shark's audio features (what its WLED sends
+// the eyes) and the leader eye's preset, reactivity and brightness.
+const shark = { preset: -1, react: -1, at: 0, name: '' };
+// Brightness follows WLED's master brightness, as on the shark (0 while off).
+let eyeBriPct = 100;
+function eyesWledBrightness(on, bri) {
+  let pct = on ? Math.round(bri * 100 / 255) : 0;
+  if (on && bri && !pct) pct = 1;
+  if (pct === eyeBriPct) return;
+  eyeBriPct = pct;
+  if (eyesReady) sim._eyes_brightness(pct);
+}
+function eyesFollowShark(on) {
+  if (!eyesReady) return;
+  const sel = $('eyesrc');
+  if (on) sel.value = '2';
+  else if (sel.value === '2') sel.value = '0';
+  sim._eyes_source(+sel.value);
+  if (on) sim._eyes_command(NL.AUTO, 0);  // the real leader picks the presets
+  Object.assign(shark, { preset: -1, react: -1 });
+}
+function eyesFromShark(m) {
+  if (m.wled) eyesWledBrightness(m.wled.on, m.wled.bri);
+  if (!eyesReady || $('eyesrc').value !== '2') return;
+  if (m.audio) sim._eyes_shark_audio(...m.audio);
+  const e = m.eyes;
+  if (!e) return;
+  shark.at = performance.now();
+  shark.name = e.name;
+  if (e.preset !== shark.preset) { sim._eyes_command(NL.PRESET_SET, e.preset); shark.preset = e.preset; }
+  const react = (e.flags >> 1) & 3;
+  if (react !== shark.react) { sim._eyes_command(NL.REACT, react); shark.react = react; $('eyereact').value = react; }
 }
 
 // Controls
@@ -96,8 +132,7 @@ $('eyeprev').onclick = () => sim._eyes_command(NL.PREV, 0);
 $('eyenext').onclick = () => sim._eyes_command(NL.NEXT, 0);
 $('eyecycle').onchange = () => sim._eyes_command(NL.AUTO, $('eyecycle').checked ? 1 : 0);
 $('eyereact').onchange = () => sim._eyes_command(NL.REACT, +$('eyereact').value);
-$('eyesrc').onchange = () => sim._eyes_source(+$('eyesrc').value);
-$('eyebri').onchange = () => sim._eyes_brightness(+$('eyebri').value);
+$('eyesrc').onchange = () => { sim._eyes_source(+$('eyesrc').value); Object.assign(shark, { preset: -1, react: -1 }); };
 for (const [id, action] of [['eyeflash', NL.FLASH], ['eyeblack', NL.BLACKOUT]]) {  // held like the base's pads
   const b = $(id);
   const up = () => { if (b.classList.contains('on')) { b.classList.remove('on'); sim._eyes_bump(0, 0); } };

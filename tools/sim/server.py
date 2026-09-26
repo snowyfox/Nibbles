@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nibbles lighting simulator bridge (Python standard library only).
 
-    python3 tools/sim/server.py [--port 8080] [--wled 10.7.200.226]
+    python3 tools/sim/server.py [--port 8080] [--wled 10.7.200.226] [--shark 10.7.200.253]
 
 - Serves the simulator page from tools/sim/web.
 - WebSocket /ws: the page sends 44-byte WLED audio sync packets, which go out
@@ -10,11 +10,18 @@
 - Listens for DDP on UDP 4048 (the simulator WLED's network LED bus), puts
   each frame back together and sends it to the page: one binary WebSocket
   message of RGB bytes per frame.
+- Or, when the page switches to the live shark ({"source": "shark", "ip": ..}
+  as a WebSocket text message), mirrors the shark's own WLED controller
+  instead: asks its Nibbles usermod (every 2 s) to stream its LEDs as DDP to
+  UDP 4050 and the eyes' audio features and telemetry as JSON to UDP 4051,
+  and passes both to the page (the JSON as text messages). The page's sound
+  then goes nowhere: the shark listens with its own mic.
 """
 import argparse
 import asyncio
 import base64
 import hashlib
+import json
 import mimetypes
 import os
 import socket
@@ -22,9 +29,25 @@ import struct
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 AUDIO_SYNC_GROUP = ("239.0.0.1", 11988)
-DDP_PORT = 4048
+DDP_PORT = 4048          # the simulator WLED's network LED bus
+MIRROR_PORT = 4050       # the shark's mirror stream (DDP); its JSON state on MIRROR_PORT + 1
+MIRROR_RENEW_S = 2
 
 clients = set()
+WEB_CONFIG = {}
+mode = {"source": "sim", "ip": None}   # "sim": the bench WLED; "shark": mirror the real controller
+
+
+async def broadcast(data, opcode=0x2):
+    for w in list(clients):
+        try:
+            await ws_send(w, data, opcode)
+        except (ConnectionError, RuntimeError):
+            clients.discard(w)
+
+
+def mode_message():
+    return json.dumps({"source": mode["source"], "ip": mode["ip"]}).encode()
 
 
 # ------------------------------------------------------------------ WebSocket
@@ -82,13 +105,21 @@ async def handle(reader, writer, audio_sock, wled_ip):
                       f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
         await writer.drain()
         clients.add(writer)
+        await ws_send(writer, mode_message(), 0x1)
         try:
             while True:
                 msg = await ws_recv(reader)
                 if msg is None:
                     break
                 opcode, data = msg
-                if opcode == 0x2 and len(data) == 44:  # audio sync packet
+                if opcode == 0x1:  # {"source": "sim"} or {"source": "shark", "ip": ".."}
+                    try:
+                        req = json.loads(data)
+                    except ValueError:
+                        continue
+                    if req.get("source") in ("sim", "shark"):
+                        await set_mode(req["source"], req.get("ip"))
+                elif opcode == 0x2 and len(data) == 44 and mode["source"] == "sim":  # audio sync packet
                     audio_sock.sendto(data, AUDIO_SYNC_GROUP)
                     if wled_ip:
                         audio_sock.sendto(data, (wled_ip, AUDIO_SYNC_GROUP[1]))
@@ -99,6 +130,15 @@ async def handle(reader, writer, audio_sock, wled_ip):
         finally:
             clients.discard(writer)
             writer.close()
+        return
+
+    # Settings for the page
+    if path.split("?")[0] == "/config.json":
+        body = json.dumps({**WEB_CONFIG, "bench": wled_ip}).encode()
+        writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
+                     "Cache-Control: no-cache\r\n\r\n".encode() + body)
+        await writer.drain()
+        writer.close()
         return
 
     # Static files
@@ -118,9 +158,11 @@ async def handle(reader, writer, audio_sock, wled_ip):
 # ------------------------------------------------------------------ DDP
 
 class DDPReceiver(asyncio.DatagramProtocol):
-    """Collects DDP packets into whole frames (the push flag ends a frame)."""
+    """Collects DDP packets into whole frames (the push flag ends a frame);
+    passes them on while the page shows this source."""
 
-    def __init__(self):
+    def __init__(self, source):
+        self.source = source
         self.frame = bytearray()
         self.frames = 0
 
@@ -134,7 +176,7 @@ class DDPReceiver(asyncio.DatagramProtocol):
         if len(self.frame) < end:
             self.frame.extend(b"\0" * (end - len(self.frame)))
         self.frame[offset:end] = payload
-        if flags & 0x01:  # push: the frame is complete
+        if flags & 0x01 and mode["source"] == self.source:  # push: the frame is complete
             self.frames += 1
             frame = bytes(self.frame)
             for w in list(clients):
@@ -147,19 +189,72 @@ class DDPReceiver(asyncio.DatagramProtocol):
             clients.discard(writer)
 
 
+class MirrorState(asyncio.DatagramProtocol):
+    """The shark's JSON state (eyes' audio features and telemetry), to the page."""
+
+    def datagram_received(self, data, addr):
+        if mode["source"] == "shark":
+            asyncio.ensure_future(broadcast(data, 0x1))
+
+
+def request_mirror(ip, seconds):
+    """Ask the shark's usermod to stream to us (seconds 0 stops it)."""
+    import urllib.request
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.connect((ip, 80))  # no packet is sent; finds our address on the shark's network
+    me = probe.getsockname()[0]
+    probe.close()
+    body = json.dumps({"nibbles": {"mirror": {"ip": me, "port": MIRROR_PORT, "s": seconds}}}).encode()
+    req = urllib.request.Request(f"http://{ip}/json/state", data=body, headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=2).read()
+
+
+async def set_mode(source, ip):
+    old = dict(mode)
+    mode["source"], mode["ip"] = source, ip if source == "shark" else None
+    if old["source"] == "shark" and old["ip"] and old["ip"] != mode["ip"]:
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, request_mirror, old["ip"], 0)
+        except OSError:
+            pass
+    print(f"source: {source}{' ' + ip if source == 'shark' else ''}")
+    await broadcast(mode_message(), 0x1)
+
+
+async def keep_mirroring():
+    failed = False
+    while True:
+        if mode["source"] == "shark" and mode["ip"]:
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, request_mirror, mode["ip"], MIRROR_RENEW_S * 3)
+                if failed:
+                    print(f"mirroring {mode['ip']} again")
+                failed = False
+            except OSError as e:
+                if not failed:
+                    print(f"can't reach the shark at {mode['ip']}: {e}")
+                failed = True
+        await asyncio.sleep(MIRROR_RENEW_S)
+
+
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--wled", default="10.7.200.226", help="simulator WLED address (also gets audio directly)")
+    ap.add_argument("--shark", default="10.7.200.253", help="the shark's WLED controller, offered to the page for mirroring")
     args = ap.parse_args()
 
     audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
     loop = asyncio.get_running_loop()
-    ddp = DDPReceiver()
-    await loop.create_datagram_endpoint(lambda: ddp, local_addr=("0.0.0.0", DDP_PORT))
+    await loop.create_datagram_endpoint(lambda: DDPReceiver("sim"), local_addr=("0.0.0.0", DDP_PORT))
+    await loop.create_datagram_endpoint(lambda: DDPReceiver("shark"), local_addr=("0.0.0.0", MIRROR_PORT))
+    await loop.create_datagram_endpoint(MirrorState, local_addr=("0.0.0.0", MIRROR_PORT + 1))
+    asyncio.ensure_future(keep_mirroring())
+    WEB_CONFIG["shark"] = args.shark
     server = await asyncio.start_server(lambda r, w: handle(r, w, audio_sock, args.wled), "0.0.0.0", args.port)
-    print(f"Nibbles simulator: http://localhost:{args.port}/  (WLED {args.wled}, DDP on UDP {DDP_PORT})")
+    print(f"Nibbles simulator: http://localhost:{args.port}/  (bench WLED {args.wled}, DDP on UDP {DDP_PORT}; "
+          f"shark {args.shark}, mirror on UDP {MIRROR_PORT})")
     async with server:
         await server.serve_forever()
 

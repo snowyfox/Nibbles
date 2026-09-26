@@ -61,7 +61,12 @@
       <canvas id="bands" width="296" height="90"></canvas>
     </div>
     <div class="card">
-      <h2>WLED (SIMULATOR)</h2>
+      <h2 id="wledtitle">WLED (BENCH SIMULATOR)</h2>
+      <label for="source">Lights</label>
+      <select id="source">
+        <option value="sim">Bench simulator: plays the sound above</option>
+        <option value="shark">The shark, live: its own mic, exactly what it shows</option>
+      </select>
       <label for="wledip">Address</label>
       <input id="wledip" type="text" value="10.7.200.226">
       <label for="preset">Preset</label>
@@ -70,6 +75,8 @@
       <input id="bri" type="range" min="1" max="255" value="255">
       <label for="boost">Dim boost (screen only) <span id="boostv"></span></label>
       <input id="boost" type="range" min="0" max="1" step="0.05" value="0.25">
+      <label for="ledsize">LED size (screen only) <span id="ledsizev"></span></label>
+      <input id="ledsize" type="range" min="0.5" max="4" step="0.1" value="1.5">
       <div class="meter" style="margin-top:8px"><span>LED frames <b id="fps">0</b>/s</span><span>LEDs <b id="count">0</b></span></div>
     </div>
   </section>
@@ -100,8 +107,7 @@
         <div class="row" style="align-items:end"><button id="eyeprev">◀ Prev</button><button id="eyenext">Next ▶</button></div>
         <label class="check"><input id="eyecycle" type="checkbox" checked> Cycle presets every 10 s</label>
         <label>Reacts to<select id="eyereact"><option value="0">each preset's choice</option><option value="1">beats</option><option value="2">every sound peak</option></select></label>
-        <label>Hears<select id="eyesrc"><option value="0">WLED's analysis (as on the shark now)</option><option value="1">the port eye's own mic analysis</option></select></label>
-        <label>Brightness<select id="eyebri"><option value="30">30%</option><option value="60">60%</option><option value="100" selected>100%</option></select></label>
+        <label>Hears<select id="eyesrc"><option value="0">WLED's analysis (as on the shark now)</option><option value="1">the port eye's own mic analysis</option><option value="2">the shark, live (follows the real eyes)</option></select></label>
         <div class="row" style="align-items:end"><button id="eyeflash">FLASH (hold)</button><button id="eyeblack">BLACKOUT (hold)</button></div>
       </div>
     </div>
