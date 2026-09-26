@@ -7,6 +7,7 @@ import { OBJLoader } from './vendor/OBJLoader.js';
 
 let renderer, scene, camera, controls, container, home;
 let core, glow, colors, count = 0, shown = false, hidden = null;
+let rgbNow = null, offPlane = [], leds3 = null;  // latest WLED frame; LEDs off the body's plane
 const eyeTextures = [];
 const EYE_BACK_DIM = 0.4;  // an eye screen seen from behind: this bright
 
@@ -42,6 +43,9 @@ function build(layout) {
   // LEDs (layout.leds is already y-up, in mm)
   count = layout.leds.length;
   hidden = layout.hidden;
+  leds3 = layout.leds;
+  offPlane = [];
+  layout.leds.forEach((p, i) => { if (Math.abs(p[0]) >= 4) offPlane.push(i); });
   const pos = new Float32Array(count * 3);
   layout.leds.forEach((p, i) => pos.set(p, i * 3));
   colors = new Float32Array(count * 3).fill(0.08);
@@ -62,7 +66,10 @@ function build(layout) {
   geo.computeBoundingSphere();
   const { center, radius } = geo.boundingSphere;
   controls.target.copy(center);
-  camera.position.set(center.x + radius * 1.6, center.y + radius * 0.5, center.z + radius * 1.6);  // front quarter
+  // Level with the shark (its XY plane edge-on), from the starboard front
+  // quarter: design X points left and Y (the nose) right, both 45° towards
+  // the viewer.
+  camera.position.set(center.x + radius * 1.6, center.y, center.z - radius * 1.6);
   controls.update();
   home = { target: controls.target.clone(), position: camera.position.clone() };
 
@@ -128,8 +135,29 @@ function frame() {
   if (!shown) return;
   controls.update();
   for (const t of eyeTextures) t.needsUpdate = true;  // the eyes redraw ~30 times a second
+  shadeLeds();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
+}
+
+// LED colours for this frame: hidden channels off, LEDs seen through the
+// body (from where the camera is now) dimmed like app.js's canvas views.
+const BODY_DIM = Math.pow(0.2, 2.2);  // 20% as seen (colours here are linear light)
+function shadeLeds() {
+  if (!colors || !rgbNow) return;
+  const n = Math.min(count, rgbNow.length / 3);
+  for (let i = 0; i < n * 3; i++) colors[i] = hidden && hidden[(i / 3) | 0] ? 0 : rgbNow[i] / 255;
+  const behind = window.nibblesBehindBody, c = camera.position;
+  if (behind) {
+    for (const i of offPlane) {
+      if (i >= n) continue;
+      const p = leds3[i];
+      if (behind(p, [c.x - p[0], c.y - p[1], c.z - p[2]])) {
+        colors[i * 3] *= BODY_DIM; colors[i * 3 + 1] *= BODY_DIM; colors[i * 3 + 2] *= BODY_DIM;
+      }
+    }
+  }
+  core.geometry.attributes.color.needsUpdate = true;
 }
 
 window.nibbles3d = {
@@ -163,11 +191,8 @@ window.nibbles3d = {
     shown = false;
     if (container) container.hidden = true;
   },
-  // RGB bytes from WLED, one triple per LED
+  // RGB bytes from WLED, one triple per LED (applied each frame, see shadeLeds)
   update(rgb) {
-    if (!colors || !rgb) return;
-    const n = Math.min(count, rgb.length / 3);
-    for (let i = 0; i < n * 3; i++) colors[i] = hidden && hidden[(i / 3) | 0] ? 0 : rgb[i] / 255;
-    core.geometry.attributes.color.needsUpdate = true;
+    rgbNow = rgb;
   },
 };

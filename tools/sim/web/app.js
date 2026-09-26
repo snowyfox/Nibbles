@@ -24,7 +24,11 @@ function setDimBoost(boost) {  // 0..1
 }
 setDimBoost(0.25);
 let canvas3d = false;                      // no WebGL: draw the 3D view on the 2D canvas
-const orbit = { yaw: -0.9, pitch: 0.25, zoom: 1 };
+// Default view: level with the shark (its XY plane edge-on), from the
+// starboard front quarter: X points left and Y (the nose) right, both 45°
+// towards you.
+const HOME_VIEW = { yaw: 3 * Math.PI / 4, pitch: 0, zoom: 1 };
+const orbit = { ...HOME_VIEW };
 let frames = 0;
 
 function status(text) { $('status').textContent = text; }
@@ -275,16 +279,17 @@ function focus3d() {
   if (headFocus && eyes.length) {
     const mid = [0, 1, 2].map((k) => eyes.reduce((a, e) => a + e.centre[k], 0) / eyes.length);
     if (window.nibbles3d && window.nibbles3d.focus) window.nibbles3d.focus(mid, 190);
-    Object.assign(orbit, { yaw: -1.1, pitch: 0.15, zoom: 1 });
+    Object.assign(orbit, { yaw: 1.1, pitch: 0.15, zoom: 1 });  // the starboard eye, nose to the right
     focus3d.pivot = mid; focus3d.radius = 45;
   } else {
     if (window.nibbles3d && window.nibbles3d.focus) window.nibbles3d.focus(null);
-    Object.assign(orbit, { yaw: -0.9, pitch: 0.25, zoom: 1 });
+    Object.assign(orbit, HOME_VIEW);
     focus3d.pivot = null;
   }
 }
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-// The simple 3D view's orbit: a direction turned to the camera (z away from it).
+// The simple 3D view's orbit: a direction turned to the camera's frame
+// (x right, y up, z towards the viewer).
 function turn([x, y, z]) {
   const cyw = Math.cos(orbit.yaw), syw = Math.sin(orbit.yaw), cp = Math.cos(orbit.pitch), sp = Math.sin(orbit.pitch);
   [x, z] = [x * cyw - z * syw, x * syw + z * cyw];
@@ -293,7 +298,7 @@ function turn([x, y, z]) {
 }
 // Does a surface with this normal face the viewer?
 function facing(n) {
-  if (view === '3d') return turn(n)[2] < 0;
+  if (view === '3d') return turn(n)[2] > 0;
   if (view === 'side') return n[0] > 0;   // side view looks at the starboard side
   if (view === 'top') return n[1] > 0;
   return n[2] < 0;                        // front view looks at the nose
@@ -302,7 +307,7 @@ function project(p) {
   if (view === '3d') {  // simple perspective orbit (the WebGL-less 3D view)
     const c = focus3d.pivot || centre;
     const [x, y, z] = turn([p[0] - c[0], p[1] - c[1], p[2] - c[2]]);
-    const f = 1400 / (1400 + z);  // camera 1.4 m from the middle
+    const f = 1400 / (1400 - z);  // camera 1.4 m from the middle
     return [x * f, y * f];
   }
   // front: facing the nose (starboard on the left); top: from above, nose up;
@@ -311,6 +316,33 @@ function project(p) {
   if (view === 'side') return [-p[2], p[1]];
   return [-p[0], p[1]];
 }
+
+// The body: a thin sheet in the plane x = 0, filling the main outline tube.
+// LEDs seen through it (the far fin, mostly) are drawn at BODY_DIM brightness.
+const BODY_DIM = 0.2;
+function bodyPolygon() {
+  if (bodyPolygon.cache && bodyPolygon.cache.layout === layout) return bodyPolygon.cache.poly;
+  const poly = ((layout.outlines || [])[0] || []).map((p) => [p[1], p[2]]);
+  bodyPolygon.cache = { layout, poly };
+  return poly;
+}
+function insidePolygon(y, z, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, zi] = poly[i], [yj, zj] = poly[j];
+    if ((zi > z) !== (zj > z) && y < yi + (z - zi) * (yj - yi) / (zj - zi)) inside = !inside;
+  }
+  return inside;
+}
+// Is LED p (page coordinates) hidden behind the body, seen along w (a
+// direction from p towards the viewer)? Strips in the body's own plane never are.
+function behindBody(p, w) {
+  if (!layout || Math.abs(p[0]) < 4 || Math.abs(w[0]) < 1e-6) return false;
+  const t = -p[0] / w[0];
+  if (t <= 0) return false;  // on the viewer's side of the body
+  return insidePolygon(p[1] + t * w[1], p[2] + t * w[2], bodyPolygon());
+}
+window.nibblesBehindBody = behindBody;  // for view3d.js
 
 // The tubes and the pole cut into short pieces (3D, the page's y-up mm), for
 // drawing in depth order in the canvas views.
@@ -392,6 +424,7 @@ function draw() {
       if (R | G | B) items.push([layerOf(layout.leds[i]), depth(layout.leds[i]), 1, i]);
     }
     items.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const toViewer = [viewDir([1, 0, 0])[2], viewDir([0, 1, 0])[2], viewDir([0, 0, 1])[2]];
     g.strokeStyle = '#2a2f3a';
     g.lineCap = 'round';
     let next = 0;
@@ -404,7 +437,9 @@ function draw() {
           g.lineWidth = q.width * s;
           g.beginPath(); g.moveTo(X(a), Y(a)); g.lineTo(X(b), Y(b)); g.stroke();
         } else {
-          const R = leds ? leds[i * 3] : 20, G = leds ? leds[i * 3 + 1] : 20, B = leds ? leds[i * 3 + 2] : 20;
+          const k = behindBody(layout.leds[i], toViewer) ? BODY_DIM : 1;
+          const R = Math.round((leds ? leds[i * 3] : 20) * k), G = Math.round((leds ? leds[i * 3 + 1] : 20) * k),
+            B = Math.round((leds ? leds[i * 3 + 2] : 20) * k);
           const x = X(pts[i]), y = Y(pts[i]);
           g.globalCompositeOperation = 'lighter';
           g.fillStyle = `rgba(${R},${G},${B},0.25)`;  // soft glow, like the silicone diffuser
@@ -452,7 +487,7 @@ const AXES = [
 // A direction as the current view shows it: [right, up, towards the viewer].
 function viewDir(v) {
   if (view === '3d' && !canvas3d && window.nibbles3d && window.nibbles3d.viewDir) return window.nibbles3d.viewDir(v);
-  if (view === '3d') { const t = turn(v); return [t[0], t[1], -t[2]]; }
+  if (view === '3d') return turn(v);
   if (view === 'top') return [v[0], -v[2], v[1]];
   if (view === 'side') return [-v[2], v[1], v[0]];
   return [-v[0], v[1], -v[2]];
