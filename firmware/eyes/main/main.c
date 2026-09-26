@@ -342,6 +342,7 @@ static void eye_task(void *arg)
     }
 }
 
+#if !EYES_CARTOON_EVAL  // the evaluation build has its own app_main (cartoon_eval.c)
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -381,3 +382,4 @@ void app_main(void)
 
     xTaskCreatePinnedToCore(eye_task, "eye", 6144, NULL, 5, NULL, 1);
 }
+#endif

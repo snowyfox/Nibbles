@@ -279,3 +279,21 @@ Recordings are kept out of the repo.
 7. Beat detection rebuilt from a real recording (multi-band + rhythm gate); tempo ranges widened for the target genres.
 8. Twist handling (into-the-turn reversal, 120 mm swing removal, horizon alignment) tuned from an IMU recording.
 9. Preset system: 18 presets, blink transitions, tempo-locked spirals, motion-driven hype, faster per-frame setup.
+
+### Cartoon animations (evaluation)
+`main/cartoon.c`: five non-reactive cartoon/anime eyes (Sparkle, Hypnotoad,
+Sharingan, Mangekyo Sharingan, Happy), drawn through `render_frame_rows()`
+with the same refresh sync and strip pipeline as the normal renderer. They
+use per-pixel distance and angle maps (1024 angle steps), per-angle tables
+built each frame (tomoe heads and tails, blade widths by radius; only the
+steps each tomoe covers, to keep the per-frame setup short), integer maths
+per pixel, and row-level culling of small shapes. (Love, Dizzy and Starstruck
+were tried and dropped.) All run at
+29.6 fps with 0 late frames. Pure C: `make -C test/host cartoon` builds
+`build/cartoon_preview OUT.ppm`, a contact sheet for checking the art on the
+host.
+
+Temporary evaluation firmware (cycles the five every 10 s; no sound, motion,
+link or radio): `idf.py -C firmware/eyes -B firmware/eyes/build_eval
+-DEYES_CARTOON_EVAL=1 -p PORT flash`. Go back with a normal
+`idf.py -C firmware/eyes -p PORT flash`.

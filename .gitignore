@@ -5,3 +5,4 @@ sdkconfig
 sdkconfig.old
 .DS_Store
 wled/backup/
+build_eval/

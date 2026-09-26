@@ -82,6 +82,7 @@ static int pupil_ix, pupil_iy;   // pupil centre, whole pixels
 // Work handed to the helper core for the current strip.
 static uint16_t *job_buf;
 static int job_y0, job_y1;
+static render_rows_fn job_fn;  // what the helper core draws with this frame
 
 static void hsv(float h, float s, float v, float out[3])
 {
@@ -563,7 +564,7 @@ static void helper_main(void *arg)
 {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        render_rows(job_buf, job_y0, job_y1);
+        job_fn(job_buf, job_y0, job_y1);
         xSemaphoreGive(helper_done);
     }
 }
@@ -632,12 +633,27 @@ esp_err_t render_init(void)
     return ESP_OK;
 }
 
+static void send_frame(render_rows_fn draw);
+
 void render_frame(const eye_params_t *p)
 {
     const int64_t t0 = esp_timer_get_time();
     prepare(p);
     const int64_t prep_us = esp_timer_get_time() - t0;
     if (prep_us > worst_prep_us) worst_prep_us = prep_us;
+    send_frame(render_rows);
+}
+
+void render_frame_rows(render_rows_fn rows)
+{
+    send_frame(rows);
+}
+
+// Wait for the panel's refresh edge, then draw and send the frame strip by
+// strip, both cores drawing half of each strip.
+static void send_frame(render_rows_fn draw)
+{
+    job_fn = draw;
 
     // Check the previous frame made its deadline, then wait for a fresh TE
     // falling edge. The timeout keeps things running if TE ever stops.
@@ -662,7 +678,7 @@ void render_frame(const eye_params_t *p)
         job_y0 = y + split;
         job_y1 = y + rows;
         xTaskNotifyGive(helper_task);
-        render_rows(buf, y, y + split);
+        draw(buf, y, y + split);
         xSemaphoreTake(helper_done, portMAX_DELAY);
 
         esp_lcd_panel_draw_bitmap(panel, 0, y, DISP_W, y + rows, buf);
