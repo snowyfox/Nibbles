@@ -8,6 +8,10 @@
 // - Broadcasts WLED telemetry, and shows the eyes' telemetry on the Info page.
 // - Bumps: momentary effects (flash, blackout, preset) while a base-station
 //   button is held; WLED's previous state is restored exactly afterwards.
+// - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
+//   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
+//   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
+//   audio features and telemetry (JSON text, to port + 1).
 //
 // Messages come from shared/nibbles_link (the same protocol code as the eyes
 // and base). See docs/architecture.md in the Nibbles repo.
@@ -26,6 +30,9 @@
 #define AUDIO_MS               32     // audio features, like the port eye sends them
 #define RX_QUEUE               8
 #define JSON_LOCK_NIBBLES      240
+#define MIRROR_MIN_MS          20     // at most 50 frames a second to the simulator
+#define MIRROR_MAX_S           30     // a mirror request lasts at most this long
+#define DDP_MAX_LEDS           480    // LEDs per DDP packet (1440 bytes of RGB)
 
 class NibblesUsermod : public Usermod {
   private:
@@ -67,7 +74,89 @@ class NibblesUsermod : public Usermod {
     uint8_t savedPreset = 0;
     int pendingPreset = 0, pendingBri = -1;  // commands received during a bump
 
+    // Mirror to the simulator.
+    WiFiUDP mirrorUdp;
+    IPAddress mirrorIp;
+    uint16_t mirrorPort = 0;
+    unsigned long mirrorUntil = 0, lastMirror = 0;
+    uint8_t ddpSeq = 0;
+    uint32_t mirrorFrames = 0;
+    nl_audio_t lastAudioOut = {};
+    unsigned long lastAudioOutAt = 0;
+    uint8_t ddpBuf[10 + DDP_MAX_LEDS * 3];
+
     static const char _name[];
+
+    bool mirroring(unsigned long now) const { return mirrorPort && (long)(mirrorUntil - now) > 0; }
+
+    // One frame as the LEDs show it (gamma and brightness applied; the
+    // current limiter's extra dimming is not included), as DDP packets.
+    void sendMirrorFrame() {
+      const unsigned total = strip.getLengthTotal();
+      const uint8_t bri = strip.getBrightness();
+      for (unsigned start = 0; start < total; start += DDP_MAX_LEDS) {
+        const unsigned n = min((unsigned)DDP_MAX_LEDS, total - start);
+        const bool last = start + n >= total;
+        const uint32_t offset = start * 3;
+        ddpBuf[0] = 0x40 | (last ? 0x01 : 0x00);  // version 1, push on the last packet
+        ddpBuf[1] = ddpSeq & 0x0f;
+        ddpBuf[2] = 0x0b;                          // RGB, 8 bits per channel
+        ddpBuf[3] = 1;                             // output device
+        ddpBuf[4] = offset >> 24; ddpBuf[5] = offset >> 16; ddpBuf[6] = offset >> 8; ddpBuf[7] = offset;
+        ddpBuf[8] = (n * 3) >> 8; ddpBuf[9] = (n * 3) & 0xff;
+        uint8_t *d = ddpBuf + 10;
+        for (unsigned i = 0; i < n; i++) {
+          uint32_t c = strip.getPixelColor(start + i);
+          if (c) c = gamma32(c);
+          const uint8_t w = W(c);
+          *d++ = bri ? scale8(qadd8(w, R(c)), bri) : 0;  // white folded into RGB, like the live view
+          *d++ = bri ? scale8(qadd8(w, G(c)), bri) : 0;
+          *d++ = bri ? scale8(qadd8(w, B(c)), bri) : 0;
+        }
+        mirrorUdp.beginPacket(mirrorIp, mirrorPort);
+        mirrorUdp.write(ddpBuf, 10 + n * 3);
+        mirrorUdp.endPacket();
+      }
+      ddpSeq++;
+      mirrorFrames++;
+    }
+
+    // What the eyes get from us (audio features) and tell us (telemetry), so
+    // the simulator's eyes can follow the real ones.
+    void sendMirrorState(unsigned long now) {
+      char buf[512];
+      const nl_audio_t &a = lastAudioOut;
+      const nl_eye_telemetry_t &e = eyes;
+      int len = snprintf(buf, sizeof(buf),
+        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"on\":%s}", bri, currentPreset, bri ? "true" : "false");
+      if (lastAudioOutAt && now - lastAudioOutAt < 1000)
+        len += snprintf(buf + len, sizeof(buf) - len,
+          ",\"audio\":[%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.4f,%.3f,%lu,%lu]",
+          a.level_db, a.avg_db, a.noise_floor_db, a.gain_db, a.loudness, a.warmth, a.beat_period_s,
+          a.beat_confidence, (unsigned long)a.beat_count, (unsigned long)a.peak_count);
+      if (haveEyes && now - eyesAt < 2000) {
+        char name[NL_NAME_LEN + 1] = { 0 };
+        for (int i = 0; i < NL_NAME_LEN && e.name[i]; i++) name[i] = (e.name[i] == '"' || e.name[i] == '\\') ? ' ' : e.name[i];
+        len += snprintf(buf + len, sizeof(buf) - len,
+          ",\"eyes\":{\"preset\":%u,\"count\":%u,\"state\":%u,\"linked\":%u,\"bri\":%u,\"flags\":%u,"
+          "\"tempo\":%.1f,\"hype\":%.2f,\"name\":\"%s\"}",
+          e.preset, e.preset_count, e.state, e.linked, e.brightness, e.flags, e.tempo_bpm, e.hype, name);
+      }
+      if (len > 0 && len < (int)sizeof(buf) - 1) {
+        buf[len++] = '}';
+        mirrorUdp.beginPacket(mirrorIp, mirrorPort + 1);
+        mirrorUdp.write((const uint8_t *)buf, len);
+        mirrorUdp.endPacket();
+      }
+    }
+
+    void mirrorLoop() {
+      const unsigned long now = millis();
+      if (!mirroring(now) || now - lastMirror < MIRROR_MIN_MS) return;
+      lastMirror = now;
+      sendMirrorFrame();
+      sendMirrorState(now);
+    }
 
     bool radioUp() const { return enabled && enableESPNow && statusESPNow == ESP_NOW_STATE_ON; }
 
@@ -110,6 +199,8 @@ class NibblesUsermod : public Usermod {
       const bool peak = *(uint8_t *)um->u_data[3];
       nl_audio_t a;
       nl_ar_update(&arState, volume, fft, peak, millis(), &a);
+      lastAudioOut = a;
+      lastAudioOutAt = millis();
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AUDIO, &a, sizeof(a));
       audioSent++;
     }
@@ -339,6 +430,7 @@ class NibblesUsermod : public Usermod {
     }
 
     void loop() override {
+      mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       if (!radioUp()) return;
       for (;;) {
         RxItem it;
@@ -407,6 +499,12 @@ class NibblesUsermod : public Usermod {
                  !audio ? "off" : audioSent ? "sending" : "no AudioReactive");
         radio.add(buf);
       }
+      if (mirroring(millis())) {
+        JsonArray m = user.createNestedArray(F("Nibbles mirror"));
+        char buf[48];
+        snprintf(buf, sizeof(buf), "to %s:%u, %lu frames", mirrorIp.toString().c_str(), mirrorPort, (unsigned long)mirrorFrames);
+        m.add(buf);
+      }
       JsonArray e = user.createNestedArray(F("Nibbles eyes"));
       if (!haveEyes || millis() - eyesAt > 2000) {
         e.add(F("not heard"));
@@ -416,6 +514,23 @@ class NibblesUsermod : public Usermod {
                  eyes.linked ? "linked" : "not linked", eyes.fps_x10[0] / 10.0f, eyes.fps_x10[1] / 10.0f, eyes.tempo_bpm);
         e.add(buf);
       }
+    }
+
+    // {"nibbles":{"mirror":{"ip":"a.b.c.d","port":4050,"s":5}}}: stream to the
+    // simulator for s seconds (0 stops).
+    void readFromJsonState(JsonObject &root) override {
+      JsonObject m = root[F("nibbles")][F("mirror")];
+      if (m.isNull()) return;
+      IPAddress ip;
+      const int secs = m[F("s")] | 0;
+      const int port = m[F("port")] | 0;
+      if (secs <= 0 || port <= 0 || port > 65534 || !ip.fromString((const char *)(m[F("ip")] | ""))) {
+        mirrorPort = 0;
+        return;
+      }
+      mirrorIp = ip;
+      mirrorPort = port;
+      mirrorUntil = millis() + min(secs, MIRROR_MAX_S) * 1000UL;
     }
 
     void addToConfig(JsonObject &root) override {

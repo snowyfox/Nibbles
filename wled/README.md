@@ -34,6 +34,18 @@ eyes and base (`shared/nibbles_link`).
   controller's mic as Nibbles audio features every 32 ms (`nl_ar_update`), for
   eyes built with `EYES_AUDIO_FROM_WLED 1`. The Info page shows whether it is
   sending. Untested on real music so far.
+- **Mirrors the lights to the simulator** (`tools/sim`) on request: a JSON
+  state post `{"nibbles":{"mirror":{"ip":"a.b.c.d","port":4050,"s":6}}}`
+  starts it for `s` seconds (at most 30; `s: 0` stops it), and `server.py`
+  renews it every 2 s while the page shows the live shark. Each shown frame
+  goes to `ip:port` as DDP (gamma and brightness applied; the current
+  limiter's extra dimming is not), at most 50 a second, and a small JSON
+  packet to `port + 1` with WLED's brightness and preset, the audio features
+  it last sent the eyes, and the eyes' telemetry. It works even with the
+  usermod disabled, and costs nothing when not asked for. Bench-tested on
+  the WT32 build: identical to the bench's own network LED output, 44
+  frames/s, WLED's frame rate unchanged (43 fps), 10-minute soak clean. On
+  the real controller since 2026-09-26 (42 frames/s to the simulator).
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
   (default off).
 
