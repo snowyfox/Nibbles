@@ -13,7 +13,9 @@ in. Agreed 2026-09-24; update this file as decisions change.
   so **its Wi-Fi channel varies**.
 - **Base station** (prototype on an ESP32-S3-Touch-LCD-3.49): an ESP32 in the pole base with battery
   management, status screen(s), and buttons to change eye and WLED presets;
-  later, DMX-style bump buttons for momentary effects.
+  later, DMX-style bump buttons for momentary effects. Its power system
+  (internal pack, power board, battery dock) is designed in
+  [power.md](power.md).
 
 ## Repository
 One monorepo: a single shared protocol, used by every firmware, changes in one
@@ -24,7 +26,7 @@ plus the `platformio_override.ini` from this repo, builds WLED with our usermod.
 
 ```
 CLAUDE.md                 system overview and conventions
-docs/                     this file; later protocol.md, wiring.md
+docs/                     this file; power.md (power system design); later protocol.md, wiring.md
 shared/nibbles_link/      pure-C protocol, framing and CRC; ESP-IDF component and
                           PlatformIO library; host tests            (Phase 1)
 firmware/eyes/            eye firmware (ESP-IDF)
@@ -120,11 +122,12 @@ preset picks which one it reacts to (`peak_beats`).
 | 1 | Eye-to-eye link: protocol + framing with host tests; UART link task; leader/ears roles; shared-state vs local-state split; standalone fallback; link stats in the status log | done: both boards linked (0 CRC errors, 0 late frames); visual sync confirmed; unplugging either data wire falls back to standalone at once and re-links on reconnect |
 | 2 | ESP-NOW on the leader eye: channel scan and lock, heartbeat, telemetry; measure Wi-Fi's cost to the frame rate (keep Wi-Fi on core 0) | done: `shared/nibbles_espnow`; leader eye locks onto the anchor, sends telemetry, takes preset commands (acked in ~2 ms); 0 late frames with Wi-Fi on. Base prototype (`firmware/base` on an ESP32-S3-Touch-LCD-3.49) anchors channel 6 until the WLED usermod exists |
 | 3 | WLED 16.x upgrade (back up config and presets first) + usermod: channel-anchor heartbeat, preset commands, bump effects, optional AudioReactive features. Watch for: "ESP-NOW remote with no Wi-Fi reboots every 15–20 min" (fixed only in 17.0.0-dev) | in progress: `wled/usermod_nibbles` builds into WLED 16.0.1 (see `wled/README.md`); on a 3.49 dev node it anchors the channel, the eyes lock onto it and their telemetry reaches WLED. Scanners now jump to the anchor's advertised channel (channels overlap). WLED preset and brightness commands verified from the base (acked in 3–15 ms; next/previous wrap over existing presets; a missing preset is refused; preset names reach the base screen; commands during a bump apply on release). The base hands the channel over to WLED's anchor. Real controller not upgraded; AudioReactive features not started |
-| 4 | Base station: choose hardware (display, battery chemistry/BMS, how battery state is read, buttons); firmware for status screens and preset buttons | prototype firmware on a 3.49: scans for WLED, logs eye and WLED telemetry, eye and WLED preset commands from buttons and USB serial, LVGL status screen (eyes, WLED, radio, events). Hardware choices (battery, BMS, buttons) not made |
+| 4 | Base station: choose hardware (display, battery chemistry/BMS, how battery state is read, buttons); firmware for status screens and preset buttons | prototype firmware on a 3.49: scans for WLED, logs eye and WLED telemetry, eye and WLED preset commands from buttons and USB serial, LVGL status screen (eyes, WLED, radio, events). Power system designed in [power.md](power.md), not built; BMS/gauge and buttons still open |
 | 5 | Bump / DMX-style control: momentary effects, preset while held, flashes; under 20 ms from button to light | protocol (`nl_bump.c`, host tested) and WLED side done: flash, blackout and preset-while-held with state restore, verified from the base. Eyes: flash (startle: full glow, small pupil, ripple), blackout (lids shut, master level 0, outline included) and preset while held, verified on both linked eyes. Latency (leader eye, radio arrival → frame sent; the log prints it per bump): 35–68 ms, median 54 ms over 12 flashes; the radio adds ~1–2 ms (command round trips are 2–4 ms). The eyes can't meet 20 ms: a frame is 34 ms at 29.5 fps and takes ~26 ms to send over QSPI, and the eye task takes input once per frame. WLED not measured yet |
 
 ## Open decisions
-- Base station hardware and battery system (Phase 4).
+- Base station hardware and battery system (Phase 4): see [power.md](power.md)
+  and its own open decisions.
 - WLED controller board type (sets the PlatformIO env) and LED count (Phase 3).
 - Whether the eyes switch to WLED's mic features (after Phase 3, compared on
   real music).
