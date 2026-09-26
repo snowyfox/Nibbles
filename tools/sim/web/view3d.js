@@ -82,7 +82,10 @@ function build(layout) {
         color: 0x39414f, roughness: 0.8, metalness: 0.0,
         transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide,
       });
-      obj.traverse((m) => { if (m.isMesh) m.material = body; });
+      // Drawn before the LEDs whatever the angle (three.js otherwise orders
+      // see-through objects by distance, and the body would darken LEDs in
+      // front of it from some angles). LEDs behind it are dimmed in shadeLeds.
+      obj.traverse((m) => { if (m.isMesh) { m.material = body; m.renderOrder = -1; } });
       scene.add(obj);
     });
   }
