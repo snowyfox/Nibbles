@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "Nibbles",
+  "description": {
+    "": "Exports the shark geometry the Nibbles lighting simulator needs: LED diffuser tube centre lines, cylinders (pole, eye hole), body boxes and a mesh."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

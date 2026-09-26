@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nibbles Sim</title>
+<style>
+  :root { --bg: #0b0d12; --card: #14161c; --text: #e8ecf2; --dim: #7f8794; --line: #262a33; --accent: #ff7ad9; --ok: #3ddc84; --warn: #ffb020; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 12px 16px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 18px; }
+  #status { color: var(--dim); }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 12px; padding: 12px 16px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .card h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
+  label { display: block; margin: 6px 0 2px; color: var(--dim); font-size: 12px; }
+  button, select, input[type=text] { background: #1d2029; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color: #111; border-color: var(--accent); }
+  select, input[type=text], input[type=range], audio { width: 100%; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  #ledview, #view3d { width: 100%; height: 60vh; min-height: 320px; background: #000; border-radius: 10px; display: block; overflow: hidden; }
+  #view3d canvas { width: 100%; height: 100%; display: block; }
+  #bands { width: 100%; height: 90px; display: block; }
+  .meter { display: flex; justify-content: space-between; color: var(--dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+  #peak { color: var(--warn); visibility: hidden; }
+  .views button { flex: 0 0 auto; }
+  .viewwrap { position: relative; }
+  #gizmo { position: absolute; top: 8px; right: 8px; width: 90px; height: 90px; pointer-events: none; }
+  .eyes { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .eyes figure { margin: 0; text-align: center; color: var(--dim); font-size: 12px; }
+  .eyes canvas { width: min(260px, 42vw); aspect-ratio: 1; border-radius: 50%; background: #000; display: block; margin-bottom: 4px; }
+  .eyectl { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 12px; align-items: end; }
+  .eyectl label { margin: 0; }
+  .eyectl label.check { display: flex; gap: 6px; align-items: center; color: var(--text); font-size: 14px; }
+  #eyestatus { flex-wrap: wrap; gap: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Nibbles lighting simulator</h1>
+  <span id="status">starting…</span>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2>SOUND</h2>
+      <div class="row">
+        <button id="mic">Microphone</button>
+        <label style="flex:1;margin:0"><input id="file" type="file" accept="audio/*" hidden><button id="pick" type="button" style="width:100%">Audio file…</button></label>
+      </div>
+      <audio id="player" controls hidden></audio>
+      <label for="gain">Input gain <span id="gainv"></span></label>
+      <input id="gain" type="range" min="0" max="3" step="0.05" value="1">
+      <label>What WLED hears <span id="peak">● PEAK</span></label>
+      <div class="meter"><span>volume <b id="vol">0</b></span><span>agc <b id="agc">1.00</b></span><span>peak freq <b id="freq">–</b></span></div>
+      <canvas id="bands" width="296" height="90"></canvas>
+    </div>
+    <div class="card">
+      <h2>WLED (SIMULATOR)</h2>
+      <label for="wledip">Address</label>
+      <input id="wledip" type="text" value="10.7.200.226">
+      <label for="preset">Preset</label>
+      <select id="preset"><option>loading…</option></select>
+      <label for="bri">Brightness <span id="briv"></span></label>
+      <input id="bri" type="range" min="1" max="255" value="255">
+      <label for="boost">Dim boost (screen only) <span id="boostv"></span></label>
+      <input id="boost" type="range" min="0" max="1" step="0.05" value="0.25">
+      <div class="meter" style="margin-top:8px"><span>LED frames <b id="fps">0</b>/s</span><span>LEDs <b id="count">0</b></span></div>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <div class="row views" style="margin-bottom:8px;align-items:center">
+        <h2 style="margin:0;flex:1">SHARK LEDS <span id="layoutname" style="text-transform:none;letter-spacing:0"></span></h2>
+        <button data-view="3d" class="on">3D</button><button data-view="head" title="3D, close up on the eyes">Head</button><button data-view="side">Side</button><button data-view="top">Top</button><button data-view="front">Front</button>
+      </div>
+      <div id="viewnote" hidden style="color:var(--dim);font-size:12px;margin:-4px 0 6px"></div>
+      <div class="viewwrap">
+        <canvas id="ledview" hidden style="touch-action:none;cursor:grab"></canvas>
+        <div id="view3d" hidden></div>
+        <canvas id="gizmo" width="120" height="120" title="Model axes: X starboard, Y nose, Z up"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:8px;align-items:center">
+        <h2 style="margin:0;flex:1">EYES <span style="text-transform:none;letter-spacing:0">(the eye firmware's own code)</span></h2>
+      </div>
+      <div class="eyes">
+        <figure><canvas id="eye_sb"></canvas><figcaption>Starboard (leader)</figcaption></figure>
+        <figure><canvas id="eye_port"></canvas><figcaption>Port (ears)</figcaption></figure>
+      </div>
+      <div id="eyestatus" class="meter" style="justify-content:center;margin:4px 0 8px">starting…</div>
+      <div class="eyectl">
+        <label>Preset<select id="eyepreset"></select></label>
+        <div class="row" style="align-items:end"><button id="eyeprev">◀ Prev</button><button id="eyenext">Next ▶</button></div>
+        <label class="check"><input id="eyecycle" type="checkbox" checked> Cycle presets every 10 s</label>
+        <label>Reacts to<select id="eyereact"><option value="0">each preset's choice</option><option value="1">beats</option><option value="2">every sound peak</option></select></label>
+        <label>Hears<select id="eyesrc"><option value="0">WLED's analysis (as on the shark now)</option><option value="1">the port eye's own mic analysis</option></select></label>
+        <label>Brightness<select id="eyebri"><option value="30">30%</option><option value="60">60%</option><option value="100" selected>100%</option></select></label>
+        <div class="row" style="align-items:end"><button id="eyeflash">FLASH (hold)</button><button id="eyeblack">BLACKOUT (hold)</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<script src="sim.js"></script>
+<script src="app.js"></script>
+<script src="eyes.js"></script>
+<script type="module" src="view3d.js"></script>
+</body>
+</html>
