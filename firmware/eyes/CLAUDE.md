@@ -177,6 +177,10 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
 - Spiral spin is locked to the tempo: a third of a turn per beat (one Hypno
   arm per beat), calm spin 0.3 turns/s with no tempo, doubled in hype, eased
   over 1 s; each spiral preset starts at its own speed when selected.
+- The port eye builds its spiral maps mirrored left to right
+  (`render_core_set_mirror`, set from `board_side()` before
+  `render_core_init`), so the two eyes, which face opposite ways, twist and
+  spin as mirror images on the shark. The simulator switches per eye.
 
 ### Eye link (`link.c`, `board.c`)
 - The two eyes share one brain over a 3-wire cable: UART1 at 1 Mbaud, GPIO 17
