@@ -145,7 +145,8 @@ static void actions_task(void *arg)
         switch (a.action) {
             case DISPLAY_TAP_EYES:   send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_NEXT, 0); break;
             case DISPLAY_TAP_WLED:   send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0); break;
-            case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_EYES, NL_OP_BRIGHTNESS_SET, a.value); break;
+            // The eyes follow WLED's master brightness, so their slider sets that.
+            case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
             case DISPLAY_SLIDE_WLED: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
             case DISPLAY_TAP_PRESET: send_preset_both(a.value); break;
             case DISPLAY_SET_AUTO:   send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, a.value); break;
@@ -267,7 +268,8 @@ static void console_task(void *arg)
                         !strcmp(line + 6, "beats") ? NL_REACT_BEATS : !strcmp(line + 6, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
         else if (!strncmp(line, "preset ", 7)) send_preset_both(atoi(line + 7));
         else if (!strcmp(line, "auto on") || !strcmp(line, "auto off")) send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, line[6] == 'n');
-        else if (!strncmp(line, "bri ", 4)) send_cmd_to(NL_TARGET_EYES, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
+        else if (!strncmp(line, "bri ", 4))  // the eyes follow WLED's brightness: same as "wled bri"
+            send_cmd_to(NL_TARGET_WLED, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
         else if (!strncmp(line, "wled bri ", 9)) send_cmd_to(NL_TARGET_WLED, line[9] == '+' || line[9] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 9));
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
         else if (!strncmp(line, "wled set ", 9)) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, atoi(line + 9));

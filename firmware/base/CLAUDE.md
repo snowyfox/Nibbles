@@ -62,7 +62,8 @@ What it does now (`main/main.c`):
   the last message).
 - USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
   `wled next`, `wled set N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
-  step); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `shot`; `[eyes|wled] bump flash MS`,
+  step; both set WLED's brightness, which the eyes follow, as does the eyes
+  card's slider); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `shot`; `[eyes|wled] bump flash MS`,
   `[eyes|wled] bump black MS`, `[eyes|wled] bump preset N MS` (no prefix:
   flash and blackout go to both, preset bumps to WLED, as the preset numbers
   differ). Commands are unicast with an ack and up to 3 tries of

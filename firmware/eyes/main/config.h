@@ -11,10 +11,10 @@
 #define STRIP_ROWS           16      // must be even (CO5300 needs even y ranges)
 #define STRIP_BUFFERS        3
 
-// Brightness presets (percent) cycled by the BOOT button. Index 2 (100%, the
-// panel's maximum) is the default.
-#define BRIGHTNESS_PRESETS   { 30, 60, 100 }
-#define BRIGHTNESS_DEFAULT_INDEX 2
+// Brightness follows WLED's master brightness (its radio telemetry, 2 Hz),
+// so one control dims the whole shark; 100% (the panel's maximum) at power-on
+// and whenever WLED hasn't been heard for this long.
+#define WLED_BRI_TIMEOUT_MS  30000
 
 // ---------------------------------------------------------------- eye link
 // The two eyes are wired together: UART1, GPIO 17 (TX) to the other eye's

@@ -69,7 +69,7 @@ Commits: the user's git config GPG-signs by default; they have asked for
 ```
 main/
   config.h            all tuning constants (thresholds, timings, gains, geometry)
-  main.c              boot, eye task (core 1): sensors -> eye -> render, preset cycle, BOOT button, status log
+  main.c              boot, eye task (core 1): sensors -> eye -> render, preset cycle, brightness, status log
   audio.c             mic capture task; applies the mic gain the analysis asks for
   audio_analysis.c/h  pure C: level, AGC, noise floor, loudness, warmth, onsets, beats, tempo
   motion.c            IMU task (200 Hz)
@@ -213,11 +213,13 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   (`nl_react_t`: each preset's choice, beats, peaks). Telemetry `flags`
   report auto-cycle, the reactivity mode and whether the preset on screen
   reacts to peaks (`NL_EYE_*`).
-- Brightness commands: `NL_OP_BRIGHTNESS_SET` (0..255 → percent, not saved)
-  and `NL_OP_BRIGHTNESS_STEP` (to the next `BRIGHTNESS_PRESETS` level above or
-  below the current one, saved like the BOOT button). The leader shares its
-  brightness in `nl_eye_state_t.brightness`; the port eye matches it and
-  ignores its own BOOT button while following. Telemetry reports it.
+- Brightness follows **WLED's master brightness**, so one control dims the
+  whole shark: the leader reads WLED's telemetry (`NL_MSG_WLED_TELEMETRY`,
+  2 Hz; brightness 0..255 → percent, 0 while WLED is off) and shares it in
+  `nl_eye_state_t.brightness`; the port eye matches it. 100% at power-on and
+  whenever WLED hasn't been heard for `WLED_BRI_TIMEOUT_MS` (30 s). Eye
+  brightness commands are refused (`NL_ACK_UNSUPPORTED`); the base sends its
+  eye brightness controls to WLED instead. Telemetry reports the level.
 - Sound reactivity per preset (`preset_t.peak_beats`): most presets ripple
   and thump on each **beat** (`beat_count`); peak-reactive presets (Inferno,
   Toxic, Hypno Acid, Vortex Magma = presets 3, 9, 10, 18) do it on every
@@ -248,7 +250,8 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   rx/tx/fail and free internal heap.
 
 ### Controls
-BOOT button cycles brightness 30/60/100% (saved to NVS; default 100%).
+None on the eyes themselves: brightness follows WLED (see the radio notes),
+presets and reactivity come from the base.
 
 ## Debugging with real data
 
