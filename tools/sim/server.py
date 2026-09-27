@@ -224,7 +224,7 @@ async def set_mode(source, ip):
 async def keep_mirroring():
     failed = False
     while True:
-        if mode["source"] == "shark" and mode["ip"]:
+        if mode["source"] == "shark" and mode["ip"] and clients:  # only while a page is watching
             try:
                 await asyncio.get_running_loop().run_in_executor(None, request_mirror, mode["ip"], MIRROR_RENEW_S * 3)
                 if failed:
