@@ -5,16 +5,18 @@
                                           # writes tools/sim/web/layout.json
 
 How the shark is wired (confirmed on the shark on 2026-09-26 by lighting
-each channel's first LEDs):
+each channel's first LEDs; the fins moved from outputs 3/4 to 4/5 and last
+year's eye lights were removed on 2026-09-27, so output 3, whose GPIO the
+controller's USB chip drives, is unused):
 - Channels 1 and 2 (418 and 417 LEDs): two strips back to back inside the
   main tube, one facing into the body and one facing out. Both start at the
   back edge of the pole mount and run all the way round the shark's outline.
-- Channels 3 and 4 (114 and 115 LEDs): port and starboard fin. The strip is
+- Channels 4 and 5 (114 and 115 LEDs): port and starboard fin. The strip is
   folded in half inside the fin tube: it starts at the fin's leading (front)
   edge on the outward-facing side, runs to the other end of the tube, and
   comes back on the inward-facing side.
-- Channel 5 (130 LEDs): last year's eye lights in the eye opening. They are
-  not in the model, so they are drawn as a ring on each side of the head.
+LED numbers follow WLED's outputs in order: 0-417, 418-834, 835-948 (port
+fin), 949-1063 (starboard fin); 1064 in all.
 
 Positions are in mm in the design's coordinates (Z up, +Y towards the nose,
 +X starboard). The two strips sharing a tube are drawn OFFSET_MM either side
@@ -33,15 +35,14 @@ LAYOUT = os.path.join(HERE, "web", "layout.json")
 SETTINGS = {
     "body_first_towards": "tail",     # channels 1/2 leave the pole mount heading to the tail
     "body_outward_channel": 1,        # channel 1 faces out, channel 2 into the body
-    "starboard_fin_channel": 4,       # channel 3 is the port fin
+    "port_fin_channel": 4,
+    "starboard_fin_channel": 5,
     "fin_start": "front",             # fin strips start at the leading edge ("front") end of the tube
     "fin_first_half_outward": True,   # the fin strip's first half faces out
-    "leds": {1: 418, 2: 417, 3: 114, 4: 115, 5: 130},
+    "leds": {1: 418, 2: 417, 4: 114, 5: 115},  # WLED output -> LED count (output 3 unused)
     "pole_socket_radius_mm": 12.7,
     "offset_mm": 3.0,
-    "eye_ring_radius_mm": 21.0,
-    "eye_ring_x_mm": 12.0,            # the two rings, either side of the centre plane
-    "hidden_channels": [5],           # not drawn: the old eye lights, now behind the eye screens
+    "hidden_channels": [],            # channels kept in the LED numbering but not drawn
     "eye_screen_radius_mm": 22.2,     # the eyes' round 1.75" AMOLED screens
     "eye_screen_x_mm": 17.25,         # each screen face from the body's centre plane (planned mount)
 }
@@ -183,9 +184,8 @@ def main():
                     "main tube, %s-facing strip, from the pole mount towards the %s"
                     % ("out" if outward else "in", S["body_first_towards"]))
 
-    # ---- channels 3 and 4: fins, folded strips starting and ending at the stern end
-    port_ch = 4 if S["starboard_fin_channel"] == 3 else 3
-    fin_channels = [(fins[0], S["starboard_fin_channel"], "starboard"), (fins[1], port_ch, "port")]
+    # ---- the fins: folded strips starting and ending at the leading edge
+    fin_channels = [(fins[0], S["starboard_fin_channel"], "starboard"), (fins[1], S["port_fin_channel"], "port")]
     for fin, ch, side in sorted(fin_channels, key=lambda f: f[1]):  # in WLED's LED order
         line = fin["line"]
         starts_at_front = line[0][1] > line[-1][1]                        # +Y is towards the nose
@@ -197,22 +197,12 @@ def main():
                     + spread(list(reversed(line)), n - first, S["offset_mm"], not S["fin_first_half_outward"]),
                     "%s fin, folded: from the %s end, out-facing half first" % (side, S["fin_start"]))
 
-    # ---- channel 5: last year's eye lights, a ring each side of the eye opening
-    hole = max((c for c in g["cylinders"] if "SharkBody" in c["component"] and abs(c["axis"][0]) > 0.99
-                and c["radius_mm"] < 40), key=lambda c: c["radius_mm"])
-    centre = [0.0, hole["from"][1], hole["from"][2]]
-    n5 = S["leds"][5]
-    ring_pts = []
-    for side, count in ((1, n5 // 2), (-1, n5 - n5 // 2)):
-        for i in range(count):
-            a = 2 * math.pi * i / count
-            ring_pts.append([side * S["eye_ring_x_mm"], centre[1] + S["eye_ring_radius_mm"] * math.cos(a),
-                             centre[2] + S["eye_ring_radius_mm"] * math.sin(a)])
-    add_channel(5, ring_pts, "old eye lights (not modelled): a ring each side of the eye opening")
-
     # ---- the eyes: a round screen each side, centred on the eye opening, facing out.
     # "right" is the screen's +x: towards the nose on starboard, the tail on port
     # (as motion_analysis_set_mount assumes).
+    hole = max((c for c in g["cylinders"] if "SharkBody" in c["component"] and abs(c["axis"][0]) > 0.99
+                and c["radius_mm"] < 40), key=lambda c: c["radius_mm"])
+    centre = [0.0, hole["from"][1], hole["from"][2]]
     eyes = [{"side": side, "centre": [sx * S["eye_screen_x_mm"], centre[1], centre[2]],
              "normal": [sx, 0.0, 0.0], "right": [0.0, float(sx), 0.0], "radius_mm": S["eye_screen_radius_mm"]}
             for side, sx in (("starboard", 1), ("port", -1))]

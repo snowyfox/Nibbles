@@ -13,7 +13,7 @@ python3 tools/sim/server.py          # then open http://localhost:8080/
 - **Simulator WLED**: the spare classic ESP32 bench board (CP2102,
   MAC d4:8a:fc:c5:d9:10, powered over USB) running the same WLED 16 +
   Nibbles build as the shark, with the shark's config and presets, except:
-  - LED output is one DDP network bus of all 1194 LEDs to this computer
+  - LED output is one DDP network bus of all the LEDs to this computer
     (UDP 4048), so every LED comes back at full resolution;
   - AudioReactive is in receive mode (UDP 11988);
   - the Nibbles usermod is off (so it doesn't compete with the real

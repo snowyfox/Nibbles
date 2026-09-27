@@ -58,11 +58,10 @@ simulator's layout; preview in `ledmap_preview.svg`) makes WLED treat the
 shark as a 70 x 35 matrix, seen from starboard with the nose to the right, for
 WLED's 2D effects. Seen from the side, LEDs overlap: the two strips back to
 back in the main tube, and the two fins. So only the outward strip (channel 1)
-and the starboard fin (channel 4) are mapped where they are (90% within one
+and the starboard fin (channel 5) are mapped where they are (90% within one
 9 mm cell of their real spot); the inward strip and the port fin sit in spare
 cells nearby, and the usermod copies each one's colour from its partner, so
-both sides match. Last year's eye lights (channel 5) aren't mapped and stay
-dark. The fins stick out sideways, so from the side each is a compact patch.
+both sides match. The fins stick out sideways, so from the side each is a compact patch.
 
 To use it: upload the file as `/ledmap.json` (WLED's file editor, or
 `curl -F "data=@wled/ledmap/ledmap.json;filename=/ledmap.json" http://IP/upload`)
@@ -124,12 +123,32 @@ A **Bong69 8 Port LED Distro v3** (https://github.com/bobko69/8PortLEDDistro):
 a WT32-ETH01 (classic ESP32, 4 MB flash, no PSRAM; LAN8720 clocked by an
 external oscillator on GPIO 0, so ESP-NOW is safe; Ethernet is off in its
 config anyway). Read on 2026-09-24 at 10.7.200.253: WLED 0.15.1
-"ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5, matching the board's silkscreen: channels 1-5 = GPIO 1-5, channels 6-8 = GPIO 12, 14, 15 (unused); all working),
+"ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5, matching the board's silkscreen: channels 1-5 = GPIO 1-5, channels 6-8 = GPIO 12, 14, 15 (unused); all working;
+**outputs changed 2026-09-27, see "LED outputs now" below**),
 button on GPIO 0, AudioReactive with an I2S mic (SD 17, WS 32, SCK 33),
 ESP-NOW on with a linked WiZmote, 42 presets (`presets.json` is 87 KB, so the
 usermod reads it with a names-only filter), Wi-Fi channel 11 at home, AP
 "Nibbles" on channel 1. A backup of its `cfg.json`, `presets.json` and the
 0.15.1 release image for rolling back is in `wled/backup/` (not committed).
+
+**LED outputs now (2026-09-27).** The fins moved from channels 3/4 to 4/5,
+and last year's eye lights (130 LEDs, behind the new eye screens) were
+removed, so channel 3 (GPIO 3, driven by the board's USB chip) is free and
+the controller's USB can stay connected, e.g. to a hub in the box:
+
+| Output | Pin | LEDs | What |
+|---|---|---|---|
+| 1 | GPIO 1 | 0-417 | main tube, outward strip |
+| 2 | GPIO 2 | 418-834 | main tube, inward strip |
+| 3 | - | - | unused (the CH340 drives GPIO 3) |
+| 4 | GPIO 4 | 835-948 | port fin |
+| 5 | GPIO 5 | 949-1063 | starboard fin |
+
+1064 LEDs; the LED numbers didn't change, so presets, the 2D map and the
+simulator layout still match. Of the spare channels 6-8, use 7 (GPIO 14) or
+8 (GPIO 15) first: GPIO 12 (channel 6) sets the flash voltage at boot and
+must not be pulled high then. Backup from before the change:
+`wled/backup/20260927-0851-pre-channel-move/`.
 
 **`nibbles_shark`** env: WLED 16's `esp32_eth` plus the usermod. It builds and
 fits: 1.33 MB of the 1.5 MB app partition.
@@ -153,7 +172,7 @@ LED channel 1, so there is no log. Recovered over the board's own USB port
 - DHCP gave it a new address afterwards (10.7.200.136).
 - While the USB cable is connected, LED channel 3 (GPIO 3, the UART RX pin
   that the CH340 drives) goes dark; it comes back when USB is unplugged.
-  Only connect USB for recovery.
+  (Since 2026-09-27 nothing is on channel 3, so USB can stay connected.)
 
 **Cause, found on a bench ESP32 (same chip, the controller's config and
 storage image, joined to the same Wi-Fi): the usermod.** Stock WLED 16 and the

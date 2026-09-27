@@ -15,7 +15,6 @@ inward strip, the port fin) get spare cells nearby, and the Nibbles usermod
 copies each partner LED's colour from the LED it pairs with after every frame
 (the "copy" list in the file, which WLED itself ignores). Without the usermod
 the partners still show roughly the right colours from their nearby cells.
-Last year's eye lights (channel 5) aren't mapped: they stay dark in 2D.
 
 Memory: WLED keeps about 10 bytes per matrix cell (frame buffer, segment
 buffer, map), so --cells sets the RAM cost: 2400 cells ~ 24 KB. The shark's
@@ -88,7 +87,7 @@ def main():
     out_body = s["body_outward_channel"]
     in_body = 2 if out_body == 1 else 1
     sb_fin = s["starboard_fin_channel"]
-    port_fin = 3 if sb_fin == 4 else 4
+    port_fin = s["port_fin_channel"]
     # (mapped channel, partner channel copied from it)
     pairs = [(out_body, in_body), (sb_fin, port_fin)]
     primary = rng(out_body) + rng(sb_fin)
@@ -129,7 +128,7 @@ def main():
 
     # Preview: mapped LEDs solid by channel, with a line to their exact spot;
     # partner LEDs as outlines.
-    colours = {1: "#e53935", 2: "#1e88e5", 3: "#43a047", 4: "#fb8c00"}
+    colours = {out_body: "#e53935", in_body: "#1e88e5", port_fin: "#43a047", sb_fin: "#fb8c00"}
     chan = {k: n for n, c in ch.items() for k in range(c["start"], c["start"] + c["count"])}
     S = 10
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width * S}" height="{height * S + 20}" style="background:#fff">',
