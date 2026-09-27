@@ -70,3 +70,8 @@ shark, the eyes' brightness always follows the shown WLED's master brightness.
 In this mode the preset and brightness controls change the real shark.
 The controller's address comes from `server.py --shark` (default
 10.7.200.253); the controller needs a usermod build with the mirror.
+
+## 2D map for WLED
+`make_ledmap.py` builds `wled/ledmap/ledmap.json`, a WLED 2D matrix of the
+shark from this layout (see `wled/README.md`, "2D map"). With the map on the
+bench WLED, the simulator shows its 2D effects on the shark.

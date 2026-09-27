@@ -8,6 +8,10 @@
 // - Broadcasts WLED telemetry, and shows the eyes' telemetry on the Info page.
 // - Bumps: momentary effects (flash, blackout, preset) while a base-station
 //   button is held; WLED's previous state is restored exactly afterwards.
+// - 2D map partners: with the shark's 2D map (/ledmap.json, made by
+//   tools/sim/make_ledmap.py) only one of each overlapping pair is mapped
+//   (the outward body strip, the starboard fin); after every frame the LEDs
+//   in the file's "copy" list take the colour of the LED they pair with.
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -84,19 +88,115 @@ class NibblesUsermod : public Usermod {
     nl_audio_t lastAudioOut = {};
     unsigned long lastAudioOutAt = 0;
     uint8_t ddpBuf[10 + DDP_MAX_LEDS * 3];
+    uint8_t *mirrorRgb = nullptr;  // one frame by physical LED (in 2D, cells are not LEDs)
+    unsigned mirrorRgbLeds = 0;
+
+    // 2D map partners: "copy" ranges from /ledmap.json ([dst, dst count,
+    // src, src count], physical LED numbers), turned into matrix cell pairs.
+    struct CopyRange { uint16_t dst, dstN, src, srcN; };
+    CopyRange copyRanges[4];
+    uint8_t copyRangeCount = 0;
+    bool copyRead = false;
+    uint16_t *copyPairs = nullptr;  // cell to paint, cell to copy from, ...
+    uint16_t copyPairCount = 0, copyBuiltFor = 0;
+    int copyBuiltMap = -1;
+    bool copyBuiltMatrix = false;
+    unsigned long copyBuiltAt = 0;
 
     static const char _name[];
+
+    void readCopyRanges() {
+      copyRangeCount = 0;
+      File f = WLED_FS.open(F("/ledmap.json"), "r");
+      if (!f) return;
+      if (f.find("\"copy\":[")) {
+        uint32_t vals[16];
+        int n = 0, depth = 1;
+        long num = -1;
+        while (f.available() && depth > 0 && n < 16) {
+          const char c = f.read();
+          if (c >= '0' && c <= '9') { num = (num < 0 ? 0 : num * 10) + (c - '0'); continue; }
+          if (num >= 0) { vals[n++] = num; num = -1; }
+          if (c == '[') depth++;
+          else if (c == ']') depth--;
+        }
+        for (int i = 0; i + 3 < n && copyRangeCount < 4; i += 4)
+          if (vals[i + 1] && vals[i + 3]) copyRanges[copyRangeCount++] = { (uint16_t)vals[i], (uint16_t)vals[i + 1], (uint16_t)vals[i + 2], (uint16_t)vals[i + 3] };
+      }
+      f.close();
+    }
+
+    // Matrix cell of each physical LED, from WLED's map; then the pairs.
+    void buildCopyPairs() {
+      free(copyPairs);
+      copyPairs = nullptr;
+      copyPairCount = 0;
+      copyBuiltFor = strip.getLengthTotal();
+      copyBuiltMap = currentLedmap;
+      copyBuiltMatrix = strip.isMatrix;
+      copyBuiltAt = millis();
+      // every output, network ones included (the simulator bench sends its LEDs over the network)
+      const unsigned phys = BusManager::getTotalLength(false), total = strip.getLengthTotal();
+      if (!strip.isMatrix || !copyRangeCount || !phys) return;
+      uint16_t *cellOf = (uint16_t *)malloc(phys * sizeof(uint16_t));
+      if (!cellOf) return;
+      for (unsigned p = 0; p < phys; p++) cellOf[p] = 0xFFFF;
+      for (unsigned i = 0; i < total; i++) {
+        const uint16_t p = strip.getMappedPixelIndex(i);
+        if (p < phys) cellOf[p] = i;
+      }
+      unsigned count = 0;
+      for (int r = 0; r < copyRangeCount; r++) count += copyRanges[r].dstN;
+      copyPairs = (uint16_t *)malloc(count * 2 * sizeof(uint16_t));
+      if (copyPairs) {
+        for (int r = 0; r < copyRangeCount; r++) {
+          const CopyRange &c = copyRanges[r];
+          for (unsigned k = 0; k < c.dstN; k++) {
+            // the partner at the same fraction along its own range
+            const unsigned d = c.dst + k, sidx = c.src + (c.dstN > 1 ? (k * (c.srcN - 1) + (c.dstN - 1) / 2) / (c.dstN - 1) : 0);
+            if (d >= phys || sidx >= phys || cellOf[d] == 0xFFFF || cellOf[sidx] == 0xFFFF) continue;
+            copyPairs[copyPairCount * 2] = cellOf[d];
+            copyPairs[copyPairCount * 2 + 1] = cellOf[sidx];
+            copyPairCount++;
+          }
+        }
+      }
+      free(cellOf);
+    }
 
     bool mirroring(unsigned long now) const { return mirrorPort && (long)(mirrorUntil - now) > 0; }
 
     // One frame as the LEDs show it (gamma and brightness applied; the
     // current limiter's extra dimming is not included), as DDP packets.
     void sendMirrorFrame() {
-      const unsigned total = strip.getLengthTotal();
+      // Every LED's colour, put where WLED sends it (through the LED map, so
+      // 2D matrix cells land on their LEDs), with gamma and brightness.
+      const unsigned phys = BusManager::getTotalLength(false), total = strip.getLengthTotal();
+      if (mirrorRgbLeds != phys) {
+        free(mirrorRgb);
+        mirrorRgb = (uint8_t *)malloc(phys * 3);
+        mirrorRgbLeds = mirrorRgb ? phys : 0;
+        if (!mirrorRgb) return;
+      }
+      memset(mirrorRgb, 0, phys * 3);
       const uint8_t bri = strip.getBrightness();
-      for (unsigned start = 0; start < total; start += DDP_MAX_LEDS) {
-        const unsigned n = min((unsigned)DDP_MAX_LEDS, total - start);
-        const bool last = start + n >= total;
+      if (bri) {
+        for (unsigned i = 0; i < total; i++) {
+          const unsigned p = strip.getMappedPixelIndex(i);
+          if (p >= phys) continue;
+          uint32_t c = strip.getPixelColor(i);
+          if (!c) continue;
+          c = gamma32(c);
+          const uint8_t w = W(c);
+          uint8_t *d = mirrorRgb + p * 3;
+          d[0] = scale8(qadd8(w, R(c)), bri);  // white folded into RGB, like the live view
+          d[1] = scale8(qadd8(w, G(c)), bri);
+          d[2] = scale8(qadd8(w, B(c)), bri);
+        }
+      }
+      for (unsigned start = 0; start < phys; start += DDP_MAX_LEDS) {
+        const unsigned n = min((unsigned)DDP_MAX_LEDS, phys - start);
+        const bool last = start + n >= phys;
         const uint32_t offset = start * 3;
         ddpBuf[0] = 0x40 | (last ? 0x01 : 0x00);  // version 1, push on the last packet
         ddpBuf[1] = ddpSeq & 0x0f;
@@ -104,15 +204,7 @@ class NibblesUsermod : public Usermod {
         ddpBuf[3] = 1;                             // output device
         ddpBuf[4] = offset >> 24; ddpBuf[5] = offset >> 16; ddpBuf[6] = offset >> 8; ddpBuf[7] = offset;
         ddpBuf[8] = (n * 3) >> 8; ddpBuf[9] = (n * 3) & 0xff;
-        uint8_t *d = ddpBuf + 10;
-        for (unsigned i = 0; i < n; i++) {
-          uint32_t c = strip.getPixelColor(start + i);
-          if (c) c = gamma32(c);
-          const uint8_t w = W(c);
-          *d++ = bri ? scale8(qadd8(w, R(c)), bri) : 0;  // white folded into RGB, like the live view
-          *d++ = bri ? scale8(qadd8(w, G(c)), bri) : 0;
-          *d++ = bri ? scale8(qadd8(w, B(c)), bri) : 0;
-        }
+        memcpy(ddpBuf + 10, mirrorRgb + offset, n * 3);
         mirrorUdp.beginPacket(mirrorIp, mirrorPort);
         mirrorUdp.write(ddpBuf, 10 + n * 3);
         mirrorUdp.endPacket();
@@ -152,7 +244,11 @@ class NibblesUsermod : public Usermod {
 
     void mirrorLoop() {
       const unsigned long now = millis();
-      if (!mirroring(now) || now - lastMirror < MIRROR_MIN_MS) return;
+      if (!mirroring(now)) {
+        if (mirrorRgb) { free(mirrorRgb); mirrorRgb = nullptr; mirrorRgbLeds = 0; }  // only while streaming
+        return;
+      }
+      if (now - lastMirror < MIRROR_MIN_MS) return;
       lastMirror = now;
       sendMirrorFrame();
       sendMirrorState(now);
@@ -430,6 +526,12 @@ class NibblesUsermod : public Usermod {
     }
 
     void loop() override {
+      if (!copyRead) { readCopyRanges(); copyRead = true; }
+      // (Re)build when the map changes; WLED loads it after we first run, so
+      // also retry every 5 s while nothing pairs up.
+      if (copyRangeCount && (strip.getLengthTotal() != copyBuiltFor || currentLedmap != copyBuiltMap ||
+                             strip.isMatrix != copyBuiltMatrix || (!copyPairCount && millis() - copyBuiltAt > 5000)))
+        buildCopyPairs();
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       if (!radioUp()) return;
       for (;;) {
@@ -471,6 +573,13 @@ class NibblesUsermod : public Usermod {
 #endif
     }
 
+    // Called by WLED after the frame is put together, before it goes to the LEDs.
+    void handleOverlayDraw() override {
+      if (!strip.isMatrix || !copyPairs) return;
+      for (unsigned i = 0; i < copyPairCount; i++)
+        strip.setPixelColor(copyPairs[i * 2], strip.getPixelColor(copyPairs[i * 2 + 1]));
+    }
+
     bool onEspNowMessage(uint8_t *sender, uint8_t *payload, uint8_t len) override {
       if (!enabled || len < sizeof(nl_radio_hdr_t) || payload[0] != NL_RADIO_MAGIC0 || payload[1] != NL_RADIO_MAGIC1)
         return false;  // not ours: let WLED handle it (e.g. WiZ remotes)
@@ -498,6 +607,12 @@ class NibblesUsermod : public Usermod {
                  anchor ? " (anchor)" : "", (unsigned long)rxCount, (unsigned long)cmdCount, (unsigned long)bumpCount,
                  !audio ? "off" : audioSent ? "sending" : "no AudioReactive");
         radio.add(buf);
+      }
+      if (strip.isMatrix && copyRangeCount) {
+        JsonArray m2 = user.createNestedArray(F("Nibbles 2D map"));
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%u partner LEDs copied", copyPairCount);
+        m2.add(buf);
       }
       if (mirroring(millis())) {
         JsonArray m = user.createNestedArray(F("Nibbles mirror"));

@@ -46,8 +46,50 @@ eyes and base (`shared/nibbles_link`).
   the WT32 build: identical to the bench's own network LED output, 44
   frames/s, WLED's frame rate unchanged (43 fps), 10-minute soak clean. On
   the real controller since 2026-09-26 (42 frames/s to the simulator).
+- **2D map partners**: with the shark's 2D map (below) it copies each partner
+  LED's colour from the LED it pairs with after every frame (the `"copy"`
+  list in `/ledmap.json`). The Info page shows how many ("Nibbles 2D map").
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
   (default off).
+
+## 2D map
+`wled/ledmap/ledmap.json` (made by `tools/sim/make_ledmap.py` from the
+simulator's layout; preview in `ledmap_preview.svg`) makes WLED treat the
+shark as a 70 x 35 matrix, seen from starboard with the nose to the right, for
+WLED's 2D effects. Seen from the side, LEDs overlap: the two strips back to
+back in the main tube, and the two fins. So only the outward strip (channel 1)
+and the starboard fin (channel 4) are mapped where they are (90% within one
+9 mm cell of their real spot); the inward strip and the port fin sit in spare
+cells nearby, and the usermod copies each one's colour from its partner, so
+both sides match. Last year's eye lights (channel 5) aren't mapped and stay
+dark. The fins stick out sideways, so from the side each is a compact patch.
+
+To use it: upload the file as `/ledmap.json` (WLED's file editor, or
+`curl -F "data=@wled/ledmap/ledmap.json;filename=/ledmap.json" http://IP/upload`)
+and reboot. **WLED then runs as a 2D matrix for every preset**: 1D presets
+(segments by strip position) need redoing for 2D; a 2D segment covering the
+whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":35}`. Delete the
+file and reboot to go back.
+
+Bench (2026-09-26, same firmware and map): the partner copies match exactly
+(0 of 531 differ), the eye rings stay dark; most 2D effects run at 43 fps
+(Octopus, Noise2D, Waverly, Black Hole), Plasma Ball 40, Distortion Waves 24;
+the matrix costs 4-9 KB of RAM. **On the shark's controller since
+2026-09-26** (with the lean build): 42 fps, 83 KB free; while the simulator
+mirrors it, 33 fps and 25-30 frames/s to the simulator. Its 1D presets don't
+work in 2D (see above); to go back to 1D, follow
+`wled/backup/20260926-1850-pre-2d/REVERT.md` (delete `/ledmap.json`, reboot;
+tested on the bench).
+
+## Lean build
+`nibbles_shark` leaves out features the shark doesn't use: Ethernet (it runs
+on Wi-Fi; Ethernet was already off in its config), Alexa, Hue sync, MQTT,
+infrared, Loxone and the Pixel Forge tool. That saves 82 KB of program space
+(1.25 MB of the 1.5 MB app slot used, ~318 KB free) but only ~1.3 KB of static
+RAM and 1.5-3 KB of free heap on the bench: most RAM goes to Wi-Fi,
+AudioReactive, WLED's JSON buffer and the LED buffers, which these flags
+don't touch. The release name stays "ESP32_Ethernet": WLED 16 refuses an
+over-the-air update whose release name differs from the installed one.
 
 ## Building
 Tested with **WLED v16.0.1**, PlatformIO 6.2.0 and Node.js 20 (WLED's web UI
