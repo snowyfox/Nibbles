@@ -133,3 +133,89 @@ preset picks which one it reacts to (`peak_beats`).
   real music).
 - Eye cable: GND, TX and RX. Power stays separate unless the boards share a
   supply.
+
+## Top-of-pole wiring (planned 2026-09-27)
+The WLED controller sits in a weatherproof box on top of the pole; the eyes
+are sealed in small weatherproof domes on the shark, with no access to their
+boards or ports once installed. Plan for programming and powering them:
+- **USB hub in the controller box**, powered from the box's 5 V (not from
+  the computer). Its upstream USB-C socket sits inside the box (the box is
+  weatherproof and opens easily, so the socket needs no sealing of its own);
+  add 5.1 kOhm from CC1 and CC2 to GND if the hub board lacks them, and a
+  small USB TVS array. One cable from a computer then reaches every board:
+  - **each eye**: a 4-wire harness (5 V, GND, D+, D-; under 1 m; twist the
+    data pair) ending in a USB-C plug in the eye's own port, inside its
+    dome (no cable gland: the plug and the harness end are sealed in the
+    dome). Flashing and the once-a-second status logs work as over a
+    normal USB cable, and even a crashing build can be re-flashed (the
+    ESP32-S3's USB programming is in hardware). The eyes are told apart by
+    their serial numbers (MACs);
+  - **the WLED controller's own USB port** (CH340), permanently: nothing is
+    on its channel 3 any more (see the WLED outputs in `wled/README.md`), so
+    the USB chip driving GPIO 3 no longer blanks LEDs. Opening its serial
+    port may reset WLED; only done deliberately at the bench;
+  - a spare port for later (the base station, a fin-sensor board).
+- **Eye power**: a separate 5 V feed from the box's supply, not from the LED
+  distribution (full-white flashes sag that rail; it browned out the
+  controller before), with a few hundred uF at the eyes or the hub outputs.
+  Both eyes are loads on one supply here; the old "never link VBUS" rule was
+  about two eyes each on their own USB supply being joined, so never also
+  plug an eye into a separate supply while it is wired in.
+- **Hub hardware**: start with an off-the-shelf FE1.1s or CH334/CH335 USB 2.0
+  hub module (a few dollars; one whose downstream ports take their 5 V from
+  a supply input you feed). Fold it into a custom box PCB later (hub, USB-C
+  with ESD, locking harness connectors, per-eye fuse and bulk capacitors),
+  alongside the planned custom base boards.
+- Over-the-air updates for the eyes (below) become optional with this.
+
+## Ideas for later
+- **Over-the-air updates for the eyes** (2026-09-26; not started). Today each
+  eye has one 8 MB app partition (`firmware/eyes/partitions.csv`) and no
+  update code, so every update needs USB; the base is the same. Plan:
+  1. One last USB flash per eye to a partition table with `otadata` and two
+     OTA app slots (16 MB flash, the image is ~0.8 MB, so e.g. 2 x 4 MB);
+     NVS stays where it is.
+  2. Leader eye: only when asked (a base command or a button), join the same
+     Wi-Fi as WLED (hotspot or its AP; same channel as ESP-NOW, so the radio
+     keeps working) and take an upload from the Mac over HTTP, like WLED's
+     update page. Off the network otherwise, so the frame rate is untouched;
+     measure it while connected.
+  3. Port eye: the leader passes the image on over the eye cable (1 Mbaud,
+     roughly 10-20 s), so the port eye needs no radio.
+  4. Rollback: a new image is marked good only after it boots and renders
+     normally; otherwise the bootloader goes back to the previous one, so a
+     bad update can't leave an eye dead on the pole.
+  The base could get the same later.
+- **Fins: independent effects and following the real fin angle** (2026-09-26;
+  not started). The shark's WLED is a 2D matrix (side view, `wled/README.md`
+  "2D map"); the usermod already copies partner LEDs each frame.
+  - *Fins on their own matrix for some presets*: grow the grid (70 x 35 side
+    view plus fin panels below it, each fin face-on, ~20 x 12 cells, and
+    optionally a one-row strip per fin, 115 cells, for 1D effects along a
+    fin). The fin LEDs live in the fin panels; their spots in the side view
+    become empty cells. Every frame the usermod picks each fin's source from
+    which segments the preset has switched on: only the side view on ->
+    fins take the side view's colour at their spot (as now); a fin panel or
+    strip segment on -> the fins show that effect; port and starboard can be
+    separate segments or copy each other. Plain WLED presets, no special flag.
+    Cost ~7 KB more RAM (~3,100 cells). The body could get the same one-row
+    treatment (channel 1 as two rows of ~209; rows max 255) so 1D-style
+    presets work in 2D.
+  - *Fins that follow their real position*: each fin hangs on one hinge (the
+    FinMount, axis along the fin root, tilted ~44 degrees nose-up), so one angle per
+    fin says where it is. Sense it with a magnetic angle sensor on the hinge
+    (AS5600 + magnet; absolute, no drift, analog out) rather than an IMU (an
+    IMU needs the body's own motion subtracted, e.g. from the eyes' IMUs). A
+    small ESP32-C3 near the fins, powered from the fin LEDs' 5 V, broadcasts
+    the angles over ESP-NOW (a new "fin pose" message in the shared
+    protocol) at 50-100 Hz; the Bong69's spare outputs are probably
+    output-only buffers, so wiring into the controller is unlikely (unchecked).
+    The usermod rotates each fin LED's rest position about the hinge axis by
+    the angle, projects it onto the side view and samples the colour there
+    (~0.2 ms/frame, ~3 KB for the rest positions, written into the map file
+    by `make_ledmap.py` from the Fusion geometry). In fin-panel mode the angle
+    could drive the fin effect instead (e.g. flap strength -> brightness).
+  - Order: simulator first (per-fin hinge sliders; the 3D view rotates the
+    fins), then the usermod on the bench fed a test angle through JSON, then
+    hardware. Unknowns: how far the fins swing, room at the hinge for a
+    magnet and sensor, whether a wire can reach the fins.
