@@ -200,18 +200,35 @@ WLED 16 read the noise there as button presses (0.15 didn't). The button was
 removed from the config (`hw.btn.ins` now empty; nothing on the board uses
 it) and the toggling stopped. Don't put a button on GPIO 0 on this board.
 
-**Power and the flash bump.** A flash bump turns all 1194 LEDs (2020-size
-WS281x) full white. With WLED's current limiter off, that rebooted the
-controller (a brownout). The bench board with the same firmware and config but
-no LEDs handled flash, blackout and preset bumps fine. The LEDs run from a
-50 W 12-24 V to 5 V converter (at most 10 A), fed with 20 V from a USB-PD
-trigger board (3-5 A) or a 4S 21700 pack. WLED's global limiter
-(`hw.led.maxpwr`, with its 55 mA-per-LED estimate) is now set to **5000 mA**:
-8000 still rebooted on a flash, 5000 survived single and repeated flashes.
-With 2020 LEDs, WLED's estimate overstates the real draw, so "5000" is a cap in
-WLED's units, not a measured 5 A. Normal presets are far below it (preset 230
-is estimated at about 120 mA). Keep the limiter on; retest flashes if the
-power hardware changes.
+**Power and the flash bump.** A flash bump turns every LED (2020-size
+WS281x) full white. The LEDs run from a 100 W 12-24 V to 5 V converter (rated
+20 A; an older 50 W one was replaced in 2025), fed from the pole base: 20 V from a USB-PD trigger board (3-5 A) or a
+4S 21700 pack. The bench board handled flash, blackout and preset bumps fine.
+
+*Measured 2026-10-02* on a bench supply at the pole base (in place of the
+PD/battery input), full white at full brightness with the limiter off:
+**about 100 W in**. After the converter's losses (~85-92%) that is about
+16.5-18 A at 5 V, or **15.5-17 mA per LED at full white**, not WLED's
+default estimate of 55 mA. That is 85-90% of the converter's 20 A, so it can
+run full white, but it is more than a 60 W (20 V x 3 A) PD source can give.
+
+*WLED's limiter now* (since 2026-10-02): every output estimates **17 mA per
+LED** (`ledma`, the top of the measured range, so it errs safe) and the
+global limit (`hw.led.maxpwr`) is **17000 mA**, now in real milliamps: 85%
+of the converter's 20 A, so full white runs at about 95%. That needs a
+supply that can give ~100 W into the converter (the bench supply, the 4S
+pack); 9000 mA (full white at about half) was the setting before.
+
+*Earlier brownouts*: with the old 55 mA estimate, "8000" (~2.5 A real)
+browned out the controller on a flash and "5000" (~1.5 A real) survived.
+The USB-PD trigger board is rated 5 A (100 W at 20 V), so the limit was the
+PD source it was plugged into: on a V-mount battery with 100 W USB-PD
+output the shark runs full white without trouble, as on the bench supply.
+**Match the limit to the source**: 17000 mA for a 100 W PD source (with a
+5 A cable), about 9000 mA for a 60 W one, lower for anything weaker (test
+with a flash bump). Keep the limiter on, and retest
+flashes whenever the power hardware changes. Backups from before these
+changes: `wled/backup/20261002-0731-pre-ledma/`, `20261002-0736-pre-17000/`.
 
 Upgrade plan (for later upgrades):
 1. Back up its config and presets (WLED → Config → Security & Updates →

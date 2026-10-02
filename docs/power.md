@@ -28,7 +28,7 @@ flowchart LR
   CHG2 --> PACK
   PACK --> MUX
   MUX --> EFUSE["eFuse + INA228"]
-  EFUSE --> CONV["Lighting converter<br/>50 W, out 5 V"]
+  EFUSE --> CONV["Lighting converter<br/>100 W, out 5 V"]
   CONV --> LEDS["WLED lights"]
   CHG -- "system rail" --> BUCK["5 V buck"]
   BUCK --> BASE["Base station<br/>Waveshare ESP32-S3-Touch-LCD-3.49 V2"]
@@ -50,12 +50,20 @@ ESP32-S3-WROOM-1-N16R8) is a possible later step.
 
 | Load | Power | Notes |
 | --- | --- | --- |
-| Lighting converter | ~55 W max | 50 W output at ~90% efficiency; WLED averages far less |
+| Lighting converter | ~100 W max (measured) | Converter rated 100 W out (20 A at 5 V); WLED's limiter caps it; presets average far less |
 | Internal pack charging | ~34 W standard, ~59 W quick | 2.0 A or 3.5 A at up to 16.8 V |
 | Base station + power board | ~1–2 W | *estimate* |
 
+**Measured 2026-10-02**: full white at full brightness, WLED's limiter off,
+from a bench supply at the pole base feeding the converter: **about 100 W
+in**, so about 16.5–18 A at 5 V, or 15.5–17 mA per LED for the 1064 LEDs.
+That is 85–90% of the converter's rating. WLED now estimates 17 mA per LED
+and limits the total to 17,000 mA, so full white runs at about 95% (about
+95 W in). See `wled/README.md`, "Power and the flash bump".
+
 Worst case over the dock cable is lights at full plus quick charging, around
-**115 W**. Firmware caps this (see charge policy).
+**160 W** (the earlier 115 W assumed a 50 W converter). Firmware caps this
+(see charge policy).
 
 ## Internal pack
 
@@ -65,9 +73,11 @@ Worst case over the dock cable is lights at full plus quick charging, around
 - Energy: 4 × 3.6 V × 6.25 Ah = **90 Wh**, about 80 Wh usable.
 - Last year's pack used F60s (6000 mAh, otherwise the same ratings). **Never
   mix models, ages or batches inside one pack.**
-- Untethered runtime *estimates*: 50 W ≈ 1.5 h, 30 W ≈ 2.5 h, 20 W ≈ 4 h.
+- Untethered runtime *estimates*: 100 W (full white) ≈ 0.8 h, 50 W ≈ 1.5 h,
+  30 W ≈ 2.5 h, 20 W ≈ 4 h.
 - Needs a BMS with per-cell protection and balancing, rated 10 A or more, plus
-  a pack fuse. Open decision: a separate 4S BMS board plus a BQ34Z100-G1
+  a pack fuse. Full white draws about 6–8 A from the pack (100 W at 16.8 V
+  down to the 13 V cutoff), so 10 A leaves modest margin. Open decision: a separate 4S BMS board plus a BQ34Z100-G1
   gauge, or a BQ40Z50 (protection, balancing and gauge in one; needs TI tools
   to configure).
 - Thermistor against the cells, wired to the charger's TS input, so charging
@@ -99,9 +109,10 @@ Worst case over the dock cable is lights at full plus quick charging, around
   on/off control from the base.
 - **INA228** on the lighting output: live voltage, current and power, used for
   runtime estimates and to measure the real average draw.
-- **Lighting converter:** the current one needs 12–24 V in. Plan to replace it
-  with a **9–36 V input** 5 V converter so it keeps working down to the VB99's
-  11.2 V cutoff and through cable voltage drop. Until then, cut off at about
+- **Lighting converter:** the current one (100 W, 20 A out) needs 12–24 V in.
+  Plan to replace it with a **9–36 V input** 5 V converter, **100 W (20 A) or
+  more**, so it keeps working down to the VB99's 11.2 V cutoff and through
+  cable voltage drop, and still covers full white. Until then, cut off at about
   13.0 V (internal pack) and switch dock batteries at about 12.5 V.
 
 ### Logic supply
@@ -114,8 +125,8 @@ Worst case over the dock cable is lights at full plus quick charging, around
 
 ### PCB notes
 
-- High-current path (up to ~9 A) on copper pours; consider 2 oz copper at
-  JLCPCB.
+- High-current path (up to ~11 A: full-white lights plus quick charging
+  from the dock) on copper pours; consider 2 oz copper at JLCPCB.
 - Give the BQ25798 copper area for heat (3–5 W while quick charging).
 - XT30 for the internal pack connection.
 
@@ -133,7 +144,8 @@ Worst case over the dock cable is lights at full plus quick charging, around
   directly.
 - Charge level per slot is estimated from voltage (the VB99's internal gauge
   is not readable through the plate).
-- Usable energy per VB99 *estimate*: ~90 Wh, about 1.5–1.7 h at 50 W.
+- Usable energy per VB99 *estimate*: ~90 Wh, about 1.5–1.7 h at 50 W, under
+  1 h at full white (100 W).
 - Fallback with no dock: VB99 models with a 100 W USB-C PD output can plug
   straight into the power board's USB-C input.
 
@@ -149,12 +161,13 @@ and good strain relief.
 
 | Pin | Signal | Notes |
 | --- | --- | --- |
-| 1–3 | Battery + | ~2.6 A per pin at 115 W worst case |
+| 1–3 | Battery + | ~3.7 A per pin at 160 W worst case (5 A contact rating) |
 | 4–6 | Ground | same |
 | 7 | Data | single-wire UART, dock ↔ base (same idea as the eye cable) |
 | 8 | Dock detect / enable | see hot-plug rules |
 
-Voltage drop *estimate* at 2 m: about 0.3 V at 55 W, about 0.5 V at 95 W.
+Voltage drop *estimate* at 2 m: about 0.3 V at 55 W, about 0.5 V at 95 W,
+about 0.85 V at 160 W.
 If a shielded cable is ever used, bond the shield to the LEMO shell at the
 base end only and never carry current on it.
 
@@ -248,7 +261,10 @@ empties to limit cable current, cable heat and strain on the VB99.
 | below 12.0 V | 0 (lights only) |
 
 Also cap total input power at about 95 W, and let the thermistor override
-everything. Thresholds are starting points to tune on real hardware. Over
+everything. Full-white lights alone now reach about 100 W, so with the
+lights at full the cap leaves nothing for charging: the lights take
+priority (the charger's input current limit backs off), or raise the cap if
+the dock cable and VB99 allow (a VB99's 10 A output at ~14.5 V is ~145 W). Thresholds are starting points to tune on real hardware. Over
 USB-C, charge at the rate the PD source allows, up to 3.5 A.
 
 ## Open decisions
