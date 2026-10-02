@@ -215,7 +215,29 @@ boards or ports once installed. Plan for programming and powering them:
     (~0.2 ms/frame, ~3 KB for the rest positions, written into the map file
     by `make_ledmap.py` from the Fusion geometry). In fin-panel mode the angle
     could drive the fin effect instead (e.g. flap strength -> brightness).
+  - *Range* (the user, 2026-09-30): close to 180 degrees, from straight up
+    to straight down. The model's fin rests drooping down and out, not
+    level, and the hinge axis is tilted ~44 degrees nose-up, so "up" is
+    up-and-back and "down" down-and-forward. A rough rotation of the model
+    suggests the fin reaches 30-40 mm below the belly, past the 2D grid's
+    bottom edge, in the lower part of the swing: add ~5 rows to the grid
+    (~3.5 KB RAM) or let fin LEDs outside the grid go dark. The simulator
+    sliders should show the real sweep before any hardware.
+  - *Sensor choice*: either an AS5600 (12-bit; I2C at a fixed address 0x36,
+    analog and PWM outputs; everywhere, lots of examples; the AS5600L has a
+    settable address) or an MT6701 (14-bit; SSI with a chip-select per
+    sensor, plus I2C, analog, PWM; less noisy; fewer examples) is far finer
+    than needed. With one small board reading both fins, prefer the MT6701
+    over SSI (two sensors share clock and data; robust digital next to the
+    LED wiring); the ESP32-C3 has one I2C bus, so two AS5600s would need the
+    analog outputs (with an RC filter) or an AS5600L. With a board per fin,
+    the AS5600 over I2C is simplest. Mount the sensor on the body side and
+    the magnet (diametric disc) on the fin side of the hinge so no wires
+    flex; centre it on the axis within ~0.5 mm, 1-3 mm gap; keep steel and
+    LED power wires away. Keep the 0/360 wrap in the unreachable half or
+    unwrap in software; calibrate both limits (straight up and down) in
+    software rather than burning a zero into the chip.
   - Order: simulator first (per-fin hinge sliders; the 3D view rotates the
     fins), then the usermod on the bench fed a test angle through JSON, then
-    hardware. Unknowns: how far the fins swing, room at the hinge for a
-    magnet and sensor, whether a wire can reach the fins.
+    hardware. Unknowns: room at the hinge for a magnet and sensor, whether a
+    wire can reach the fins.
