@@ -93,7 +93,10 @@ whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":41}` (the bottom six
 rows, added 2026-10-21, are where a fin swung down reaches; the shark's 2D
 presets, including boot preset 230, were changed from 35 to 41 rows then).
 WLED keeps `presets.json` in memory and, with no clock (NTP off), may not
-notice an uploaded file: restart it after uploading presets. Delete the
+notice an uploaded file: restart it after uploading presets. Then reload
+WLED's web page in every browser that has it open: clicking a preset there
+sends the preset's whole content from the page's own copy (kept in the
+browser's local storage), so a stale page keeps applying the old presets. Delete the
 file and reboot to go back.
 
 Bench (2026-09-26, same firmware and map): the partner copies match exactly
