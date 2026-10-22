@@ -254,7 +254,8 @@ class NibblesUsermod : public Usermod {
             fins.angle_cdeg[f.side] == NL_FIN_NONE) continue;
         const float deg = fins.angle_cdeg[f.side] / 100.0f;
         if (isnan(f.srcDeg) || fabsf(deg - f.srcDeg) >= 0.2f) placeFin(f, deg, W, H);
-        for (unsigned i = 0; i < f.count && n < finColorsLen; i++) finColors[n++] = strip.getPixelColor(f.src[i]);
+        // NoMap: most cells have no LED of their own, and getPixelColor() reads those as black.
+        for (unsigned i = 0; i < f.count && n < finColorsLen; i++) finColors[n++] = strip.getPixelColorNoMap(f.src[i]);
         finFollowing |= 1 << k;
       }
     }
