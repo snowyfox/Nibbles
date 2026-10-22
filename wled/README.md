@@ -90,7 +90,10 @@ To use it: upload the file as `/ledmap.json` (WLED's file editor, or
 and reboot. **WLED then runs as a 2D matrix for every preset**: 1D presets
 (segments by strip position) need redoing for 2D; a 2D segment covering the
 whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":41}` (the bottom six
-rows, added 2026-10-21, are where a fin swung down reaches). Delete the
+rows, added 2026-10-21, are where a fin swung down reaches; the shark's 2D
+presets, including boot preset 230, were changed from 35 to 41 rows then).
+WLED keeps `presets.json` in memory and, with no clock (NTP off), may not
+notice an uploaded file: restart it after uploading presets. Delete the
 file and reboot to go back.
 
 Bench (2026-09-26, same firmware and map): the partner copies match exactly
