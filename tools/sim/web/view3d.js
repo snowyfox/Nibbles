@@ -8,6 +8,7 @@ import { OBJLoader } from './vendor/OBJLoader.js';
 let renderer, scene, camera, controls, container, home;
 let core, glow, colors, count = 0, shown = false, hidden = null;
 let ledGeo = null, finMeshes = { port: [], starboard: [] };
+let spin = null, model = null;  // the shark turns about the pole: spin (pivot at the pole) > model
 let rgbNow = null, offPlane = [], leds3 = null;  // latest WLED frame; LEDs off the body's plane
 const eyeTextures = [];
 const CORE_SIZE = 6, GLOW_SIZE = 22;  // mm, times the page's LED size setting
@@ -63,7 +64,16 @@ function build(layout) {
   });
   glow = new THREE.Points(geo, mat(GLOW_SIZE, 0.5));  // the diffuser's soft spread
   core = new THREE.Points(geo, mat(CORE_SIZE, 1.0));
-  scene.add(glow, core);
+  // Everything of the shark goes in "model", inside "spin", which pivots on
+  // the pole's axis (vertical, through the pole), so the whole shark can turn.
+  const pole = (layout.pole && layout.pole.line && layout.pole.line[0]) || [0, 0, 0];
+  spin = new THREE.Group();
+  spin.position.set(pole[0], 0, pole[2]);
+  model = new THREE.Group();
+  model.position.set(-pole[0], 0, -pole[2]);
+  spin.add(model);
+  scene.add(spin);
+  model.add(glow, core);
 
   // Frame the LEDs
   geo.computeBoundingSphere();
@@ -98,7 +108,7 @@ function build(layout) {
         if (cx > 1.5) finMeshes.starboard.push(m);
         else if (cx < -1.5) finMeshes.port.push(m);
       });
-      scene.add(obj);
+      model.add(obj);
     });
   }
   // The eyes: each screen a disc showing its eye canvas (see eyes.js), in
@@ -113,7 +123,7 @@ function build(layout) {
       mesh.matrixAutoUpdate = false;
       mesh.matrix.makeBasis(new THREE.Vector3(...r), new THREE.Vector3(...u), new THREE.Vector3(...n))
         .setPosition(...e.centre.map((c, i) => c + n[i] * out));
-      scene.add(mesh);
+      model.add(mesh);
     };
     place(new THREE.Mesh(new THREE.CircleGeometry(e.radius_mm + 3, 48),
                          new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.4 })), -0.5);
@@ -155,7 +165,8 @@ function shadeLeds() {
   if (!colors || !rgbNow) return;
   const n = Math.min(count, rgbNow.length / 3);
   for (let i = 0; i < n * 3; i++) colors[i] = hidden && hidden[(i / 3) | 0] ? 0 : rgbNow[i] / 255;
-  const behind = window.nibblesBehindBody, c = camera.position;
+  const behind = window.nibblesBehindBody;
+  const c = model ? model.worldToLocal(camera.position.clone()) : camera.position;  // the camera, in the shark's own frame
   if (behind) {
     for (const i of offPlane) {
       if (i >= n) continue;
@@ -192,7 +203,9 @@ window.nibbles3d = {
   // A world direction in camera space: [right, up, towards the viewer].
   viewDir(v) {
     if (!camera) return null;
-    const d = new THREE.Vector3(...v).transformDirection(camera.matrixWorldInverse);
+    const d = new THREE.Vector3(...v);
+    if (spin) d.applyQuaternion(spin.quaternion);  // the shark's own axes, as turned
+    d.transformDirection(camera.matrixWorldInverse);
     return [d.x, d.y, d.z];
   },
   // A fin turned by ang (radians) about its hinge: LEDs from layout.leds,
@@ -213,6 +226,10 @@ window.nibbles3d = {
       mesh.matrix.copy(m);
       mesh.matrixWorldNeedsUpdate = true;
     }
+  },
+  // Turn the shark about the pole (radians, counter-clockwise seen from above).
+  setSpin(angle) {
+    if (spin) spin.rotation.y = angle;
   },
   hide() {
     shown = false;

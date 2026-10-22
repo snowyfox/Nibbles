@@ -350,13 +350,38 @@ function turn([x, y, z]) {
   return [x, y, z];
 }
 // Does a surface with this normal face the viewer?
+// The shark turning about the pole (the Spin slider): its points and
+// directions turned by spinAngle about the vertical axis through the pole.
+let spinAngle = 0, spinRpm = 0;
+function spinPivot() { return (layout && layout.pole && layout.pole.line && layout.pole.line[0]) || [0, 0, 0]; }
+function spinDir([x, y, z]) {
+  if (!spinAngle) return [x, y, z];
+  const c = Math.cos(spinAngle), s = Math.sin(spinAngle);
+  return [x * c + z * s, y, -x * s + z * c];  // counter-clockwise seen from above (y up)
+}
+function spinPoint(p) {
+  if (!spinAngle) return p;
+  const o = spinPivot();
+  const d = spinDir([p[0] - o[0], p[1], p[2] - o[2]]);
+  return [d[0] + o[0], d[1], d[2] + o[2]];
+}
+// Half the shark's widest sweep about the pole (for a steady scale while it turns).
+function spinRadius() {
+  const o = spinPivot();
+  let r = 0;
+  for (const p of layout.leds) r = Math.max(r, Math.hypot(p[0] - o[0], p[2] - o[2]));
+  return r;
+}
+
 function facing(n) {
+  n = spinDir(n);
   if (view === '3d') return turn(n)[2] > 0;
   if (view === 'side') return n[0] > 0;   // side view looks at the starboard side
   if (view === 'top') return n[1] > 0;
   return n[2] < 0;                        // front view looks at the nose
 }
 function project(p) {
+  p = spinPoint(p);
   if (view === '3d') {  // simple perspective orbit (the WebGL-less 3D view)
     const c = focus3d.pivot || centre;
     const [x, y, z] = turn([p[0] - c[0], p[1] - c[1], p[2] - c[2]]);
@@ -459,6 +484,26 @@ function finsFromShark(m) {
 for (const [id, side] of [['finport', 'port'], ['finsb', 'starboard']]) {
   $(id).oninput = () => { showFinValue(side, +$(id).value, false); setFinAngle(side, +$(id).value); };
 }
+// Spin: the shark turning about the pole, 0..60 turns a minute.
+$('spin').oninput = () => {
+  spinRpm = +$('spin').value;
+  $('spinv').textContent = spinRpm ? (spinRpm === 60 ? 'once a second' : `${spinRpm} turns/min`) : 'off';
+  if (!spinRpm) { spinAngle = 0; if (window.nibbles3d && window.nibbles3d.setSpin) window.nibbles3d.setSpin(0); }
+};
+{
+  let last = performance.now();
+  const tick = (t) => {
+    const dt = Math.min(0.1, (t - last) / 1000);
+    last = t;
+    if (spinRpm) {
+      spinAngle = (spinAngle + dt * spinRpm / 60 * 2 * Math.PI) % (2 * Math.PI);
+      if (window.nibbles3d && window.nibbles3d.setSpin) window.nibbles3d.setSpin(spinAngle);
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 // Fin sweep: a fin swinging through its whole range, -90..+90 deg, at the
 // chosen number of swings a minute (0 = off). With the live shark the
 // controller sweeps (so its fin LEDs follow) and the fin shows its angle;
@@ -539,6 +584,12 @@ function draw() {
     const extras = (layout.outlines || []).map((line) => line.map(project));
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const [x, y] of pts.concat(...extras)) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    if (spinRpm && view !== '3d') {  // turning: fit the whole circle it sweeps, so the scale stays put
+      const o = spinPivot(), r = spinRadius();
+      const lo = Math.min(...layout.leds.map((p) => p[1])), hi = Math.max(...layout.leds.map((p) => p[1]));
+      if (view === 'top') { x0 = o[0] - r; x1 = o[0] + r; y0 = -o[2] - r; y1 = -o[2] + r; }
+      else { const h = view === 'side' ? -o[2] : -o[0]; x0 = h - r; x1 = h + r; y0 = lo; y1 = hi; }
+    }
     const pad = 30 * dpr;
     let s = Math.min((c.width - 2 * pad) / (x1 - x0 || 1), (c.height - 2 * pad) / (y1 - y0 || 1));
     let ox = (c.width - (x1 - x0) * s) / 2, oy = (c.height - (y1 - y0) * s) / 2;
@@ -638,6 +689,7 @@ const AXES = [
 // A direction as the current view shows it: [right, up, towards the viewer].
 function viewDir(v) {
   if (view === '3d' && !canvas3d && window.nibbles3d && window.nibbles3d.viewDir) return window.nibbles3d.viewDir(v);
+  v = spinDir(v);
   if (view === '3d') return turn(v);
   if (view === 'top') return [v[0], -v[2], v[1]];
   if (view === 'side') return [-v[2], v[1], v[0]];

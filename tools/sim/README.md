@@ -89,3 +89,11 @@ a fin through its whole range, -90..+90 deg. With the live shark the
 controller does the sweep (`{"nibbles":{"finsweep":{...}}}`, renewed every
 2 s), so the real fin LEDs follow it as if the fin moved, and the page shows
 the controller's angle "(sweep)"; otherwise the page animates the fin.
+
+## Spin
+**Spin about the pole** (WLED card, 0 to 60 turns a minute, i.e. up to once a
+second) turns the whole simulated shark (LEDs, body, eyes, fins) about the
+pole's axis, counter-clockwise seen from above, in every view. The axis
+indicator turns with it (it shows the shark's own axes), and LEDs seen
+through the body are still dimmed correctly. The flat views keep a steady
+scale while it turns. It only moves the picture: nothing is sent to the shark.
