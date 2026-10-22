@@ -63,13 +63,21 @@ eyes and base (`shared/nibbles_link`).
 - **2D map partners**: with the shark's 2D map (below) it copies each partner
   LED's colour from the LED it pairs with after every frame (the `"copy"`
   list in `/ledmap.json`). The Info page shows how many ("Nibbles 2D map").
+- **Fins that follow their real angle** (2D): with a fin sensor node sending
+  the fin's hinge angle (`NL_MSG_FIN_POSE`, `firmware/fins`), each of that
+  fin's LEDs shows the side view's colour at the spot it is really over, so
+  a wave across the body sweeps over the fin wherever it points. The fin
+  geometry (rest positions, hinge lines, the grid's scale) is the `"fingeo"`
+  list in `/ledmap.json`; a fin without a live angle keeps its partner copy.
+  On the shark since 2026-10-21 (port fin): 112 of 114 port fin LEDs showed
+  exactly the colour of the cell they were over.
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
   (default off).
 
 ## 2D map
 `wled/ledmap/ledmap.json` (made by `tools/sim/make_ledmap.py` from the
 simulator's layout; preview in `ledmap_preview.svg`) makes WLED treat the
-shark as a 70 x 35 matrix, seen from starboard with the nose to the right, for
+shark as a 70 x 41 matrix, seen from starboard with the nose to the right, for
 WLED's 2D effects. Seen from the side, LEDs overlap: the two strips back to
 back in the main tube, and the two fins. So only the outward strip (channel 1)
 and the starboard fin (channel 5) are mapped where they are (90% within one
@@ -81,7 +89,8 @@ To use it: upload the file as `/ledmap.json` (WLED's file editor, or
 `curl -F "data=@wled/ledmap/ledmap.json;filename=/ledmap.json" http://IP/upload`)
 and reboot. **WLED then runs as a 2D matrix for every preset**: 1D presets
 (segments by strip position) need redoing for 2D; a 2D segment covering the
-whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":35}`. Delete the
+whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":41}` (the bottom six
+rows, added 2026-10-21, are where a fin swung down reaches). Delete the
 file and reboot to go back.
 
 Bench (2026-09-26, same firmware and map): the partner copies match exactly

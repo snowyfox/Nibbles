@@ -16,6 +16,18 @@ copies each partner LED's colour from the LED it pairs with after every frame
 (the "copy" list in the file, which WLED itself ignores). Without the usermod
 the partners still show roughly the right colours from their nearby cells.
 
+Fins that follow their real angle: the "fingeo" list (also ignored by WLED)
+gives the usermod what it needs to turn a fin's LEDs about its hinge and find
+the cell each one is over now, so the fin shows the side view's colours
+wherever it really is (with a fin sensor node; see NL_MSG_FIN_POSE):
+  [cell_mm, u0, v1, ox, oy, fin_count,
+   then per fin: side (0 port, 1 starboard), first LED, LED count,
+                 hinge point x y z, turn axis x y z, modelled angle (deg),
+   then every fin LED's rest position x y z (design mm, fins in that order)]
+A position (y, z) is over cell (round((y - u0 + ox) / cell - 0.5),
+round((v1 - z + oy) / cell - 0.5)), as for the mapped LEDs; turning a fin to
+calibrated angle a is a turn of (modelled - a) degrees about the turn axis.
+
 Memory: WLED keeps about 10 bytes per matrix cell (frame buffer, segment
 buffer, map), so --cells sets the RAM cost: 2400 cells ~ 24 KB. The shark's
 controller has no PSRAM and ~72 KB free, so keep it modest and check the free
@@ -34,6 +46,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 LAYOUT = os.path.join(HERE, "web", "layout.json")
 OUT_DIR = os.path.join(REPO, "wled", "ledmap")
+
+
+def sub(a, b): return [a[i] - b[i] for i in range(3)]
+def dot(a, b): return sum(a[i] * b[i] for i in range(3))
+def cross(a, b): return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+def norm(a):
+    n = math.sqrt(dot(a, a))
+    return [v / n for v in a]
 
 
 def place(items, pos, grid, reach=None):
@@ -117,11 +137,42 @@ def main():
     ppos = {d: at[p] for d, p in partner_of.items()}
     pmoved = place(list(partner_of), ppos, grid, reach=8)
 
+    # Extra rows at the bottom so a fin swung straight down still lands on the
+    # grid. Added below only, so every existing cell keeps its index.
+    def turned(p, c, k, a):
+        v = sub(p, c); cs, sn = math.cos(a), math.sin(a); kv = dot(k, v); kx = cross(k, v)
+        return [c[j] + v[j] * cs + kx[j] * sn + k[j] * kv * (1 - cs) for j in range(3)]
+    low_row = height - 1
+    for h in layout.get("fin_hinges", []):
+        c = ch[h["channel"]]
+        for deg in range(-90, 91, 5):
+            a = math.radians(h["model_deg"] - deg)
+            for i in range(c["start"], c["start"] + c["count"]):
+                q = turned(leds[i], h["point"], norm(h["turn"]), a)
+                low_row = max(low_row, round((v1 - q[2] + oy) / cell - 0.5))
+    extra = low_row - (height - 1)
+    grid += [[-1] * width for _ in range(extra)]
+    height += extra
+    assert height <= 255
+
+    # Fin geometry for following the real fin angle (see the module docstring).
+    num = lambda x: ("%.3f" % x).rstrip("0").rstrip(".")
+    fingeo = [num(cell), num(u0), num(v1), num(ox), num(oy), str(len(layout.get("fin_hinges", [])))]
+    rest = []
+    for h in layout.get("fin_hinges", []):
+        c = ch[h["channel"]]
+        fingeo += ["0" if h["side"] == "port" else "1", str(c["start"]), str(c["count"])]
+        fingeo += [num(x) for x in h["point"]] + [num(x) for x in h["turn"]] + [num(h["model_deg"])]
+        rest += [num(x) for i in range(c["start"], c["start"] + c["count"]) for x in leds[i]]
+    fingeo += rest
+
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, "ledmap.json")
     with open(out, "w") as f:
         f.write('{"n":"Nibbles side (starboard view)","width":%d,"height":%d,\n' % (width, height))
-        f.write('"copy":%s,\n"map":[\n' % json.dumps(copy).replace(" ", ""))
+        f.write('"copy":%s,\n' % json.dumps(copy).replace(" ", ""))
+        f.write('"fingeo":[%s],\n' % ",".join(fingeo))
+        f.write('"map":[\n')
         f.write(",\n".join(",".join(str(c) for c in row) for row in grid))
         f.write("]}\n")
     json.load(open(out))  # check it parses
@@ -150,7 +201,8 @@ def main():
 
     m = sorted(moved.values())
     pm = sorted(pmoved.values())
-    print(f"{width} x {height} = {width * height} cells of {cell:.1f} mm; ~{width * height * 10 // 1024} KB of WLED RAM")
+    print(f"{width} x {height} = {width * height} cells of {cell:.1f} mm ({extra} rows added below for the fins' swing); "
+          f"~{width * height * 10 // 1024} KB of WLED RAM")
     print(f"mapped: {len(primary)} LEDs (channels {out_body} and {sb_fin}), moved off their exact spot: "
           f"median {m[len(m) // 2]:.2f}, 90% within {m[int(len(m) * .9)]:.2f}, max {m[-1]:.2f} cells")
     print(f"partners copied by the usermod: {len(pm)} LEDs (channels {in_body} and {port_fin}), "

@@ -18,7 +18,9 @@
 //   where it stutters (nl_power_limit_ma; docs/power.md). The ceiling is this
 //   usermod's power_max_ma setting, which takes over WLED's own limit field.
 // - Fin hinge angles from the fin sensor node (NL_MSG_FIN_POSE): shown on the
-//   Info page and passed to the simulator (not yet used for the lights).
+//   Info page and passed to the simulator. With the 2D map, a fin whose angle
+//   is known follows it: each of its LEDs shows the side view's colour at the
+//   spot it is really over ("fingeo" in /ledmap.json, from make_ledmap.py).
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -144,6 +146,129 @@ class NibblesUsermod : public Usermod {
       nl_power_limiter_reading(&power, &b, millis());
     }
 
+    // Fins following their real angle in 2D ("fingeo" in /ledmap.json).
+    struct FinFollow {
+      uint8_t side;               // NL_FIN_PORT / NL_FIN_STARBOARD
+      uint16_t start, count;      // physical LEDs
+      float hinge[3], turn[3], modelDeg;
+      float *rest;                // count x (x, y, z), design mm
+      uint16_t *dst;              // the matrix cell that drives each LED
+      uint16_t *src;              // the cell each LED is over at srcDeg
+      float srcDeg;               // NAN: not worked out yet
+    };
+    FinFollow finFollow[2] = {};
+    uint8_t finFollowCount = 0;
+    float finGrid[5] = { 0 };     // cell size, u0, v1, ox, oy (see make_ledmap.py)
+    uint32_t *finColors = nullptr;
+    uint16_t finColorsLen = 0;
+    uint8_t finFollowing = 0;     // bit per fin following its angle on the last frame
+
+    // One number from a JSON array; false at its closing bracket or the end.
+    static bool nextNumber(File &f, float &out) {
+      char buf[24];
+      int n = 0;
+      while (f.available()) {
+        const char c = f.read();
+        if ((c >= '0' && c <= '9') || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+') {
+          if (n < (int)sizeof(buf) - 1) buf[n++] = c;
+          continue;
+        }
+        if (n) { buf[n] = 0; out = strtof(buf, nullptr); return true; }
+        if (c == ']') return false;
+      }
+      return false;
+    }
+
+    void freeFinFollow() {
+      for (int k = 0; k < 2; k++) {
+        free(finFollow[k].rest); free(finFollow[k].dst); free(finFollow[k].src);
+        finFollow[k] = {};
+      }
+      finFollowCount = 0;
+      free(finColors); finColors = nullptr; finColorsLen = 0;
+    }
+
+    void readFinGeo() {
+      freeFinFollow();
+      File f = WLED_FS.open(F("/ledmap.json"), "r");
+      if (!f) return;
+      if (f.find("\"fingeo\":[")) {
+        bool ok = true;
+        for (int i = 0; i < 5 && ok; i++) ok = nextNumber(f, finGrid[i]);
+        float nf = 0;
+        ok = ok && nextNumber(f, nf) && nf >= 0 && nf <= 2;
+        const int n = ok ? (int)nf : 0;
+        for (int k = 0; k < n && ok; k++) {
+          FinFollow &ff = finFollow[k];
+          float side = 0, start = 0, count = 0;
+          ok = nextNumber(f, side) && nextNumber(f, start) && nextNumber(f, count);
+          for (int j = 0; j < 3 && ok; j++) ok = nextNumber(f, ff.hinge[j]);
+          for (int j = 0; j < 3 && ok; j++) ok = nextNumber(f, ff.turn[j]);
+          ok = ok && nextNumber(f, ff.modelDeg) && count > 0 && count < 1000;
+          ff.side = (uint8_t)side; ff.start = (uint16_t)start; ff.count = (uint16_t)count;
+          ff.srcDeg = NAN;
+        }
+        for (int k = 0; k < n && ok; k++) {
+          FinFollow &ff = finFollow[k];
+          ff.rest = (float *)malloc(ff.count * 3 * sizeof(float));
+          ok = ff.rest != nullptr;
+          for (unsigned i = 0; i < ff.count * 3u && ok; i++) ok = nextNumber(f, ff.rest[i]);
+        }
+        if (ok) finFollowCount = n;
+        else freeFinFollow();
+      }
+      f.close();
+    }
+
+    // Swing a fin to deg and find the cell each of its LEDs is over now.
+    void placeFin(FinFollow &f, float deg, unsigned W, unsigned H) {
+      const float a = (f.modelDeg - deg) * (float)M_PI / 180.0f, cs = cosf(a), sn = sinf(a);
+      const float *k = f.turn, *c = f.hinge;
+      const float cell = finGrid[0], u0 = finGrid[1], v1 = finGrid[2], ox = finGrid[3], oy = finGrid[4];
+      for (unsigned i = 0; i < f.count; i++) {
+        const float *p = f.rest + i * 3;
+        const float v[3] = { p[0] - c[0], p[1] - c[1], p[2] - c[2] };
+        const float kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+        const float kx[3] = { k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0] };
+        float q[3];
+        for (int j = 0; j < 3; j++) q[j] = c[j] + v[j] * cs + kx[j] * sn + k[j] * kv * (1 - cs);
+        long x = lroundf((q[1] - u0 + ox) / cell - 0.5f), y = lroundf((v1 - q[2] + oy) / cell - 0.5f);
+        x = x < 0 ? 0 : x >= (long)W ? (long)W - 1 : x;
+        y = y < 0 ? 0 : y >= (long)H ? (long)H - 1 : y;
+        f.src[i] = (uint16_t)(y * W + x);
+      }
+      f.srcDeg = deg;
+    }
+
+    // Fins whose angle is known: gather the colours under each LED (from the
+    // effect's own picture, before anything is copied over it).
+    void gatherFinColors() {
+      finFollowing = 0;
+      if (!finFollowCount || !finColors) return;
+      const unsigned long now = millis();
+      const unsigned W = Segment::maxWidth, H = Segment::maxHeight;
+      unsigned n = 0;
+      for (int k = 0; k < finFollowCount; k++) {
+        FinFollow &f = finFollow[k];
+        if (!f.dst || !f.src || f.side > 1 || !finsAt[f.side] || now - finsAt[f.side] > 2000 ||
+            fins.angle_cdeg[f.side] == NL_FIN_NONE) continue;
+        const float deg = fins.angle_cdeg[f.side] / 100.0f;
+        if (isnan(f.srcDeg) || fabsf(deg - f.srcDeg) >= 0.2f) placeFin(f, deg, W, H);
+        for (unsigned i = 0; i < f.count && n < finColorsLen; i++) finColors[n++] = strip.getPixelColor(f.src[i]);
+        finFollowing |= 1 << k;
+      }
+    }
+
+    void writeFinColors() {
+      unsigned n = 0;
+      for (int k = 0; k < finFollowCount; k++) {
+        if (!(finFollowing & (1 << k))) continue;
+        const FinFollow &f = finFollow[k];
+        for (unsigned i = 0; i < f.count && n < finColorsLen; i++, n++)
+          if (f.dst[i] != 0xFFFF) strip.setPixelColor(f.dst[i], finColors[n]);
+      }
+    }
+
     void readCopyRanges() {
       copyRangeCount = 0;
       File f = WLED_FS.open(F("/ledmap.json"), "r");
@@ -176,7 +301,7 @@ class NibblesUsermod : public Usermod {
       copyBuiltAt = millis();
       // every output, network ones included (the simulator bench sends its LEDs over the network)
       const unsigned phys = BusManager::getTotalLength(false), total = strip.getLengthTotal();
-      if (!strip.isMatrix || !copyRangeCount || !phys) return;
+      if (!strip.isMatrix || (!copyRangeCount && !finFollowCount) || !phys) return;
       uint16_t *cellOf = (uint16_t *)malloc(phys * sizeof(uint16_t));
       if (!cellOf) return;
       for (unsigned p = 0; p < phys; p++) cellOf[p] = 0xFFFF;
@@ -200,6 +325,21 @@ class NibblesUsermod : public Usermod {
           }
         }
       }
+      // The cells that drive each fin LED, for following the fins' angle.
+      unsigned finLeds = 0;
+      for (int k = 0; k < finFollowCount; k++) {
+        FinFollow &f = finFollow[k];
+        free(f.dst); free(f.src);
+        f.dst = (uint16_t *)malloc(f.count * sizeof(uint16_t));
+        f.src = (uint16_t *)malloc(f.count * sizeof(uint16_t));
+        f.srcDeg = NAN;
+        if (!f.dst || !f.src) { free(f.dst); free(f.src); f.dst = f.src = nullptr; continue; }
+        for (unsigned i = 0; i < f.count; i++) f.dst[i] = f.start + i < phys ? cellOf[f.start + i] : 0xFFFF;
+        finLeds += f.count;
+      }
+      free(finColors);
+      finColors = finLeds ? (uint32_t *)malloc(finLeds * sizeof(uint32_t)) : nullptr;
+      finColorsLen = finColors ? finLeds : 0;
       free(cellOf);
     }
 
@@ -592,10 +732,10 @@ class NibblesUsermod : public Usermod {
     }
 
     void loop() override {
-      if (!copyRead) { readCopyRanges(); copyRead = true; }
+      if (!copyRead) { readCopyRanges(); readFinGeo(); copyRead = true; }
       // (Re)build when the map changes; WLED loads it after we first run, so
       // also retry every 5 s while nothing pairs up.
-      if (copyRangeCount && (strip.getLengthTotal() != copyBuiltFor || currentLedmap != copyBuiltMap ||
+      if ((copyRangeCount || finFollowCount) && (strip.getLengthTotal() != copyBuiltFor || currentLedmap != copyBuiltMap ||
                              strip.isMatrix != copyBuiltMatrix || (!copyPairCount && millis() - copyBuiltAt > 5000)))
         buildCopyPairs();
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
@@ -642,9 +782,12 @@ class NibblesUsermod : public Usermod {
 
     // Called by WLED after the frame is put together, before it goes to the LEDs.
     void handleOverlayDraw() override {
-      if (!strip.isMatrix || !copyPairs) return;
-      for (unsigned i = 0; i < copyPairCount; i++)
-        strip.setPixelColor(copyPairs[i * 2], strip.getPixelColor(copyPairs[i * 2 + 1]));
+      if (!strip.isMatrix) return;
+      gatherFinColors();
+      if (copyPairs)
+        for (unsigned i = 0; i < copyPairCount; i++)
+          strip.setPixelColor(copyPairs[i * 2], strip.getPixelColor(copyPairs[i * 2 + 1]));
+      writeFinColors();  // fins following their angle override the partner copies
     }
 
     bool onEspNowMessage(uint8_t *sender, uint8_t *payload, uint8_t len) override {
@@ -697,10 +840,13 @@ class NibblesUsermod : public Usermod {
                       (unsigned)BusManager::ablMilliampsMax(), (unsigned)powerModel.max_ma, (unsigned long)batteryRx);
         pw.add(buf);
       }
-      if (strip.isMatrix && copyRangeCount) {
+      if (strip.isMatrix && (copyRangeCount || finFollowCount)) {
         JsonArray m2 = user.createNestedArray(F("Nibbles 2D map"));
-        char buf[40];
-        snprintf(buf, sizeof(buf), "%u partner LEDs copied", copyPairCount);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%u partner LEDs copied; fins following their angle: %s%s%s", copyPairCount,
+                 !finFollowCount ? "no fin geometry" : finFollowing ? "" : "none",
+                 finFollowing & 1 ? (finFollow[0].side == NL_FIN_PORT ? "port " : "starboard ") : "",
+                 finFollowing & 2 ? (finFollow[1].side == NL_FIN_PORT ? "port" : "starboard") : "");
         m2.add(buf);
       }
       if (mirroring(millis())) {
