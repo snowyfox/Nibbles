@@ -334,6 +334,61 @@ static void test_bump(void)
           "new press replaces the active bump");
 }
 
+static void test_power_limit(void)
+{
+    const nl_power_model_t m = NL_POWER_MODEL_DEFAULT;
+    // P = 11.2 V * (rest - 11.2 V) / 0.3 ohm, * 90% / 5 V
+    uint32_t a = nl_power_limit_ma(&m, 14000, 0, false);
+    CHECK(a == 17000, "full pack (14.0 V): the full 17000 mA (got %u)", (unsigned)a);
+    a = nl_power_limit_ma(&m, 13500, 0, false);
+    CHECK(a > 15000 && a < 16000, "13.5 V: ~15.5 A (got %u)", (unsigned)a);
+    a = nl_power_limit_ma(&m, 13000, 0, false);
+    CHECK(a > 11800 && a < 12400, "13.0 V: ~12.1 A (got %u)", (unsigned)a);
+    a = nl_power_limit_ma(&m, 12500, 0, false);
+    CHECK(a > 8400 && a < 9000, "12.5 V: ~8.7 A (got %u)", (unsigned)a);
+    a = nl_power_limit_ma(&m, 11500, 0, false);
+    CHECK(a == 3000, "11.5 V: clamped to the 3000 mA minimum (got %u)", (unsigned)a);
+    a = nl_power_limit_ma(&m, 11000, 0, false);
+    CHECK(a == 3000, "below the floor: the minimum (got %u)", (unsigned)a);
+    // Measured under load: 12.3 V at 7.7 A is a 13.07 V pack at rest.
+    const uint32_t loaded = nl_power_limit_ma(&m, 12300, 7700, true);
+    const uint32_t rest = nl_power_limit_ma(&m, 13070, 0, false);
+    CHECK(loaded == rest, "current adds back the pack's sag (%u vs %u at rest)", (unsigned)loaded, (unsigned)rest);
+    CHECK(nl_power_limit_ma(&m, 12300, 7700, false) < loaded, "without the current the reading is taken as is (lower limit)");
+}
+
+static void test_power_limiter(void)
+{
+    const nl_power_model_t m = NL_POWER_MODEL_DEFAULT;
+    nl_power_limiter_t l;
+    nl_power_limiter_init(&l, &m);
+    CHECK(nl_power_limiter_tick(&l, 1000) == 0, "no reading yet: stays out of the way (0)");
+    nl_battery_t b = { .pack_mv = 13000 };
+    nl_power_limiter_reading(&l, &b, 1000);
+    const uint32_t at13 = nl_power_limiter_tick(&l, 1000);
+    CHECK(at13 > 11800 && at13 < 12400, "first reading applies at once (%u)", (unsigned)at13);
+    b.pack_mv = 12500;
+    nl_power_limiter_reading(&l, &b, 1200);
+    const uint32_t at125 = nl_power_limiter_tick(&l, 1200);
+    CHECK(at125 < at13 && at125 == nl_power_limit_ma(&m, 12500, 0, false), "a lower limit applies at once (%u)", (unsigned)at125);
+    b.pack_mv = 14000;
+    nl_power_limiter_reading(&l, &b, 1400);
+    const uint32_t start = nl_power_limiter_tick(&l, 1400);  // ticks run all the time
+    uint32_t up = nl_power_limiter_tick(&l, 1900);           // 0.5 s later: +1000 mA
+    CHECK(start < 17000 && up == start + 1000, "a higher limit creeps up at 2000 mA/s (%u -> %u)", (unsigned)start, (unsigned)up);
+    up = nl_power_limiter_tick(&l, 20000);
+    CHECK(up == 17000, "...until it reaches the new target (%u)", (unsigned)up);
+    b.pack_mv = 12500;
+    nl_power_limiter_reading(&l, &b, 20100);
+    const uint32_t held = nl_power_limiter_tick(&l, 20100);
+    CHECK(nl_power_limiter_tick(&l, 600000) == held, "no readings for minutes: the last limit holds (%u)", (unsigned)held);
+    b.pack_mv = 0;
+    nl_power_limiter_reading(&l, &b, 600001);
+    CHECK(nl_power_limiter_tick(&l, 600001) == 0, "pack_mv 0 forgets: back out of the way");
+    CHECK(sizeof(nl_battery_t) == 7, "battery message is 7 bytes (got %u)", (unsigned)sizeof(nl_battery_t));
+    CHECK(sizeof(nl_fin_pose_t) == 8, "fin pose message is 8 bytes (got %u)", (unsigned)sizeof(nl_fin_pose_t));
+}
+
 int main(void)
 {
     srand(1);
@@ -346,6 +401,8 @@ int main(void)
     test_fallback_anchor();
     test_bump();
     test_wled_audio();
+    test_power_limit();
+    test_power_limiter();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

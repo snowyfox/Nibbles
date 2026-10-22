@@ -31,6 +31,8 @@ typedef enum {
     NL_MSG_ACK = 6,
     NL_MSG_WLED_TELEMETRY = 7, // WLED status, WLED -> radio, 2 Hz
     NL_MSG_BUMP = 8,        // momentary effect while a button is held (broadcast)
+    NL_MSG_BATTERY = 9,     // pack voltage (and current) at the pole base, base -> radio, ~5 Hz
+    NL_MSG_FIN_POSE = 10,   // the fins' hinge angles, fin sensor node -> radio, ~50 Hz
 } nl_msg_type_t;
 
 typedef enum {
@@ -39,6 +41,7 @@ typedef enum {
     NL_ROLE_EYE_EARS = 2,   // runs the mic and sends audio features
     NL_ROLE_BASE = 3,
     NL_ROLE_WLED = 4,
+    NL_ROLE_FINS = 5,       // reads the fins' hinge angle sensors
 } nl_role_t;
 
 typedef enum {
@@ -213,6 +216,74 @@ void nl_bump_rx_init(nl_bump_rx_t *rx);
 nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_t now_ms);
 // Call regularly; returns NL_BUMP_EV_END when the active bump times out.
 nl_bump_event_t nl_bump_rx_tick(nl_bump_rx_t *rx, uint32_t now_ms);
+
+// ---------------------------------------------------------------- battery and power limit
+// The lights' 5 V converter sits at the top of the pole and stutters when its
+// input falls too low (measured: ~10.8 V at its terminals, see docs/power.md).
+// During a full-white flash the pack sags and the pole wiring drops voltage,
+// so WLED's current limit follows the pack voltage: the most power that keeps
+// the converter's input above a floor.
+
+#define NL_BATT_CURRENT     0x01    // current_ma is measured
+
+typedef struct NL_PACKED {
+    uint16_t pack_mv;       // battery voltage at the pole base
+    int32_t current_ma;     // drawn by the lights (with NL_BATT_CURRENT)
+    uint8_t flags;
+} nl_battery_t;
+
+typedef struct {
+    uint16_t floor_mv;      // lowest input the converter may see (margin over where it stutters)
+    uint16_t pack_mohm;     // pack, BMS and fuse: between the cells and where pack_mv is measured
+    uint16_t wire_mohm;     // pole wiring there and back, from the base to the converter
+    uint8_t efficiency_pct; // the converter's
+    uint32_t min_ma;        // WLED limit range (5 V side)
+    uint32_t max_ma;
+} nl_power_model_t;
+
+// 11.2 V floor (0.4 V over the measured 10.8 V), ~0.1 + 0.2 ohm (estimates),
+// 90%, 3-17 A.
+#define NL_POWER_MODEL_DEFAULT { 11200, 100, 200, 90, 3000, 17000 }
+
+// WLED's limit (mA at 5 V) for a pack reading: the power P that keeps the
+// converter at the floor, P = floor * (rest - floor) / (pack + wire), where
+// rest is the pack's resting voltage (pack_mv plus the sag across the pack
+// when the current is known). Clamped to [min_ma, max_ma].
+uint32_t nl_power_limit_ma(const nl_power_model_t *m, uint32_t pack_mv, int32_t current_ma, bool have_current);
+
+#define NL_POWER_RISE_MA_PER_S  2000    // a higher limit creeps up; a lower one applies at once
+
+typedef struct {
+    nl_power_model_t model;
+    bool heard;             // any reading yet; until then the limiter stays out of the way
+    uint32_t target_ma;     // from the latest reading
+    uint32_t limit_ma;      // in force (follows target: down at once, up slowly)
+    uint32_t last_ms;       // time of the latest reading
+    uint32_t tick_ms;
+    uint16_t pack_mv;
+} nl_power_limiter_t;
+
+void nl_power_limiter_init(nl_power_limiter_t *l, const nl_power_model_t *m);
+// A battery reading at now_ms (pack_mv 0 forgets everything: back to "never heard").
+void nl_power_limiter_reading(nl_power_limiter_t *l, const nl_battery_t *b, uint32_t now_ms);
+// The limit to apply now, or 0 while no reading has been heard. Without new
+// readings the last limit holds (the pack only empties), it never jumps back up.
+uint32_t nl_power_limiter_tick(nl_power_limiter_t *l, uint32_t now_ms);
+
+// ---------------------------------------------------------------- fin hinge angles
+// Each fin swings ~180 degrees on its hinge, from straight up to straight
+// down. Angles are calibrated to those limits: +9000 (centidegrees) at the up
+// limit, -9000 at the down limit, so 0 is midway (not necessarily rest).
+
+#define NL_FIN_PORT         0
+#define NL_FIN_STARBOARD    1
+#define NL_FIN_NONE         INT16_MIN   // no sensor, or not calibrated yet
+#define NL_FIN_RAW_NONE     0xFFFF
+
+typedef struct NL_PACKED {
+    int16_t angle_cdeg[2];  // [NL_FIN_PORT], [NL_FIN_STARBOARD]: calibrated hinge angle, or NL_FIN_NONE
+    uint16_t raw[2];        // the sensor's own reading (e.g. ADC counts), or NL_FIN_RAW_NONE
+} nl_fin_pose_t;
 
 // ---------------------------------------------------------------- radio packets
 #define NL_NET_ID           0x5348  // "SH"(ark): packets from other networks are ignored
