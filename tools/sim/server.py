@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nibbles lighting simulator bridge (Python standard library only).
 
-    python3 tools/sim/server.py [--port 8080] [--wled 10.7.200.226] [--shark 10.7.200.253]
+    python3 tools/sim/server.py [--port 8080] [--wled 10.7.200.154] [--shark 10.7.200.253]
 
 - Serves the simulator page from tools/sim/web.
 - WebSocket /ws: the page sends 44-byte WLED audio sync packets, which go out
@@ -38,12 +38,34 @@ WEB_CONFIG = {}
 mode = {"source": "sim", "ip": None}   # "sim": the bench WLED; "shark": mirror the real controller
 
 
+SEND_ERRORS = (ConnectionError, RuntimeError, TimeoutError, OSError)
+busy = set()  # pages still taking the previous frame: they skip frames rather than queue them
+
+
+def drop(writer):
+    clients.discard(writer)
+    busy.discard(writer)
+    try:
+        writer.close()
+    except Exception:
+        pass
+
+
+async def send_to(writer, data, opcode=0x2):
+    if writer in busy:
+        return
+    busy.add(writer)
+    try:
+        await ws_send(writer, data, opcode)
+    except SEND_ERRORS:
+        drop(writer)
+    finally:
+        busy.discard(writer)
+
+
 async def broadcast(data, opcode=0x2):
     for w in list(clients):
-        try:
-            await ws_send(w, data, opcode)
-        except (ConnectionError, RuntimeError):
-            clients.discard(w)
+        await send_to(w, data, opcode)
 
 
 def mode_message():
@@ -61,6 +83,8 @@ async def ws_send(writer, data, opcode=0x2):
         header += bytes([126]) + struct.pack(">H", n)
     else:
         header += bytes([127]) + struct.pack(">Q", n)
+    if writer.is_closing():  # the page went away: don't write (asyncio warns on every write)
+        raise ConnectionError("closed")
     writer.write(bytes(header) + data)
     await writer.drain()
 
@@ -125,7 +149,7 @@ async def handle(reader, writer, audio_sock, wled_ip):
                         audio_sock.sendto(data, (wled_ip, AUDIO_SYNC_GROUP[1]))
                 elif opcode == 0x9:  # ping
                     await ws_send(writer, data, 0xA)
-        except (asyncio.IncompleteReadError, ConnectionError):
+        except (asyncio.IncompleteReadError,) + SEND_ERRORS:
             pass
         finally:
             clients.discard(writer)
@@ -180,13 +204,7 @@ class DDPReceiver(asyncio.DatagramProtocol):
             self.frames += 1
             frame = bytes(self.frame)
             for w in list(clients):
-                asyncio.ensure_future(self.send(w, frame))
-
-    async def send(self, writer, frame):
-        try:
-            await ws_send(writer, frame)
-        except (ConnectionError, RuntimeError):
-            clients.discard(writer)
+                asyncio.ensure_future(send_to(w, frame))
 
 
 class MirrorState(asyncio.DatagramProtocol):
@@ -240,7 +258,7 @@ async def keep_mirroring():
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8080)
-    ap.add_argument("--wled", default="10.7.200.226", help="simulator WLED address (also gets audio directly)")
+    ap.add_argument("--wled", default="10.7.200.154", help="simulator WLED address (also gets audio directly)")
     ap.add_argument("--shark", default="10.7.200.253", help="the shark's WLED controller, offered to the page for mirroring")
     args = ap.parse_args()
 

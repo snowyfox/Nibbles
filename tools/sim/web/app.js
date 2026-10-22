@@ -170,7 +170,7 @@ const wled = () => `http://${$('wledip').value.trim()}`;
 
 // Where the lights come from: the bench simulator WLED (driven by the sound
 // above), or the shark's own controller, mirrored live (server.py).
-let config = { bench: '10.7.200.226', shark: '10.7.200.253' };
+let config = { bench: '10.7.200.154', shark: '10.7.200.253' };
 fetch('config.json').then((r) => r.json()).then((c) => { config = { ...config, ...c }; }).catch(() => {});
 let lightsFrom = null;  // 'sim' or 'shark'
 function showSource(m) {
