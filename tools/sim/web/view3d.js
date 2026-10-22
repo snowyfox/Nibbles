@@ -7,6 +7,7 @@ import { OBJLoader } from './vendor/OBJLoader.js';
 
 let renderer, scene, camera, controls, container, home;
 let core, glow, colors, count = 0, shown = false, hidden = null;
+let ledGeo = null, finMeshes = { port: [], starboard: [] };
 let rgbNow = null, offPlane = [], leds3 = null;  // latest WLED frame; LEDs off the body's plane
 const eyeTextures = [];
 const CORE_SIZE = 6, GLOW_SIZE = 22;  // mm, times the page's LED size setting
@@ -53,6 +54,7 @@ function build(layout) {
   if (hidden) hidden.forEach((h, i) => { if (h) colors.fill(0, i * 3, i * 3 + 3); });
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  ledGeo = geo;
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const tex = dotTexture();
   const mat = (size, opacity) => new THREE.PointsMaterial({
@@ -87,6 +89,15 @@ function build(layout) {
       // see-through objects by distance, and the body would darken LEDs in
       // front of it from some angles). LEDs behind it are dimmed in shadeLeds.
       obj.traverse((m) => { if (m.isMesh) { m.material = body; m.renderOrder = -1; } });
+      // The fins' parts of the mesh (well off the centre plane; the hinge
+      // mounts sit closer in and stay put), so they can swing with the LEDs.
+      obj.traverse((m) => {
+        if (!m.isMesh) return;
+        m.geometry.computeBoundingBox();
+        const cx = (m.geometry.boundingBox.min.x + m.geometry.boundingBox.max.x) / 2;  // design cm
+        if (cx > 1.5) finMeshes.starboard.push(m);
+        else if (cx < -1.5) finMeshes.port.push(m);
+      });
       scene.add(obj);
     });
   }
@@ -183,6 +194,25 @@ window.nibbles3d = {
     if (!camera) return null;
     const d = new THREE.Vector3(...v).transformDirection(camera.matrixWorldInverse);
     return [d.x, d.y, d.z];
+  },
+  // A fin turned by ang (radians) about its hinge: LEDs from layout.leds,
+  // mesh parts in the mesh's own (design, cm) coordinates.
+  moveFin(h, ang) {
+    if (ledGeo && leds3) {
+      const pos = ledGeo.attributes.position;
+      leds3.forEach((p, i) => pos.setXYZ(i, p[0], p[1], p[2]));
+      pos.needsUpdate = true;
+    }
+    const c = new THREE.Vector3(...h.point_design).multiplyScalar(0.1);
+    const k = new THREE.Vector3(...h.turn_design).normalize();
+    const m = new THREE.Matrix4().makeTranslation(c.x, c.y, c.z)
+      .multiply(new THREE.Matrix4().makeRotationAxis(k, ang))
+      .multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+    for (const mesh of finMeshes[h.side] || []) {
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(m);
+      mesh.matrixWorldNeedsUpdate = true;
+    }
   },
   hide() {
     shown = false;

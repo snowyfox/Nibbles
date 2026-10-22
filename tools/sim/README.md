@@ -75,3 +75,12 @@ The controller's address comes from `server.py --shark` (default
 `make_ledmap.py` builds `wled/ledmap/ledmap.json`, a WLED 2D matrix of the
 shark from this layout (see `wled/README.md`, "2D map"). With the map on the
 bench WLED, the simulator shows its 2D effects on the shark.
+
+## Fins
+Each fin swings about its hinge (the FinMount axis from the Fusion model,
+written into `layout.json` as `fin_hinges` by `make_layout.py`), from straight
+up (+90°) to straight down (−90°); the model has them at about −34°. The
+**Port fin** / **Starboard fin** sliders (WLED card) turn a fin's LEDs, its
+tube outline and, in the WebGL view, its part of the shark mesh. In live mode
+a fin with a sensor follows the real one (the fin sensor node,
+`firmware/fins`, via the controller's mirror) and its slider shows "(live)".

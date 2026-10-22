@@ -207,6 +207,32 @@ def main():
              "normal": [sx, 0.0, 0.0], "right": [0.0, float(sx), 0.0], "radius_mm": S["eye_screen_radius_mm"]}
             for side, sx in (("starboard", 1), ("port", -1))]
 
+    # ---- fin hinges: each fin swings ~180 degrees about its FinMount's axis, from
+    # straight up to straight down (in the plane square to the axis). The page
+    # turns a fin's LEDs about this line by (model_deg - angle) around "turn",
+    # where angle is the calibrated hinge angle (+90 up, -90 down) from the fin
+    # sensor node (nl_fin_pose_t) and model_deg is where the model has the fin.
+    mount = next(c for c in g["cylinders"] if "FinMount" in c["component"] and abs(c["from"][0]) < 50)
+    axis = norm(mount["axis"])
+    z = [0.0, 0.0, 1.0]
+    up = norm(sub(z, mul(axis, dot(z, axis))))      # straight up within the swing plane
+    fin_hinges = []
+    for k, (fin, ch, side) in enumerate(fin_channels):
+        sx = 1.0 if side == "starboard" else -1.0
+        hinge = [sx * abs(mount["from"][0]), mount["from"][1], mount["from"][2]]
+        out = norm(cross(axis, up))
+        if dot(out, [sx, 0.0, 0.0]) < 0:
+            out = mul(out, -1.0)                       # in the plane, pointing away from the body
+        turn = norm(cross(up, out))                    # turning about this goes from up towards out
+        c = next(x for x in channels if x["channel"] == ch)
+        pts = leds[c["start"]:c["start"] + c["count"]]
+        cen = [sum(p[i] for p in pts) / len(pts) for i in range(3)]
+        v = sub(cen, hinge)
+        v = sub(v, mul(axis, dot(v, axis)))
+        from_up = math.degrees(math.atan2(dot(v, out), dot(v, up)))
+        fin_hinges.append({"side": side, "channel": ch, "outline": 1 + k, "point": [round(x, 2) for x in hinge],
+                           "turn": [round(x, 5) for x in turn], "model_deg": round(90.0 - from_up, 1)})
+
     def thin(line, step):
         out, run = [line[0]], 0.0
         for i in range(1, len(line)):
@@ -224,6 +250,7 @@ def main():
         "channels": channels,
         "outlines": [thin(loop, 4.0)] + [thin(f["line"], 4.0) for f in fins],
         "eyes": eyes,
+        "fin_hinges": fin_hinges,
         "pole": {"from": pole["from"], "to": pole["to"], "radius_mm": pole["radius_mm"]},
         "mesh": {"file": "shark.obj", "scale": 10.0} if os.path.exists(MESH_IN) else None,
         "settings": {k: v for k, v in S.items() if k != "leds"},
@@ -237,6 +264,8 @@ def main():
         print("channel %d: LEDs %d-%d  %s" % (c["channel"], c["start"], c["start"] + c["count"] - 1, c["note"]))
     print("%d LEDs -> %s" % (len(leds), os.path.relpath(LAYOUT)))
     print("main loop: %d corner loop(s) cut" % cuts)
+    for h in fin_hinges:
+        print("%s fin: hinge at %s, modelled at %+.0f deg (calibrated: +90 up, -90 down)" % (h["side"], h["point"], h["model_deg"]))
     print("main loop %.0f mm (%.1f mm per LED), fins %.0f mm, pole at Y %.1f, loop starts at %s"
           % (length(loop), length(loop) / S["leds"][1], fins[0]["length_mm"], pole_y, [round(v) for v in ring[0]]))
 

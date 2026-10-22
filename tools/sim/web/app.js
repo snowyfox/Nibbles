@@ -62,7 +62,7 @@ function connect() {
     if (typeof e.data === 'string') {  // the lights' source, or the live shark's state
       const m = JSON.parse(e.data);
       if ('source' in m) showSource(m);
-      else eyesFromShark(m);
+      else { eyesFromShark(m); finsFromShark(m); }
       return;
     }
     leds = new Uint8Array(e.data);
@@ -265,6 +265,11 @@ async function loadLayout() {
         e.centre = yUp(e.centre); e.normal = yUp(e.normal); e.right = yUp(e.right);
         e.up = cross(e.normal, e.right);
       }
+      for (const h of layout.fin_hinges || []) {  // keep the design's (z-up) copy for the mesh
+        h.point_design = h.point; h.turn_design = h.turn;
+        h.point = yUp(h.point); h.turn = yUp(h.turn);
+      }
+      setupFins();
     }
   } catch (e) {
     layout = placeholderLayout();
@@ -394,6 +399,74 @@ window.nibblesBehindBody = behindBody;  // for view3d.js
 
 // The tubes cut into short pieces (3D, the page's y-up mm), for
 // drawing in depth order in the canvas views.
+// ------------------------------------------------------------------ fin hinges
+
+// Each fin swings about its hinge (layout.fin_hinges, from the Fusion model):
+// calibrated angle +90 = straight up, -90 = straight down, as the fin sensor
+// node reports it. The model has the fins at model_deg.
+let finBase = [];
+function setupFins() {
+  finBase = (layout.fin_hinges || []).map((h) => {
+    const ch = layout.channels.find((c) => c.channel === h.channel);
+    return {
+      h, start: ch.start, count: ch.count, deg: h.model_deg,
+      leds: layout.leds.slice(ch.start, ch.start + ch.count).map((p) => p.slice()),
+      outline: (layout.outlines[h.outline] || []).map((p) => p.slice()),
+    };
+  });
+  for (const f of finBase) {
+    const s = $(f.h.side === 'port' ? 'finport' : 'finsb');
+    s.value = Math.round(f.h.model_deg);
+    showFinValue(f.h.side, f.h.model_deg, false);
+  }
+}
+// Point p turned by ang (radians) about the line through c along unit axis k.
+function turnAbout(p, c, k, ang) {
+  const v = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+  const cs = Math.cos(ang), sn = Math.sin(ang), kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+  const kx = cross(k, v);
+  return [0, 1, 2].map((i) => c[i] + v[i] * cs + kx[i] * sn + k[i] * kv * (1 - cs));
+}
+function setFinAngle(side, deg) {
+  const f = finBase.find((x) => x.h.side === side);
+  if (!f || f.deg === deg) return;
+  f.deg = deg;
+  const ang = (f.h.model_deg - deg) * Math.PI / 180;  // turning "turn" goes from up towards down
+  f.leds.forEach((p, i) => { layout.leds[f.start + i] = turnAbout(p, f.h.point, f.h.turn, ang); });
+  layout.outlines[f.h.outline] = f.outline.map((p) => turnAbout(p, f.h.point, f.h.turn, ang));
+  tubePieces.cache = null;
+  if (window.nibbles3d && window.nibbles3d.moveFin) window.nibbles3d.moveFin(f.h, ang);
+}
+function showFinValue(side, deg, live) {
+  $(side === 'port' ? 'finportv' : 'finsbv').textContent = `${deg > 0 ? '+' : ''}${Math.round(deg)}°${live ? ' (live)' : ''}`;
+}
+// The real fins' angles from the shark (the fin sensor node, via the mirror).
+const finLiveAt = { port: 0, starboard: 0 };
+function finsFromShark(m) {
+  if (!m.fins) return;
+  ['port', 'starboard'].forEach((side, i) => {
+    const f = m.fins[i];
+    if (!f || f.deg === undefined) return;
+    finLiveAt[side] = performance.now();
+    const s = $(side === 'port' ? 'finport' : 'finsb');
+    s.value = Math.round(f.deg);
+    s.disabled = true;
+    showFinValue(side, f.deg, true);
+    setFinAngle(side, f.deg);
+  });
+}
+for (const [id, side] of [['finport', 'port'], ['finsb', 'starboard']]) {
+  $(id).oninput = () => { showFinValue(side, +$(id).value, false); setFinAngle(side, +$(id).value); };
+}
+setInterval(() => {  // live data stopped: the sliders are yours again
+  for (const [id, side] of [['finport', 'port'], ['finsb', 'starboard']]) {
+    if ($(id).disabled && performance.now() - finLiveAt[side] > 2000) {
+      $(id).disabled = false;
+      showFinValue(side, +$(id).value, false);
+    }
+  }
+}, 500);
+
 function tubePieces() {
   if (tubePieces.cache && tubePieces.cache.layout === layout) return tubePieces.cache.pieces;
   const pieces = [];
