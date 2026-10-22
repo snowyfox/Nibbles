@@ -46,6 +46,20 @@ eyes and base (`shared/nibbles_link`).
   the WT32 build: identical to the bench's own network LED output, 44
   frames/s, WLED's frame rate unchanged (43 fps), 10-minute soak clean. On
   the real controller since 2026-09-26 (42 frames/s to the simulator).
+- **Battery-aware current limit**: the base broadcasts the pack voltage at the
+  pole base (`NL_MSG_BATTERY`, from an INA226 there), and WLED's global
+  current limit follows it (`nl_power_limit_ma`): the most power that keeps
+  the 5 V converter's input above `floor_mv` (11.2 V) after the pack's sag
+  and the pole wiring's drop (`pack_mohm` 100, `wire_mohm` 200, estimates to
+  replace with measurements). A lower limit applies at once, a higher one
+  rises at 2 A/s; without new readings the last limit holds. The ceiling is
+  the usermod's `power_max_ma` (17000), which takes over WLED's own limit
+  field while `power` is on; until the first reading the limit is that
+  ceiling. Test readings: `{"nibbles":{"battery":{"mv":13000,"ma":7700}}}`
+  (`"mv":0` forgets). The Info page shows "Nibbles power". Bench-tested
+  (2026-10-02): 14.0 V -> 17000 mA, 13.0 V -> 12096, 12.5 V -> 8735 at once,
+  back to 14.0 V in ~5 s; on the bench board (network output only) WLED's
+  limiter doesn't dim, so the dimming itself is untested.
 - **2D map partners**: with the shark's 2D map (below) it copies each partner
   LED's colour from the LED it pairs with after every frame (the `"copy"`
   list in `/ledmap.json`). The Info page shows how many ("Nibbles 2D map").

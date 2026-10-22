@@ -61,6 +61,20 @@ That is 85–90% of the converter's rating. WLED now estimates 17 mA per LED
 and limits the total to 17,000 mA, so full white runs at about 95% (about
 95 W in). See `wled/README.md`, "Power and the flash bump".
 
+**Low-voltage test, 2026-10-02**: same setup, full white (at that 95%
+limit) for a few seconds, stepping the bench supply down: fine at 12.3 V
+and 12.25 V at the pole base; at **12.20 V the bench supply tripped its
+over-current protection** (limit 10 A, steady draw ~7.8 A) and the whole
+shark lost power. The trip comes from current spikes, so the converter
+(rated 12–24 V in) stutters once its input falls to roughly 10.8 V after
+the 20 AWG pole wiring's drop (~1.4 V at ~7.7 A, *estimate*). A real 4S
+pack resting at 13.0 V sags to about 12.3 V during such a flash
+(*estimate*, ~0.1 Ω pack, BMS, fuse and connectors), so with today's
+converter there is essentially no margin at the planned cutoff, and on a
+battery a BMS or eFuse could trip the same way. Flashes last at most about
+1 s, so heat in the 20 AWG wiring is not a concern; only this voltage
+floor is.
+
 Worst case over the dock cable is lights at full plus quick charging, around
 **160 W** (the earlier 115 W assumed a 50 W converter). Firmware caps this
 (see charge policy).
@@ -109,11 +123,19 @@ Worst case over the dock cable is lights at full plus quick charging, around
   on/off control from the base.
 - **INA228** on the lighting output: live voltage, current and power, used for
   runtime estimates and to measure the real average draw.
-- **Lighting converter:** the current one (100 W, 20 A out) needs 12–24 V in.
-  Plan to replace it with a **9–36 V input** 5 V converter, **100 W (20 A) or
-  more**, so it keeps working down to the VB99's 11.2 V cutoff and through
-  cable voltage drop, and still covers full white. Until then, cut off at about
-  13.0 V (internal pack) and switch dock batteries at about 12.5 V.
+- **Lighting converter:** the current one (100 W, 20 A out) needs 12–24 V in
+  and stutters below about 10.8 V at its input (measured, see the low-voltage
+  test above). **For now, WLED's current limit follows the pack voltage**: an
+  INA226 at the pole base (read by the base station) measures the pack, the
+  base broadcasts it, and the WLED usermod sets the most current that keeps
+  the converter's input above 11.2 V (14.0 V and up: 17 A; 13.0 V: ~12 A;
+  12.5 V: ~8.7 A; see `wled/README.md`). Normal presets are far below these
+  limits, so only full-white flashes dim as the pack empties. Later, a **9–36 V
+  input** 5 V converter (**100 W, 20 A or more**) would remove the problem
+  (it keeps working down to the VB99's 11.2 V cutoff and through the dock and
+  pole cable drop); not a priority. Without the dynamic limit, cut off at
+  about 13.5 V (internal pack, at rest) and switch dock batteries at about
+  13.3 V.
 
 ### Logic supply
 
@@ -270,7 +292,8 @@ USB-C, charge at the rate the PD source allows, up to 3.5 A.
 ## Open decisions
 
 - Internal pack BMS and gauge: separate BMS + BQ34Z100-G1, or BQ40Z50.
-- Wide-input (9–36 V) lighting converter: which part.
+- Wide-input (9–36 V) lighting converter, 100 W or more: which part (later;
+  the battery-aware WLED limit covers the low-voltage problem for now).
 - Exact VB99 model(s) in use and their output ratings.
 - Number of dock slots.
 - Free GPIOs on the Waveshare V2 board.

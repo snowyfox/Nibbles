@@ -12,6 +12,13 @@
 //   tools/sim/make_ledmap.py) only one of each overlapping pair is mapped
 //   (the outward body strip, the starboard fin); after every frame the LEDs
 //   in the file's "copy" list take the colour of the LED they pair with.
+// - Battery-aware current limit: the base broadcasts the pack voltage at the
+//   pole base (NL_MSG_BATTERY); WLED's global current limit follows it so a
+//   full-white flash can't pull the 5 V converter's input below the voltage
+//   where it stutters (nl_power_limit_ma; docs/power.md). The ceiling is this
+//   usermod's power_max_ma setting, which takes over WLED's own limit field.
+// - Fin hinge angles from the fin sensor node (NL_MSG_FIN_POSE): shown on the
+//   Info page and passed to the simulator (not yet used for the lights).
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -103,7 +110,39 @@ class NibblesUsermod : public Usermod {
     bool copyBuiltMatrix = false;
     unsigned long copyBuiltAt = 0;
 
+    // Fin hinge angles, as last heard.
+    nl_fin_pose_t fins = { { NL_FIN_NONE, NL_FIN_NONE }, { NL_FIN_RAW_NONE, NL_FIN_RAW_NONE } };
+    unsigned long finsAt[2] = { 0, 0 };
+    uint32_t finRx = 0;
+
+    // Battery-aware current limit.
+    bool powerEnabled = true;
+    nl_power_model_t powerModel = NL_POWER_MODEL_DEFAULT;
+    nl_power_limiter_t power;
+    uint32_t powerApplied = 0;    // limit we last set, 0 = not yet (WLED's own until then)
+    unsigned long lastPowerTick = 0;
+    uint32_t batteryRx = 0;
+
     static const char _name[];
+
+    // Keep WLED's global limit at the limiter's value (or the ceiling while no
+    // battery reading has arrived). Leaves WLED alone when its limiter is off.
+    void powerLoop(unsigned long now) {
+      if (now - lastPowerTick < 100) return;
+      lastPowerTick = now;
+      const uint32_t lim = nl_power_limiter_tick(&power, now);
+      if (!powerEnabled || BusManager::ablMilliampsMax() == 0) return;
+      const uint32_t want = lim ? lim : powerModel.max_ma;
+      if (want != powerApplied || BusManager::ablMilliampsMax() != want) {
+        BusManager::setMilliampsMax(want > 65535 ? 65535 : want);
+        powerApplied = want;
+      }
+    }
+
+    void batteryReading(const nl_battery_t &b) {
+      batteryRx++;
+      nl_power_limiter_reading(&power, &b, millis());
+    }
 
     void readCopyRanges() {
       copyRangeCount = 0;
@@ -220,12 +259,24 @@ class NibblesUsermod : public Usermod {
       const nl_audio_t &a = lastAudioOut;
       const nl_eye_telemetry_t &e = eyes;
       int len = snprintf(buf, sizeof(buf),
-        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"on\":%s}", bri, currentPreset, bri ? "true" : "false");
+        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"on\":%s,\"limit_ma\":%u,\"pack_mv\":%u}", bri, currentPreset,
+        bri ? "true" : "false", (unsigned)BusManager::ablMilliampsMax(), power.heard ? (unsigned)power.pack_mv : 0u);
       if (lastAudioOutAt && now - lastAudioOutAt < 1000)
         len += snprintf(buf + len, sizeof(buf) - len,
           ",\"audio\":[%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.4f,%.3f,%lu,%lu]",
           a.level_db, a.avg_db, a.noise_floor_db, a.gain_db, a.loudness, a.warmth, a.beat_period_s,
           a.beat_confidence, (unsigned long)a.beat_count, (unsigned long)a.peak_count);
+      {
+        char fbuf[96];
+        int fn = 0;
+        for (int f = 0; f < 2; f++) {
+          const bool fresh = finsAt[f] && now - finsAt[f] < 2000;
+          if (!fresh) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%snull", f ? "," : "");
+          else if (fins.angle_cdeg[f] == NL_FIN_NONE) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"raw\":%u}", f ? "," : "", fins.raw[f]);
+          else fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"deg\":%.2f,\"raw\":%u}", f ? "," : "", fins.angle_cdeg[f] / 100.0f, fins.raw[f]);
+        }
+        len += snprintf(buf + len, sizeof(buf) - len, ",\"fins\":[%s]", fbuf);
+      }
       if (haveEyes && now - eyesAt < 2000) {
         char name[NL_NAME_LEN + 1] = { 0 };
         for (int i = 0; i < NL_NAME_LEN && e.name[i]; i++) name[i] = (e.name[i] == '"' || e.name[i] == '\\') ? ' ' : e.name[i];
@@ -491,6 +542,20 @@ class NibblesUsermod : public Usermod {
         memcpy(&eyes, pl, sizeof(eyes));
         eyesAt = millis();
         haveEyes = true;
+      } else if (h.type == NL_MSG_FIN_POSE && len == sizeof(nl_fin_pose_t)) {
+        nl_fin_pose_t p;
+        memcpy(&p, pl, sizeof(p));
+        for (int f = 0; f < 2; f++) {
+          if (p.raw[f] == NL_FIN_RAW_NONE) continue;  // this node doesn't read that fin
+          fins.angle_cdeg[f] = p.angle_cdeg[f];
+          fins.raw[f] = p.raw[f];
+          finsAt[f] = millis();
+        }
+        finRx++;
+      } else if (h.type == NL_MSG_BATTERY && len == sizeof(nl_battery_t)) {
+        nl_battery_t b;
+        memcpy(&b, pl, sizeof(b));
+        batteryReading(b);
       } else if (h.type == NL_MSG_BUMP && len == sizeof(nl_bump_t)) {
         nl_bump_t b;
         memcpy(&b, pl, sizeof(b));
@@ -519,6 +584,7 @@ class NibblesUsermod : public Usermod {
 
   public:
     void setup() override {
+      nl_power_limiter_init(&power, &powerModel);
       nl_bump_rx_init(&bumps);
       nl_ar_init(&arState);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
@@ -533,6 +599,7 @@ class NibblesUsermod : public Usermod {
                              strip.isMatrix != copyBuiltMatrix || (!copyPairCount && millis() - copyBuiltAt > 5000)))
         buildCopyPairs();
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
+      powerLoop(millis());  // also without the radio, so it can be tried with test readings
       if (!radioUp()) return;
       for (;;) {
         RxItem it;
@@ -608,6 +675,28 @@ class NibblesUsermod : public Usermod {
                  !audio ? "off" : audioSent ? "sending" : "no AudioReactive");
         radio.add(buf);
       }
+      {
+        JsonArray fa = user.createNestedArray(F("Nibbles fins"));
+        char buf[96];
+        int n = 0;
+        static const char *names[2] = { "port", "starboard" };
+        for (int f = 0; f < 2; f++) {
+          if (!finsAt[f] || millis() - finsAt[f] > 2000) n += snprintf(buf + n, sizeof(buf) - n, "%s%s not heard", f ? "; " : "", names[f]);
+          else if (fins.angle_cdeg[f] == NL_FIN_NONE) n += snprintf(buf + n, sizeof(buf) - n, "%s%s raw %u (uncalibrated)", f ? "; " : "", names[f], fins.raw[f]);
+          else n += snprintf(buf + n, sizeof(buf) - n, "%s%s %+.1f deg", f ? "; " : "", names[f], fins.angle_cdeg[f] / 100.0f);
+        }
+        fa.add(buf);
+      }
+      {
+        JsonArray pw = user.createNestedArray(F("Nibbles power"));
+        char buf[80];
+        if (!powerEnabled) snprintf(buf, sizeof(buf), "off");
+        else if (BusManager::ablMilliampsMax() == 0) snprintf(buf, sizeof(buf), "WLED's current limiter is off");
+        else if (!power.heard) snprintf(buf, sizeof(buf), "no battery readings; limit %u mA", (unsigned)BusManager::ablMilliampsMax());
+        else snprintf(buf, sizeof(buf), "pack %.2f V; limit %u of %u mA (%lu readings)", power.pack_mv / 1000.0f,
+                      (unsigned)BusManager::ablMilliampsMax(), (unsigned)powerModel.max_ma, (unsigned long)batteryRx);
+        pw.add(buf);
+      }
       if (strip.isMatrix && copyRangeCount) {
         JsonArray m2 = user.createNestedArray(F("Nibbles 2D map"));
         char buf[40];
@@ -634,6 +723,15 @@ class NibblesUsermod : public Usermod {
     // {"nibbles":{"mirror":{"ip":"a.b.c.d","port":4050,"s":5}}}: stream to the
     // simulator for s seconds (0 stops).
     void readFromJsonState(JsonObject &root) override {
+      // {"nibbles":{"battery":{"mv":13000,"ma":7700}}}: a test reading, as if
+      // from the base ("mv":0 forgets: back to the ceiling).
+      JsonObject bat = root[F("nibbles")][F("battery")];
+      if (!bat.isNull()) {
+        nl_battery_t b = {};
+        b.pack_mv = bat[F("mv")] | 0;
+        if (!bat[F("ma")].isNull()) { b.current_ma = bat[F("ma")] | 0; b.flags = NL_BATT_CURRENT; }
+        batteryReading(b);
+      }
       JsonObject m = root[F("nibbles")][F("mirror")];
       if (m.isNull()) return;
       IPAddress ip;
@@ -653,6 +751,13 @@ class NibblesUsermod : public Usermod {
       top[F("enabled")] = enabled;
       top[F("anchor")] = anchor;
       top[F("audio")] = audio;
+      top[F("power")] = powerEnabled;            // battery-aware current limit
+      top[F("power_max_ma")] = powerModel.max_ma;  // its ceiling (replaces WLED's own limit field)
+      top[F("power_min_ma")] = powerModel.min_ma;
+      top[F("floor_mv")] = powerModel.floor_mv;    // lowest input the 5 V converter may see
+      top[F("pack_mohm")] = powerModel.pack_mohm;  // pack, BMS, fuse
+      top[F("wire_mohm")] = powerModel.wire_mohm;  // pole wiring, there and back
+      top[F("conv_eff")] = powerModel.efficiency_pct;
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -661,6 +766,16 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("enabled")], enabled, true);
       complete &= getJsonValue(top[F("anchor")], anchor, true);
       complete &= getJsonValue(top[F("audio")], audio, false);
+      const nl_power_model_t def = NL_POWER_MODEL_DEFAULT;
+      complete &= getJsonValue(top[F("power")], powerEnabled, true);
+      complete &= getJsonValue(top[F("power_max_ma")], powerModel.max_ma, def.max_ma);
+      complete &= getJsonValue(top[F("power_min_ma")], powerModel.min_ma, def.min_ma);
+      complete &= getJsonValue(top[F("floor_mv")], powerModel.floor_mv, def.floor_mv);
+      complete &= getJsonValue(top[F("pack_mohm")], powerModel.pack_mohm, def.pack_mohm);
+      complete &= getJsonValue(top[F("wire_mohm")], powerModel.wire_mohm, def.wire_mohm);
+      complete &= getJsonValue(top[F("conv_eff")], powerModel.efficiency_pct, def.efficiency_pct);
+      nl_power_limiter_init(&power, &powerModel);  // new settings: start over (readings arrive several times a second)
+      powerApplied = 0;
       return complete;
     }
 
