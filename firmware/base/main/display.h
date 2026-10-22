@@ -21,6 +21,9 @@ typedef struct {
     nl_wled_telemetry_t wled;
     // a bump being held right now (0 = none)
     uint8_t bump_action;
+    // whether WLED's fin LEDs follow the fins (NL_MSG_FIN_STATE)
+    bool fins_fresh;
+    nl_fin_state_t fins;
 } display_status_t;
 
 // Touch actions. Cards are tapped; bump pads report press and release.
@@ -36,6 +39,7 @@ typedef enum {
     DISPLAY_HOLD_PRESET,      // preset grid: held (pressed) / let go; value = preset to bump (11..20)
     DISPLAY_SET_AUTO,         // preset page switch: value 1 = eyes change presets by themselves
     DISPLAY_SET_REACT,        // preset page selector: value = nl_react_t
+    DISPLAY_SET_FINS,         // preset page switch: value 1 = WLED's fin LEDs follow the fins' angle
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).

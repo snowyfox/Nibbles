@@ -248,6 +248,7 @@ static void on_preset_event(lv_event_t *ev)
 
 static int64_t slider_hold_until;  // don't let telemetry move a control just touched
 static lv_obj_t *auto_switch, *react_select;  // preset page controls, follow the eyes' telemetry
+static lv_obj_t *fins_switch, *fins_label, *fins_detail;  // follow WLED's fin state
 
 static void on_control_event(lv_event_t *ev)
 {
@@ -256,6 +257,8 @@ static void on_control_event(lv_event_t *ev)
     slider_hold_until = esp_timer_get_time() + 1500000;
     if (obj == auto_switch) {
         action_cb(DISPLAY_SET_AUTO, true, lv_obj_has_state(obj, LV_STATE_CHECKED) ? 1 : 0);
+    } else if (obj == fins_switch) {
+        action_cb(DISPLAY_SET_FINS, true, lv_obj_has_state(obj, LV_STATE_CHECKED) ? 1 : 0);
     } else if (obj == react_select) {
         const uint32_t sel = lv_buttonmatrix_get_selected_button(obj);
         if (sel <= NL_REACT_PEAKS) action_cb(DISPLAY_SET_REACT, true, (int)sel);
@@ -396,7 +399,7 @@ static void build_preset_page(void)
 {
     const int cols = PORTRAIT ? 2 : 5, rows = PORTRAIT ? 5 : 2;
     const int w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
-    const int gap = 6, top = PORTRAIT ? 78 : 40, bottom = PORTRAIT ? 48 : 22;
+    const int gap = 6, top = PORTRAIT ? 124 : 40, bottom = PORTRAIT ? 48 : 22;
     int side = (w - 8 - gap * (cols - 1)) / cols;
     const int by_height = (h - top - bottom - gap * (rows - 1)) / rows;
     if (by_height < side) side = by_height;
@@ -438,6 +441,29 @@ static void build_preset_page(void)
     lv_obj_set_style_radius(react_select, 8, LV_PART_ITEMS);
     lv_obj_set_style_shadow_width(react_select, 0, LV_PART_ITEMS);
     lv_obj_add_event_cb(react_select, on_control_event, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // FINS: WLED's fin LEDs follow the fins' angle (off: they stay at the
+    // modelled angle). The label says what WLED is using.
+    fins_switch = lv_switch_create(page1);
+    lv_obj_set_size(fins_switch, 44, 24);
+    lv_obj_set_style_bg_color(fins_switch, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(fins_switch, lv_color_hex(COL_WLED), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(fins_switch, on_control_event, LV_EVENT_VALUE_CHANGED, NULL);
+    fins_label = label(page1, &lv_font_montserrat_14, COL_TITLE);
+    lv_label_set_text(fins_label, "FINS");
+    fins_detail = label(page1, &lv_font_montserrat_14, COL_DIM);
+    lv_label_set_text(fins_detail, "");
+    if (PORTRAIT) {  // a row of its own under the reaction selector, the angles under that
+        lv_obj_align(fins_switch, LV_ALIGN_TOP_RIGHT, -6, 78);
+        lv_obj_align(fins_label, LV_ALIGN_TOP_LEFT, 8, 82);
+        lv_obj_set_width(fins_detail, w - 16);
+        lv_label_set_long_mode(fins_detail, LV_LABEL_LONG_DOT);
+        lv_obj_align(fins_detail, LV_ALIGN_TOP_LEFT, 8, 104);
+    } else {         // next to the page title
+        lv_obj_align_to(fins_label, title, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
+        lv_obj_align_to(fins_switch, fins_label, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+        lv_obj_align_to(fins_detail, fins_switch, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+    }
 
     lv_obj_t *grid = lv_obj_create(page1);
     lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
@@ -609,6 +635,32 @@ static void ui_update(const display_status_t *s)
         lv_label_set_text(eyes_card.line1, "not heard");
         lv_label_set_text(eyes_card.line2, "");
         set_slider(eyes_card.bar, 0, false);
+    }
+
+    // Fins: the switch follows WLED (unless just touched); the label shows the angles in use.
+    if (s->fins_fresh) {
+        const nl_fin_state_t *f = &s->fins;
+        if (esp_timer_get_time() >= slider_hold_until) {
+            if (f->follow) lv_obj_add_state(fins_switch, LV_STATE_CHECKED);
+            else lv_obj_remove_state(fins_switch, LV_STATE_CHECKED);
+        }
+        lv_obj_remove_state(fins_switch, LV_STATE_DISABLED);
+        if (!f->follow) {
+            lv_label_set_text(fins_detail, "locked at the model angle");
+        } else {
+            char parts[2][24];
+            for (int i = 0; i < 2; i++) {
+                const char *src = f->source[i] == NL_FIN_SRC_SWEEP ? " sweep" : "";
+                if (f->angle_cdeg[i] == NL_FIN_NONE) snprintf(parts[i], sizeof(parts[i]), "%c --", i ? 'S' : 'P');
+                else snprintf(parts[i], sizeof(parts[i]), "%c %+d%s", i ? 'S' : 'P', (f->angle_cdeg[i] + (f->angle_cdeg[i] < 0 ? -50 : 50)) / 100, src);
+            }
+            lv_label_set_text_fmt(fins_detail, "%s  %s", parts[0], parts[1]);
+        }
+        lv_obj_set_style_text_color(fins_label, lv_color_hex(COL_TITLE), 0);
+    } else {
+        lv_label_set_text(fins_detail, "WLED not heard");
+        lv_obj_set_style_text_color(fins_label, lv_color_hex(COL_DIM), 0);
+        lv_obj_add_state(fins_switch, LV_STATE_DISABLED);
     }
 
     // WLED

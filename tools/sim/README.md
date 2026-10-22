@@ -89,6 +89,8 @@ a fin through its whole range, -90..+90 deg. With the live shark the
 controller does the sweep (`{"nibbles":{"finsweep":{...}}}`, renewed every
 2 s), so the real fin LEDs follow it as if the fin moved, and the page shows
 the controller's angle "(sweep)"; otherwise the page animates the fin.
+When fin following is off on the shark (the base's FINS switch), both fins
+show "(locked)" at the modelled angle.
 
 ## Spin
 **Spin about the pole** (WLED card, 0 to 60 turns a minute, i.e. up to once a

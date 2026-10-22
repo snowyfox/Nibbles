@@ -468,7 +468,20 @@ function showFinValue(side, deg, tag) {  // tag: false, true (live) or a word
 }
 // The real fins' angles from the shark (the fin sensor node, via the mirror).
 const finLiveAt = { port: 0, starboard: 0 };
+let finsLockedAt = 0;  // when the shark last said its fins don't follow (locked at the model angle)
 function finsFromShark(m) {
+  if (m.finfollow === false) {
+    finsLockedAt = performance.now();
+    for (const f of finBase) {
+      const side = f.h.side, s = $(side === 'port' ? 'finport' : 'finsb');
+      finLiveAt[side] = performance.now();
+      s.value = Math.round(f.h.model_deg);
+      s.disabled = true;
+      showFinValue(side, f.h.model_deg, 'locked');
+      setFinAngle(side, f.h.model_deg);
+    }
+    return;
+  }
   if (!m.fins) return;
   ['port', 'starboard'].forEach((side, i) => {
     const f = m.fins[i];
@@ -528,6 +541,7 @@ setInterval(() => {
   for (const side of ['port', 'starboard']) {
     if (!sweep[side]) continue;
     if (lightsFrom === 'shark' && performance.now() - finLiveAt[side] < 1000) continue;  // the controller's angle wins
+    if (lightsFrom === 'shark' && performance.now() - finsLockedAt < 1000) continue;    // fins locked on the shark
     const deg = 90 * Math.sin(2 * Math.PI * t / sweepPeriod(side));
     $(side === 'port' ? 'finport' : 'finsb').value = Math.round(deg);
     showFinValue(side, deg, 'sweep');

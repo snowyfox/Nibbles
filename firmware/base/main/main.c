@@ -28,6 +28,9 @@ static uint8_t wled_mac[6];
 static bool have_wled;
 static nl_wled_telemetry_t wled;
 static int64_t wled_us;
+static nl_fin_state_t fin_state;
+static bool have_fins;
+static int64_t fins_us;
 
 static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
@@ -44,6 +47,12 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         memcpy(wled_mac, mac, 6);
         have_wled = true;
         wled_us = esp_timer_get_time();
+        taskEXIT_CRITICAL(&lock);
+    } else if (h->type == NL_MSG_FIN_STATE && len == sizeof(nl_fin_state_t) && h->role == NL_ROLE_WLED) {
+        taskENTER_CRITICAL(&lock);
+        memcpy(&fin_state, pl, sizeof(fin_state));
+        have_fins = true;
+        fins_us = esp_timer_get_time();
         taskEXIT_CRITICAL(&lock);
     }
 }
@@ -67,8 +76,8 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const esp_err_t err = nl_espnow_command(mac, &cmd, &status, CMD_TRIES, CMD_TIMEOUT_MS);
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
-                                 "auto presets", "reactivity" };
-    const char *what = op <= NL_OP_REACTIVITY ? ops[op] : "?";
+                                 "auto presets", "reactivity", "fin following" };
+    const char *what = op <= NL_OP_FIN_FOLLOW ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
@@ -151,6 +160,7 @@ static void actions_task(void *arg)
             case DISPLAY_TAP_PRESET: send_preset_both(a.value); break;
             case DISPLAY_SET_AUTO:   send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, a.value); break;
             case DISPLAY_SET_REACT:  send_cmd_to(NL_TARGET_EYES, NL_OP_REACTIVITY, a.value); break;
+            case DISPLAY_SET_FINS:   send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, a.value); break;
             case DISPLAY_HOLD_EYES: {
                 taskENTER_CRITICAL(&lock);
                 const bool on = eyes.flags & NL_EYE_AUTO_CYCLE;
@@ -267,6 +277,8 @@ static void console_task(void *arg)
             send_cmd_to(NL_TARGET_EYES, NL_OP_REACTIVITY,
                         !strcmp(line + 6, "beats") ? NL_REACT_BEATS : !strcmp(line + 6, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
         else if (!strncmp(line, "preset ", 7)) send_preset_both(atoi(line + 7));
+        else if (!strcmp(line, "fins on") || !strcmp(line, "fins off") || !strcmp(line, "fins toggle"))
+            send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, line[6] == 'n' ? 1 : line[6] == 'f' ? 0 : 2);
         else if (!strcmp(line, "auto on") || !strcmp(line, "auto off")) send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, line[6] == 'n');
         else if (!strncmp(line, "bri ", 4))  // the eyes follow WLED's brightness: same as "wled bri"
             send_cmd_to(NL_TARGET_WLED, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
@@ -283,7 +295,7 @@ static void console_task(void *arg)
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS");
     }
 }
 
@@ -333,6 +345,8 @@ void app_main(void)
         taskENTER_CRITICAL(&lock);
         const nl_wled_telemetry_t w = wled;
         const bool wfresh = have_wled && esp_timer_get_time() - wled_us < 2000000;
+        const nl_fin_state_t fs = fin_state;
+        const bool ffresh = have_fins && esp_timer_get_time() - fins_us < 2000000;
         taskEXIT_CRITICAL(&lock);
         display_status_t ds = {
             .channel = st.channel,
@@ -346,6 +360,8 @@ void app_main(void)
             .wled_fresh = wfresh,
             .wled = w,
             .bump_action = bump_held,
+            .fins_fresh = ffresh,
+            .fins = fs,
         };
         display_update(&ds);
         if (n % 8) continue;  // log every 2 s

@@ -63,6 +63,12 @@ eyes and base (`shared/nibbles_link`).
 - **2D map partners**: with the shark's 2D map (below) it copies each partner
   LED's colour from the LED it pairs with after every frame (the `"copy"`
   list in `/ledmap.json`). The Info page shows how many ("Nibbles 2D map").
+- **Fin following on/off**: `NL_OP_FIN_FOLLOW` (the base's FINS switch on its
+  preset page, or `fins on|off|toggle` on its serial port; also
+  `{"nibbles":{"finfollow":false}}`) switches it off: the fins then stay at
+  their modelled angle, ignoring the sensor and any sweep. Saved in WLED's
+  config (`fin_follow`). WLED broadcasts `NL_MSG_FIN_STATE` twice a second
+  (on/off, the angle in use per fin and where it comes from) for the base.
 - **Fins that follow their real angle** (2D): with a fin sensor node sending
   the fin's hinge angle (`NL_MSG_FIN_POSE`, `firmware/fins`), each of that
   fin's LEDs shows the side view's colour at the spot it is really over, so

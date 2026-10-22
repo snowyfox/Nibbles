@@ -33,6 +33,7 @@ typedef enum {
     NL_MSG_BUMP = 8,        // momentary effect while a button is held (broadcast)
     NL_MSG_BATTERY = 9,     // pack voltage (and current) at the pole base, base -> radio, ~5 Hz
     NL_MSG_FIN_POSE = 10,   // the fins' hinge angles, fin sensor node -> radio, ~50 Hz
+    NL_MSG_FIN_STATE = 11,  // whether the lights follow the fins, and the angles in use, WLED -> radio, 2 Hz
 } nl_msg_type_t;
 
 typedef enum {
@@ -146,6 +147,7 @@ typedef enum {
     NL_OP_BRIGHTNESS_STEP = 5,  // arg = signed step (eyes: through their brightness presets by sign)
     NL_OP_AUTO_CYCLE = 6,       // eyes: arg 1 = cycle presets by themselves, 0 = hold the current one
     NL_OP_REACTIVITY = 7,       // eyes: arg = nl_react_t
+    NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
 } nl_op_t;
 
 typedef struct NL_PACKED {
@@ -284,6 +286,19 @@ typedef struct NL_PACKED {
     int16_t angle_cdeg[2];  // [NL_FIN_PORT], [NL_FIN_STARBOARD]: calibrated hinge angle, or NL_FIN_NONE
     uint16_t raw[2];        // the sensor's own reading (e.g. ADC counts), or NL_FIN_RAW_NONE
 } nl_fin_pose_t;
+
+typedef enum {
+    NL_FIN_SRC_NONE = 0,    // no angle (no sensor heard)
+    NL_FIN_SRC_SENSOR = 1,  // the fin sensor node's reading
+    NL_FIN_SRC_SWEEP = 2,   // a test sweep (from the simulator)
+    NL_FIN_SRC_LOCKED = 3,  // following is off: the modelled angle
+} nl_fin_src_t;
+
+typedef struct NL_PACKED {
+    uint8_t follow;         // 1: fin LEDs follow the fins' angle (NL_OP_FIN_FOLLOW)
+    int16_t angle_cdeg[2];  // angle in use per fin ([NL_FIN_PORT], [NL_FIN_STARBOARD]), or NL_FIN_NONE
+    uint8_t source[2];      // nl_fin_src_t per fin
+} nl_fin_state_t;
 
 // ---------------------------------------------------------------- radio packets
 #define NL_NET_ID           0x5348  // "SH"(ark): packets from other networks are ignored

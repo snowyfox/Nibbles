@@ -17,6 +17,10 @@
 //   full-white flash can't pull the 5 V converter's input below the voltage
 //   where it stutters (nl_power_limit_ma; docs/power.md). The ceiling is this
 //   usermod's power_max_ma setting, which takes over WLED's own limit field.
+// - Fin following can be switched off (NL_OP_FIN_FOLLOW from the base, or
+//   {"nibbles":{"finfollow":false}}; saved in the config): the fins then stay
+//   at their modelled angle, as before following existed. NL_MSG_FIN_STATE
+//   (2 Hz) tells the base whether it is on and which angles are in use.
 // - Fin sweep for testing (the simulator asks, {"nibbles":{"finsweep":{"port":
 //   period_s,"starboard":period_s,"s":seconds}}}): the fin's angle swings
 //   smoothly through -90..+90 deg, in place of the sensor, until the request
@@ -150,6 +154,16 @@ class NibblesUsermod : public Usermod {
       nl_power_limiter_reading(&power, &b, millis());
     }
 
+    // Fin LEDs follow the fins' angle (off: they stay at the modelled angle).
+    bool finFollowOn = true;
+    static constexpr int NO_ACTION = INT32_MIN;  // a command with nothing for applyCommand to do
+
+    void setFinFollow(bool on) {
+      if (on == finFollowOn) return;
+      finFollowOn = on;
+      configNeedsWrite = true;  // remembered across restarts
+    }
+
     // Test sweep of the fins (from the simulator), in place of the sensor.
     float finSweepPeriod[2] = { 0, 0 };   // seconds per full swing, 0 = off
     unsigned long finSweepUntil = 0, finSweepStart = 0;
@@ -160,6 +174,7 @@ class NibblesUsermod : public Usermod {
 
     // The angle a fin has now: the test sweep, else a fresh calibrated sensor reading.
     bool finAngle(int side, unsigned long now, float &deg) const {
+      if (!finFollowOn) return false;  // locked: the fins keep their modelled angle (the static map)
       if (finSweeping(side, now)) {
         deg = 90.0f * sinf(2.0f * (float)M_PI * ((now - finSweepStart) / 1000.0f) / finSweepPeriod[side]);
         return true;
@@ -441,7 +456,7 @@ class NibblesUsermod : public Usermod {
           else if (fins.angle_cdeg[f] == NL_FIN_NONE) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"raw\":%u}", f ? "," : "", fins.raw[f]);
           else fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"deg\":%.2f,\"raw\":%u}", f ? "," : "", fins.angle_cdeg[f] / 100.0f, fins.raw[f]);
         }
-        len += snprintf(buf + len, sizeof(buf) - len, ",\"fins\":[%s]", fbuf);
+        len += snprintf(buf + len, sizeof(buf) - len, ",\"fins\":[%s],\"finfollow\":%s", fbuf, finFollowOn ? "true" : "false");
       }
       if (haveEyes && now - eyesAt < 2000) {
         char name[NL_NAME_LEN + 1] = { 0 };
@@ -518,6 +533,29 @@ class NibblesUsermod : public Usermod {
       audioSent++;
     }
 
+    // Whether the fins are followed, and the angle in use per fin, for the base.
+    void sendFinState() {
+      const unsigned long now = millis();
+      nl_fin_state_t st = {};
+      st.follow = finFollowOn;
+      for (int f = 0; f < 2; f++) {
+        float deg;
+        if (!finFollowOn) {
+          st.source[f] = NL_FIN_SRC_LOCKED;
+          st.angle_cdeg[f] = NL_FIN_NONE;
+          for (int k = 0; k < finFollowCount; k++)
+            if (finFollow[k].side == f) st.angle_cdeg[f] = (int16_t)lroundf(finFollow[k].modelDeg * 100);
+        } else if (finAngle(f, now, deg)) {
+          st.source[f] = finSweeping(f, now) ? NL_FIN_SRC_SWEEP : NL_FIN_SRC_SENSOR;
+          st.angle_cdeg[f] = (int16_t)lroundf(deg * 100);
+        } else {
+          st.source[f] = NL_FIN_SRC_NONE;
+          st.angle_cdeg[f] = NL_FIN_NONE;
+        }
+      }
+      send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_FIN_STATE, &st, sizeof(st));
+    }
+
     void sendTelemetry() {
       nl_wled_telemetry_t t = {};
       t.on = bri > 0;
@@ -592,6 +630,11 @@ class NibblesUsermod : public Usermod {
           return NL_ACK_OK;
         case NL_OP_BRIGHTNESS_STEP:
           id = -constrain((int)bri + cmd.arg, 1, 255);
+          return NL_ACK_OK;
+        case NL_OP_FIN_FOLLOW:
+          if (cmd.arg < 0 || cmd.arg > 2) return NL_ACK_BAD_ARG;
+          setFinFollow(cmd.arg == 2 ? !finFollowOn : cmd.arg == 1);
+          id = NO_ACTION;
           return NL_ACK_OK;
         default: break;
       }
@@ -740,7 +783,7 @@ class NibblesUsermod : public Usermod {
         send(it.mac, NL_MSG_ACK, &ack, sizeof(ack));  // ack first, then act
         if (!repeat) {
           cmdCount++;
-          if (lastStatus == NL_ACK_OK) applyCommand(id);
+          if (lastStatus == NL_ACK_OK && id != NO_ACTION) applyCommand(id);
 #ifdef NIBBLES_DEBUG
           Serial.printf("nibbles: command op %d arg %d -> status %d, preset %d\n", cmd.op, cmd.arg, lastStatus, id);
 #endif
@@ -789,6 +832,7 @@ class NibblesUsermod : public Usermod {
       if (now - lastTelemetry >= TELEMETRY_MS) {
         lastTelemetry = now;
         sendTelemetry();
+        sendFinState();
       }
       if (audio && now - lastAudio >= AUDIO_MS) {
         lastAudio = now;
@@ -850,7 +894,8 @@ class NibblesUsermod : public Usermod {
         int n = 0;
         static const char *names[2] = { "port", "starboard" };
         for (int f = 0; f < 2; f++) {
-          if (finSweeping(f, millis())) n += snprintf(buf + n, sizeof(buf) - n, "%s%s sweeping (%.1f s)", f ? "; " : "", names[f], finSweepPeriod[f]);
+          if (!finFollowOn) { if (!f) n += snprintf(buf + n, sizeof(buf) - n, "following off (fins locked at the modelled angle)"); }
+          else if (finSweeping(f, millis())) n += snprintf(buf + n, sizeof(buf) - n, "%s%s sweeping (%.1f s)", f ? "; " : "", names[f], finSweepPeriod[f]);
           else if (!finsAt[f] || millis() - finsAt[f] > 2000) n += snprintf(buf + n, sizeof(buf) - n, "%s%s not heard", f ? "; " : "", names[f]);
           else if (fins.angle_cdeg[f] == NL_FIN_NONE) n += snprintf(buf + n, sizeof(buf) - n, "%s%s raw %u (uncalibrated)", f ? "; " : "", names[f], fins.raw[f]);
           else n += snprintf(buf + n, sizeof(buf) - n, "%s%s %+.1f deg", f ? "; " : "", names[f], fins.angle_cdeg[f] / 100.0f);
@@ -898,6 +943,8 @@ class NibblesUsermod : public Usermod {
     void readFromJsonState(JsonObject &root) override {
       // {"nibbles":{"battery":{"mv":13000,"ma":7700}}}: a test reading, as if
       // from the base ("mv":0 forgets: back to the ceiling).
+      // {"nibbles":{"finfollow":true|false}}: fin LEDs follow the fins, or stay put
+      if (!root[F("nibbles")][F("finfollow")].isNull()) setFinFollow(root[F("nibbles")][F("finfollow")].as<bool>());
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
       JsonObject sw = root[F("nibbles")][F("finsweep")];
       if (!sw.isNull()) {
@@ -941,6 +988,7 @@ class NibblesUsermod : public Usermod {
       top[F("pack_mohm")] = powerModel.pack_mohm;  // pack, BMS, fuse
       top[F("wire_mohm")] = powerModel.wire_mohm;  // pole wiring, there and back
       top[F("conv_eff")] = powerModel.efficiency_pct;
+      top[F("fin_follow")] = finFollowOn;          // fin LEDs follow the fins' angle
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -957,6 +1005,7 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("pack_mohm")], powerModel.pack_mohm, def.pack_mohm);
       complete &= getJsonValue(top[F("wire_mohm")], powerModel.wire_mohm, def.wire_mohm);
       complete &= getJsonValue(top[F("conv_eff")], powerModel.efficiency_pct, def.efficiency_pct);
+      complete &= getJsonValue(top[F("fin_follow")], finFollowOn, true);
       nl_power_limiter_init(&power, &powerModel);  // new settings: start over (readings arrive several times a second)
       powerApplied = 0;
       return complete;
