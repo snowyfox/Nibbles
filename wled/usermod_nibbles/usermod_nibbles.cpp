@@ -17,6 +17,10 @@
 //   full-white flash can't pull the 5 V converter's input below the voltage
 //   where it stutters (nl_power_limit_ma; docs/power.md). The ceiling is this
 //   usermod's power_max_ma setting, which takes over WLED's own limit field.
+// - Fin sweep for testing (the simulator asks, {"nibbles":{"finsweep":{"port":
+//   period_s,"starboard":period_s,"s":seconds}}}): the fin's angle swings
+//   smoothly through -90..+90 deg, in place of the sensor, until the request
+//   runs out (renewed every 2 s while the simulator wants it).
 // - Fin hinge angles from the fin sensor node (NL_MSG_FIN_POSE): shown on the
 //   Info page and passed to the simulator. With the 2D map, a fin whose angle
 //   is known follows it: each of its LEDs shows the side view's colour at the
@@ -146,6 +150,25 @@ class NibblesUsermod : public Usermod {
       nl_power_limiter_reading(&power, &b, millis());
     }
 
+    // Test sweep of the fins (from the simulator), in place of the sensor.
+    float finSweepPeriod[2] = { 0, 0 };   // seconds per full swing, 0 = off
+    unsigned long finSweepUntil = 0, finSweepStart = 0;
+
+    bool finSweeping(int side, unsigned long now) const {
+      return finSweepPeriod[side] > 0 && (long)(finSweepUntil - now) > 0;
+    }
+
+    // The angle a fin has now: the test sweep, else a fresh calibrated sensor reading.
+    bool finAngle(int side, unsigned long now, float &deg) const {
+      if (finSweeping(side, now)) {
+        deg = 90.0f * sinf(2.0f * (float)M_PI * ((now - finSweepStart) / 1000.0f) / finSweepPeriod[side]);
+        return true;
+      }
+      if (!finsAt[side] || now - finsAt[side] > 2000 || fins.angle_cdeg[side] == NL_FIN_NONE) return false;
+      deg = fins.angle_cdeg[side] / 100.0f;
+      return true;
+    }
+
     // Fins following their real angle in 2D ("fingeo" in /ledmap.json).
     struct FinFollow {
       uint8_t side;               // NL_FIN_PORT / NL_FIN_STARBOARD
@@ -250,9 +273,8 @@ class NibblesUsermod : public Usermod {
       unsigned n = 0;
       for (int k = 0; k < finFollowCount; k++) {
         FinFollow &f = finFollow[k];
-        if (!f.dst || !f.src || f.side > 1 || !finsAt[f.side] || now - finsAt[f.side] > 2000 ||
-            fins.angle_cdeg[f.side] == NL_FIN_NONE) continue;
-        const float deg = fins.angle_cdeg[f.side] / 100.0f;
+        float deg;
+        if (!f.dst || !f.src || f.side > 1 || !finAngle(f.side, now, deg)) continue;
         if (isnan(f.srcDeg) || fabsf(deg - f.srcDeg) >= 0.2f) placeFin(f, deg, W, H);
         // NoMap: most cells have no LED of their own, and getPixelColor() reads those as black.
         for (unsigned i = 0; i < f.count && n < finColorsLen; i++) finColors[n++] = strip.getPixelColorNoMap(f.src[i]);
@@ -412,7 +434,10 @@ class NibblesUsermod : public Usermod {
         int fn = 0;
         for (int f = 0; f < 2; f++) {
           const bool fresh = finsAt[f] && now - finsAt[f] < 2000;
-          if (!fresh) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%snull", f ? "," : "");
+          float deg;
+          if (finSweeping(f, now) && finAngle(f, now, deg))
+            fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"deg\":%.2f,\"sweep\":%.1f}", f ? "," : "", deg, finSweepPeriod[f]);
+          else if (!fresh) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%snull", f ? "," : "");
           else if (fins.angle_cdeg[f] == NL_FIN_NONE) fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"raw\":%u}", f ? "," : "", fins.raw[f]);
           else fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "%s{\"deg\":%.2f,\"raw\":%u}", f ? "," : "", fins.angle_cdeg[f] / 100.0f, fins.raw[f]);
         }
@@ -825,7 +850,8 @@ class NibblesUsermod : public Usermod {
         int n = 0;
         static const char *names[2] = { "port", "starboard" };
         for (int f = 0; f < 2; f++) {
-          if (!finsAt[f] || millis() - finsAt[f] > 2000) n += snprintf(buf + n, sizeof(buf) - n, "%s%s not heard", f ? "; " : "", names[f]);
+          if (finSweeping(f, millis())) n += snprintf(buf + n, sizeof(buf) - n, "%s%s sweeping (%.1f s)", f ? "; " : "", names[f], finSweepPeriod[f]);
+          else if (!finsAt[f] || millis() - finsAt[f] > 2000) n += snprintf(buf + n, sizeof(buf) - n, "%s%s not heard", f ? "; " : "", names[f]);
           else if (fins.angle_cdeg[f] == NL_FIN_NONE) n += snprintf(buf + n, sizeof(buf) - n, "%s%s raw %u (uncalibrated)", f ? "; " : "", names[f], fins.raw[f]);
           else n += snprintf(buf + n, sizeof(buf) - n, "%s%s %+.1f deg", f ? "; " : "", names[f], fins.angle_cdeg[f] / 100.0f);
         }
@@ -872,6 +898,16 @@ class NibblesUsermod : public Usermod {
     void readFromJsonState(JsonObject &root) override {
       // {"nibbles":{"battery":{"mv":13000,"ma":7700}}}: a test reading, as if
       // from the base ("mv":0 forgets: back to the ceiling).
+      // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
+      JsonObject sw = root[F("nibbles")][F("finsweep")];
+      if (!sw.isNull()) {
+        const float p0 = sw[F("port")] | 0.0f, p1 = sw[F("starboard")] | 0.0f;
+        const int secs = sw[F("s")] | 6;
+        if (!finSweeping(0, millis()) && !finSweeping(1, millis())) finSweepStart = millis();  // a fresh sweep starts level
+        finSweepPeriod[0] = p0 > 0.2f ? p0 : 0;
+        finSweepPeriod[1] = p1 > 0.2f ? p1 : 0;
+        finSweepUntil = millis() + (unsigned long)min(max(secs, 0), 30) * 1000UL;
+      }
       JsonObject bat = root[F("nibbles")][F("battery")];
       if (!bat.isNull()) {
         nl_battery_t b = {};

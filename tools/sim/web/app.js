@@ -437,8 +437,9 @@ function setFinAngle(side, deg) {
   tubePieces.cache = null;
   if (window.nibbles3d && window.nibbles3d.moveFin) window.nibbles3d.moveFin(f.h, ang);
 }
-function showFinValue(side, deg, live) {
-  $(side === 'port' ? 'finportv' : 'finsbv').textContent = `${deg > 0 ? '+' : ''}${Math.round(deg)}°${live ? ' (live)' : ''}`;
+function showFinValue(side, deg, tag) {  // tag: false, true (live) or a word
+  const t = tag === true ? 'live' : tag || '';
+  $(side === 'port' ? 'finportv' : 'finsbv').textContent = `${deg > 0 ? '+' : ''}${Math.round(deg)}°${t ? ` (${t})` : ''}`;
 }
 // The real fins' angles from the shark (the fin sensor node, via the mirror).
 const finLiveAt = { port: 0, starboard: 0 };
@@ -451,13 +452,44 @@ function finsFromShark(m) {
     const s = $(side === 'port' ? 'finport' : 'finsb');
     s.value = Math.round(f.deg);
     s.disabled = true;
-    showFinValue(side, f.deg, true);
+    showFinValue(side, f.deg, f.sweep ? 'sweep' : true);
     setFinAngle(side, f.deg);
   });
 }
 for (const [id, side] of [['finport', 'port'], ['finsb', 'starboard']]) {
   $(id).oninput = () => { showFinValue(side, +$(id).value, false); setFinAngle(side, +$(id).value); };
 }
+// Fin sweep: a fin swinging through its whole range, -90..+90 deg, at the
+// chosen number of swings a minute (0 = off). With the live shark the
+// controller sweeps (so its fin LEDs follow) and the fin shows its angle;
+// otherwise the page animates the fin itself.
+const sweep = { port: 0, starboard: 0 };
+const sweepT0 = performance.now();
+const sweepPeriod = (side) => (sweep[side] ? 60 / sweep[side] : 0);
+function sendSweep() {
+  if (lightsFrom !== 'shark') return;
+  wledPost({ nibbles: { finsweep: { port: sweepPeriod('port'), starboard: sweepPeriod('starboard'), s: 6 } } }).catch(() => {});
+}
+for (const [id, side] of [['finportsw', 'port'], ['finsbsw', 'starboard']]) {
+  $(id).oninput = () => {
+    sweep[side] = +$(id).value;
+    $(id + 'v').textContent = sweep[side] ? `${sweep[side]} swings/min` : 'off';
+    sendSweep();
+  };
+}
+setInterval(() => { if (sweep.port || sweep.starboard) sendSweep(); }, 2000);  // renew while sweeping
+setInterval(() => {
+  const t = (performance.now() - sweepT0) / 1000;
+  for (const side of ['port', 'starboard']) {
+    if (!sweep[side]) continue;
+    if (lightsFrom === 'shark' && performance.now() - finLiveAt[side] < 1000) continue;  // the controller's angle wins
+    const deg = 90 * Math.sin(2 * Math.PI * t / sweepPeriod(side));
+    $(side === 'port' ? 'finport' : 'finsb').value = Math.round(deg);
+    showFinValue(side, deg, 'sweep');
+    setFinAngle(side, deg);
+  }
+}, 33);
+
 setInterval(() => {  // live data stopped: the sliders are yours again
   for (const [id, side] of [['finport', 'port'], ['finsb', 'starboard']]) {
     if ($(id).disabled && performance.now() - finLiveAt[side] > 2000) {

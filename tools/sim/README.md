@@ -84,3 +84,8 @@ up (+90°) to straight down (−90°); the model has them at about −34°. The
 tube outline and, in the WebGL view, its part of the shark mesh. In live mode
 a fin with a sensor follows the real one (the fin sensor node,
 `firmware/fins`, via the controller's mirror) and its slider shows "(live)".
+**Port fin sweep** / **Starboard fin sweep** (swings a minute, 0 = off) swing
+a fin through its whole range, -90..+90 deg. With the live shark the
+controller does the sweep (`{"nibbles":{"finsweep":{...}}}`, renewed every
+2 s), so the real fin LEDs follow it as if the fin moved, and the page shows
+the controller's angle "(sweep)"; otherwise the page animates the fin.
