@@ -667,13 +667,22 @@ static void ui_update(const display_status_t *s)
     card_stale(&wled_card, !s->wled_fresh);
     if (s->wled_fresh) {
         const nl_wled_telemetry_t *w = &s->wled;
+        const nl_wled_stream_t *st = &s->stream;
         if (!w->on) lv_label_set_text(wled_card.big, "OFF");
+        else if (s->stream_fresh) lv_label_set_text(wled_card.big, "Streamed");  // its own preset is hidden behind the stream
         else if (w->preset && w->name[0]) lv_label_set_text_fmt(wled_card.big, "%.*s", NL_NAME_LEN, w->name);
         else if (w->preset) lv_label_set_text_fmt(wled_card.big, "Preset %d", w->preset);
         else lv_label_set_text(wled_card.big, "No preset");
-        lv_label_set_text_fmt(wled_card.line1, "#%d  bri %d  fx %d  pal %d", w->preset, w->bri, w->fx, w->palette);
-        lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
-        lv_label_set_text_fmt(wled_card.line2, "%d fps   %d LEDs", w->fps, w->leds);
+        if (s->stream_fresh) {
+            lv_label_set_text_fmt(wled_card.line1, "from %u.%u.%u.%u", st->source_ip[0], st->source_ip[1],
+                                  st->source_ip[2], st->source_ip[3]);
+            lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
+            lv_label_set_text_fmt(wled_card.line2, "%d fps  %u stalls/min  max %u ms", w->fps, st->stalls, st->max_gap_ms);
+        } else {
+            lv_label_set_text_fmt(wled_card.line1, "#%d  bri %d  fx %d  pal %d", w->preset, w->bri, w->fx, w->palette);
+            lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
+            lv_label_set_text_fmt(wled_card.line2, "%d fps   %d LEDs", w->fps, w->leds);
+        }
         set_slider(wled_card.bar, w->bri, true);
     } else {
         lv_label_set_text(wled_card.big, "--");

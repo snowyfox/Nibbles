@@ -19,6 +19,9 @@ typedef struct {
     // WLED
     bool wled_fresh;
     nl_wled_telemetry_t wled;
+    // showing a stream from another WLED, and how steadily it arrives (NL_MSG_WLED_STREAM)
+    bool stream_fresh;
+    nl_wled_stream_t stream;
     // a bump being held right now (0 = none)
     uint8_t bump_action;
     // whether WLED's fin LEDs follow the fins (NL_MSG_FIN_STATE)

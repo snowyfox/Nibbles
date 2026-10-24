@@ -33,6 +33,13 @@
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
 //   audio features and telemetry (JSON text, to port + 1).
+// - Streamed pictures: while this WLED shows another WLED's stream (DDP etc.,
+//   e.g. from a faster main board), it times the gaps between packets and
+//   reports stalls on the Info page and to the base (NL_MSG_WLED_STREAM, 1 Hz).
+// - ES7210 mic chip (builds with NIBBLES_ES7210, e.g. the Waveshare 3.49 dev
+//   node): AudioReactive can't set this chip up, so the usermod does, over
+//   I2C, once AudioReactive's I2S clocks run. Then AudioReactive reads it as
+//   "Generic I2S with MCLK" (see wled/README.md for the pins).
 //
 // Messages come from shared/nibbles_link (the same protocol code as the eyes
 // and base). See docs/architecture.md in the Nibbles repo.
@@ -40,6 +47,9 @@
 #include "nibbles_link.h"
 #include <esp_now.h>
 #include <map>
+#ifdef NIBBLES_ES7210
+#include <Wire.h>
+#endif
 
 #ifdef WLED_DISABLE_ESPNOW
 #error "usermod_nibbles needs ESP-NOW"
@@ -55,12 +65,65 @@
 #define MIRROR_MAX_S           30     // a mirror request lasts at most this long
 #define DDP_MAX_LEDS           480    // LEDs per DDP packet (1440 bytes of RGB)
 
+#ifdef NIBBLES_ES7210
+// The ES7210 4-channel mic ADC, as a slave to the ESP32's I2S clocks (MCLK =
+// 256 x sample rate), 32-bit standard I2S, mics 1 and 2 on SDOUT1 (left and
+// right), 30 dB gain. The register sequence is Espressif's esp_codec_dev
+// driver's (es7210_open, es7210_set_fs, es7210_start), as the eyes use it.
+#ifndef NIBBLES_ES7210_ADDR
+#define NIBBLES_ES7210_ADDR 0x40
+#endif
+#ifndef NIBBLES_ES7210_SDA
+#define NIBBLES_ES7210_SDA 47
+#endif
+#ifndef NIBBLES_ES7210_SCL
+#define NIBBLES_ES7210_SCL 48
+#endif
+#ifndef NIBBLES_ES7210_GAIN
+#define NIBBLES_ES7210_GAIN 10   // 3 dB steps: 10 = 30 dB
+#endif
+static bool es7210Write(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(NIBBLES_ES7210_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+static int es7210Read(uint8_t reg) {
+  Wire.beginTransmission(NIBBLES_ES7210_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom((uint8_t)NIBBLES_ES7210_ADDR, (uint8_t)1) != 1) return -1;
+  return Wire.read();
+}
+static bool es7210Setup() {
+  static const uint8_t seq[][2] = {
+    // es7210_open: reset, clocks off, state cycles, high-pass filters, slave mode
+    {0x00, 0xff}, {0x00, 0x41}, {0x01, 0x3f}, {0x09, 0x30}, {0x0a, 0x30},
+    {0x23, 0x2a}, {0x22, 0x0a}, {0x20, 0x0a}, {0x21, 0x2a}, {0x08, 0x00},
+    {0x40, 0x43}, {0x41, 0x70}, {0x42, 0x70}, {0x07, 0x20}, {0x02, 0xc1},
+    // mics 1 and 2 on, 3 and 4 off; gain; no TDM
+    {0x43, 0x10 | NIBBLES_ES7210_GAIN}, {0x44, 0x10 | NIBBLES_ES7210_GAIN}, {0x45, 0x00}, {0x46, 0x00},
+    {0x4b, 0x00}, {0x4c, 0xff}, {0x12, 0x00},
+    // es7210_set_fs: 32-bit words, standard I2S
+    {0x11, 0x80},
+    // es7210_start (clock register: mics 1 and 2's clocks on)
+    {0x01, 0x34}, {0x06, 0x00}, {0x40, 0x43},
+    {0x47, 0x08}, {0x48, 0x08}, {0x49, 0x08}, {0x4a, 0x08},
+    {0x40, 0x43}, {0x00, 0x71}, {0x00, 0x41},
+  };
+  for (const auto &w : seq)
+    if (!es7210Write(w[0], w[1])) return false;
+  return true;
+}
+#endif
+
 class NibblesUsermod : public Usermod {
   private:
     bool enabled = true;
     bool anchor = true;
     bool audio = false;  // publish AudioReactive's analysis for the eyes
-    unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0, lastAudio = 0;
+    unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0, lastAudio = 0, lastStream = 0;
+    nl_stream_gaps_t streamGaps;
+    unsigned long seenRealtimeTimeout = 0;  // WLED moves realtimeTimeout on every stream packet
     nl_ar_state_t arState;
     uint32_t audioSent = 0;
     uint16_t seq = 0;
@@ -114,6 +177,10 @@ class NibblesUsermod : public Usermod {
     CopyRange copyRanges[4];
     uint8_t copyRangeCount = 0;
     bool copyRead = false;
+#ifdef NIBBLES_ES7210
+    int es7210State = 0;            // 0 not yet, 1 set up, -1 no answer (retried every 5 s)
+    unsigned long es7210TriedAt = 0;
+#endif
     uint16_t *copyPairs = nullptr;  // cell to paint, cell to copy from, ...
     uint16_t copyPairCount = 0, copyBuiltFor = 0;
     int copyBuiltMap = -1;
@@ -533,6 +600,27 @@ class NibblesUsermod : public Usermod {
       audioSent++;
     }
 
+    // A new stream packet moves WLED's realtime timeout on.
+    void streamLoop() {
+      if (realtimeMode == REALTIME_MODE_INACTIVE || realtimeTimeout == seenRealtimeTimeout) return;
+      seenRealtimeTimeout = realtimeTimeout;
+      nl_stream_gaps_packet(&streamGaps, millis());
+    }
+
+    void streamSummary(nl_wled_stream_t &st) {
+      st = {};
+      st.active = realtimeMode != REALTIME_MODE_INACTIVE;
+      if (st.active)
+        for (int i = 0; i < 4; i++) st.source_ip[i] = realtimeIP[i];
+      nl_stream_gaps_summary(&streamGaps, millis(), &st);
+    }
+
+    void sendStream() {
+      nl_wled_stream_t st;
+      streamSummary(st);
+      send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_WLED_STREAM, &st, sizeof(st));
+    }
+
     // Whether the fins are followed, and the angle in use per fin, for the base.
     void sendFinState() {
       const unsigned long now = millis();
@@ -796,17 +884,27 @@ class NibblesUsermod : public Usermod {
       nl_power_limiter_init(&power, &powerModel);
       nl_bump_rx_init(&bumps);
       nl_ar_init(&arState);
+      nl_stream_gaps_init(&streamGaps);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
       if (enabled && !enableESPNow) enableESPNow = true;
     }
 
     void loop() override {
+#ifdef NIBBLES_ES7210
+      // After AudioReactive has started I2S (its MCLK clocks the chip).
+      if (es7210State != 1 && millis() > 2000 && millis() - es7210TriedAt > 5000) {
+        es7210TriedAt = millis();
+        if (i2c_sda < 0 || i2c_scl < 0) Wire.begin(NIBBLES_ES7210_SDA, NIBBLES_ES7210_SCL);  // WLED has no I2C pins set
+        es7210State = es7210Setup() ? 1 : -1;
+      }
+#endif
       if (!copyRead) { readCopyRanges(); readFinGeo(); copyRead = true; }
       // (Re)build when the map changes; WLED loads it after we first run, so
       // also retry every 5 s while nothing pairs up.
       if ((copyRangeCount || finFollowCount) && (strip.getLengthTotal() != copyBuiltFor || currentLedmap != copyBuiltMap ||
                              strip.isMatrix != copyBuiltMatrix || (!copyPairCount && millis() - copyBuiltAt > 5000)))
         buildCopyPairs();
+      streamLoop();  // also without the radio, for the Info page
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
       if (!radioUp()) return;
@@ -833,6 +931,10 @@ class NibblesUsermod : public Usermod {
         lastTelemetry = now;
         sendTelemetry();
         sendFinState();
+      }
+      if (now - lastStream >= 1000) {
+        lastStream = now;
+        sendStream();
       }
       if (audio && now - lastAudio >= AUDIO_MS) {
         lastAudio = now;
@@ -888,6 +990,30 @@ class NibblesUsermod : public Usermod {
                  !audio ? "off" : audioSent ? "sending" : "no AudioReactive");
         radio.add(buf);
       }
+      {
+        nl_wled_stream_t st;
+        streamSummary(st);
+        if (st.active || st.stalls_total || streamGaps.last_ms) {
+          JsonArray sa = user.createNestedArray(F("Nibbles stream"));
+          char buf[128];
+          int n = st.active ? snprintf(buf, sizeof(buf), "from %u.%u.%u.%u; ", st.source_ip[0], st.source_ip[1], st.source_ip[2], st.source_ip[3])
+                            : snprintf(buf, sizeof(buf), "not streaming; ");
+          snprintf(buf + n, sizeof(buf) - n, "last minute: %u stalls (>= %d ms), %u slow (>= %d ms), longest %u ms; %lu stalls since boot",
+                   st.stalls, NL_STREAM_STALL_MS, st.slow, NL_STREAM_SLOW_MS, st.max_gap_ms, (unsigned long)st.stalls_total);
+          sa.add(buf);
+        }
+      }
+#ifdef NIBBLES_ES7210
+      {
+        JsonArray mic = user.createNestedArray(F("Nibbles mic (ES7210)"));
+        int gain = es7210State == 1 ? es7210Read(0x43) : -1;
+        if (es7210State == 1 && gain >= 0) {
+          char buf[48];
+          snprintf(buf, sizeof(buf), "set up, mics 1+2, %d dB", (gain & 0x0f) * 3);
+          mic.add(buf);
+        } else mic.add(es7210State == 0 ? F("starting") : F("no answer on I2C"));
+      }
+#endif
       {
         JsonArray fa = user.createNestedArray(F("Nibbles fins"));
         char buf[96];

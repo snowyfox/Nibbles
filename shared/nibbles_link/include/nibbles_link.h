@@ -34,6 +34,7 @@ typedef enum {
     NL_MSG_BATTERY = 9,     // pack voltage (and current) at the pole base, base -> radio, ~5 Hz
     NL_MSG_FIN_POSE = 10,   // the fins' hinge angles, fin sensor node -> radio, ~50 Hz
     NL_MSG_FIN_STATE = 11,  // whether the lights follow the fins, and the angles in use, WLED -> radio, 2 Hz
+    NL_MSG_WLED_STREAM = 12, // how steadily a streamed picture arrives, WLED -> radio, 1 Hz
 } nl_msg_type_t;
 
 typedef enum {
@@ -299,6 +300,47 @@ typedef struct NL_PACKED {
     int16_t angle_cdeg[2];  // angle in use per fin ([NL_FIN_PORT], [NL_FIN_STARBOARD]), or NL_FIN_NONE
     uint8_t source[2];      // nl_fin_src_t per fin
 } nl_fin_state_t;
+
+// ---------------------------------------------------------------- streamed lights
+// A WLED can show another WLED's picture, streamed to it (DDP, E1.31 or
+// Art-Net: WLED's "realtime" mode) instead of running its own effects: the
+// shark's controller showing frames rendered by a faster main board. A
+// stream over Wi-Fi arrives in bursts with the odd stall; the display WLED
+// times the gaps between incoming packets and reports them (NL_MSG_WLED_STREAM).
+// A gap of NL_STREAM_RESTART_MS or more is the stream stopping and starting
+// again, not a stall, and isn't counted.
+
+#define NL_STREAM_SLOW_MS       50      // a late frame (2.5 frames at 50 fps)
+#define NL_STREAM_STALL_MS      100     // a stall you can see
+#define NL_STREAM_RESTART_MS    2000
+#define NL_STREAM_WINDOW_S      60      // counts cover the last minute
+
+typedef struct NL_PACKED {
+    uint8_t active;         // 1 while showing a stream
+    uint8_t source_ip[4];   // where the stream comes from (0s: none)
+    uint16_t slow;          // gaps of >= NL_STREAM_SLOW_MS in the last minute
+    uint16_t stalls;        // gaps of >= NL_STREAM_STALL_MS in the last minute
+    uint16_t max_gap_ms;    // longest gap in the last minute
+    uint32_t stalls_total;  // stalls since boot
+} nl_wled_stream_t;
+
+typedef struct {
+    uint32_t second;        // which second (ms / 1000) this slot holds
+    uint16_t slow, stalls, max_ms;
+} nl_stream_second_t;
+
+typedef struct {
+    uint32_t last_ms;       // last packet (0: none yet)
+    uint32_t stalls_total;
+    nl_stream_second_t sec[NL_STREAM_WINDOW_S];  // one slot per second of the last minute
+} nl_stream_gaps_t;
+
+void nl_stream_gaps_init(nl_stream_gaps_t *g);
+// A stream packet arrived at now_ms.
+void nl_stream_gaps_packet(nl_stream_gaps_t *g, uint32_t now_ms);
+// Fill the counts in *out (slow, stalls, max_gap_ms, stalls_total) for the
+// minute up to now_ms; active and source_ip are left to the caller.
+void nl_stream_gaps_summary(const nl_stream_gaps_t *g, uint32_t now_ms, nl_wled_stream_t *out);
 
 // ---------------------------------------------------------------- radio packets
 #define NL_NET_ID           0x5348  // "SH"(ark): packets from other networks are ignored

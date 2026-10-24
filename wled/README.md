@@ -77,6 +77,26 @@ eyes and base (`shared/nibbles_link`).
   list in `/ledmap.json`; a fin without a live angle keeps its partner copy.
   On the shark since 2026-10-21 (port fin): 112 of 114 port fin LEDs showed
   exactly the colour of the cell they were over.
+- **Streamed pictures** (since 2026-10-23): while this WLED shows another
+  WLED's stream instead of its own effects (WLED's realtime mode: DDP,
+  E1.31, Art-Net), it times the gaps between incoming packets
+  (`nl_stream_gaps`): "slow" gaps of 50 ms or more, "stalls" of 100 ms or
+  more, and the longest, over the last minute, plus stalls since boot. A gap
+  of 2 s or more is the stream restarting and isn't counted. Shown on the
+  Info page ("Nibbles stream") and broadcast once a second
+  (`NL_MSG_WLED_STREAM`); the base's WLED card then says "Streamed", where
+  from, and the stalls per minute. See "Main board and display" below.
+- **ES7210 mic** (builds with `NIBBLES_ES7210`, the 3.49 dev node): sets up
+  the board's ES7210 mic chip over I2C (SDA 47, SCL 48) once AudioReactive's
+  I2S clocks run, so AudioReactive can use the board's own mic as "Generic
+  I2S with MCLK" (SD 6, WS 46, SCK 15, MCLK 7). Mics 1 and 2 at 30 dB; the
+  board's mic is input 1, the left channel, so that build also sets
+  `I2S_USE_RIGHT_CHANNEL`, which undoes AudioReactive's IDF 4.4 channel-swap
+  work-around (meant for the classic ESP32; on the S3 it made AudioReactive
+  read the empty input). The Info page shows "Nibbles mic (ES7210)". Checked
+  by tapping the board: the level rose from 4-14% to 40-72% with automatic
+  gain off. The level from music is low (about 10% before the automatic
+  gain); squelch 3 and AGC "vivid" work.
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
   (default off).
 
@@ -115,6 +135,55 @@ work in 2D (see above); to go back to 1D, follow
 `wled/backup/20260926-1850-pre-2d/REVERT.md` (delete `/ledmap.json`, reboot;
 tested on the bench).
 
+## Main board and display (tested 2026-10-23)
+The controller (a classic ESP32 without PSRAM) renders the 2D map at only
+~38 fps with ~70 KB free. Tested split: a faster **main** WLED renders
+everything and streams every LED (DDP, physical LED order) to the
+controller, which only displays it.
+
+- **Main** (for the test, a second Waveshare 3.49: MAC 80:45:6b:35:d0:14,
+  `nibbles_dev_s3_349`): the shark's config, presets and 2D map; one network
+  LED output of 1064 LEDs (DDP) to the controller; its own mic (ES7210 above);
+  the Nibbles usermod **disabled** (else it is a second radio anchor and the
+  base sees two WLEDs, alternating between their presets). It still copies the
+  2D partners with the usermod disabled. Fin following needs its radio, so
+  the fins stay at the modelled angle.
+- **Display** (the real controller): no `/ledmap.json` (1D). WLED writes
+  incoming realtime pixels into its frame buffer by cell and then through its
+  own ledmap, so with a ledmap the stream comes out scrambled. Its usermod
+  still anchors the radio and talks to the eyes and base; its 2D copies and
+  fin following are idle. It shows the stream over its own effects and falls
+  back to them 2.5 s after the stream stops (WLED's realtime timeout).
+  The base's WLED preset and brightness commands still go to the display,
+  whose effects are hidden behind the stream.
+
+Measured: the main renders the controller's preset 33 at 124 fps uncapped
+(vs 38), with 194 KB free plus 8 MB PSRAM; the display shows 50-55 fps at a
+50 fps cap, with 94 KB free (no ledmap). Over the home Wi-Fi (main -> router
+-> controller, two hops): every frame arrived complete, but about 3 stalls
+a minute of 100-200 ms, which the user saw as freezes. On the shark's own
+network (the controller's AP "Nibbles", channel 1, the main joined to it,
+one hop): the user noticed no stutter; the stall counter above gives the
+numbers. A wired link (both boards in one box, a short Ethernet cable) would
+take the stream off the air entirely; the main board then needs Ethernet
+that WLED supports (classic ESP32 with RMII, e.g. Olimex ESP32-POE-ISO-WROVER;
+WLED 16 has no W5500 support, so not the ESP32-S3-ETH).
+
+Access point notes:
+- The controller's AP is "Nibbles" with WLED's default password `wled1234`
+  (to change before a festival). AP only: `ap.behav` 2 (always) and the
+  Wi-Fi network set to "Your_Network", WLED's "none" (an empty name is
+  ignored). Clients get 4.3.2.2 upwards in join order.
+- WLED's captive portal makes phones and Macs treat the AP as a login
+  network; choose "use without internet" to stay joined.
+- OTA updates over the AP need `ota.same-subnet` off (set on the controller):
+  with it on, WLED compares the client with its station address, which is
+  empty in AP-only mode, and refuses ("Client is not on local subnet").
+  Off, it still only accepts private networks, its AP included.
+- Backups and how to go back: `wled/backup/20261023-2153-pre-main-stream/`
+  (REVERT.md: ledmap back), `20261023-2323-pre-ap-test/` (both boards'
+  Wi-Fi), `20261023-*-pre-stream-gaps/` (before the stall counter build).
+
 ## Lean build
 `nibbles_shark` leaves out features the shark doesn't use: Ethernet (it runs
 on Wi-Fi; Ethernet was already off in its config), Alexa, Hue sync, MQTT,
@@ -143,7 +212,12 @@ NIBBLES_ROOT=/Volumes/Code/Nibbles pio run -e nibbles_dev_s3_349 -t upload --upl
   ESP32-S3-Touch-LCD-3.49 (16 MB flash, 8 MB octal PSRAM). LED data on GPIO 2,
   button on BOOT (GPIO 0), no relay or IR, `NIBBLES_DEBUG` on (a status line
   over USB serial every 5 s, and one per command). AudioReactive is included
-  (WLED's default for this env).
+  (WLED's default for this env), with the board's own mic (`NIBBLES_ES7210`).
+- `nibbles_shark`: the real controller (below).
+- `nibbles_shark_eth`: `nibbles_shark` with Ethernet (the WT32-ETH01's
+  LAN8720), for a wired stream from a main board. Built, not installed. WLED
+  switches Wi-Fi off, and with it ESP-NOW, when Ethernet connects, unless its
+  access point is running (`network.cpp`, `if (!apActive) WiFi.disconnect(true)`).
 
 Build notes:
 - The usermod's library name must start with `wled-` (`wled-nibbles`) or be

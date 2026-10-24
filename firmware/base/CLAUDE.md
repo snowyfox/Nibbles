@@ -57,6 +57,9 @@ What it does now (`main/main.c`):
 - `shot` over USB serial (or `python tools/base_shot.py PORT out.png`) prints the next frame as base64 RGB565 (`SHOT 640 172
   rgb565le` … `SHOT END`) to check the layout from a computer.
 - Logs the eyes' and WLED's telemetry every 2 s.
+- When WLED shows a stream from a main board (`NL_MSG_WLED_STREAM`), the WLED
+  card shows "Streamed", the source address, and the stalls per minute and
+  longest gap; the log line adds slow gaps and stalls since boot.
 - BOOT = next eye preset. Second key (GPIO 16) = a **flash bump** for the
   eyes and WLED (`BTN_BUMP_TARGET`) while held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after
   the last message).

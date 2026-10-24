@@ -133,6 +133,17 @@ preset picks which one it reacts to (`peak_beats`).
   real music).
 - Eye cable: GND, TX and RX. Power stays separate unless the boards share a
   supply.
+- **Main board + display controller** (tested 2026-10-23, see
+  `wled/README.md`, "Main board and display"): a faster WLED with PSRAM
+  renders and streams every LED to the Bong69 controller, which only
+  displays them. Clearly smoother (124 fps of rendering headroom vs 38) and
+  much more memory. Open: the main board (with WLED-supported Ethernet for a
+  short cable in the box, or Wi-Fi on the shark's own AP, which looked
+  stutter-free in the test), which board runs the access point and the radio
+  anchor (with Ethernet, the board whose AP runs keeps Wi-Fi; the other can
+  go wired-only), and moving the usermod's WLED side (telemetry, commands,
+  bumps, fin following) to the main board, keeping the current limit on
+  the display, which drives the LEDs.
 
 ## Top-of-pole wiring (planned 2026-09-27)
 The WLED controller sits in a weatherproof box on top of the pole; the eyes

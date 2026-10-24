@@ -28,6 +28,8 @@ static uint8_t wled_mac[6];
 static bool have_wled;
 static nl_wled_telemetry_t wled;
 static int64_t wled_us;
+static nl_wled_stream_t wled_stream;
+static int64_t wled_stream_us;
 static nl_fin_state_t fin_state;
 static bool have_fins;
 static int64_t fins_us;
@@ -47,6 +49,11 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         memcpy(wled_mac, mac, 6);
         have_wled = true;
         wled_us = esp_timer_get_time();
+        taskEXIT_CRITICAL(&lock);
+    } else if (h->type == NL_MSG_WLED_STREAM && len == sizeof(nl_wled_stream_t) && h->role == NL_ROLE_WLED) {
+        taskENTER_CRITICAL(&lock);
+        memcpy(&wled_stream, pl, sizeof(wled_stream));
+        wled_stream_us = esp_timer_get_time();
         taskEXIT_CRITICAL(&lock);
     } else if (h->type == NL_MSG_FIN_STATE && len == sizeof(nl_fin_state_t) && h->role == NL_ROLE_WLED) {
         taskENTER_CRITICAL(&lock);
@@ -341,10 +348,12 @@ void app_main(void)
         const bool fresh = have_eyes && esp_timer_get_time() - eyes_us < 2000000;
         e = eyes;
         taskEXIT_CRITICAL(&lock);
-        char eyes_s[160] = "no eyes heard", wled_s[96] = "no WLED heard";
+        char eyes_s[160] = "no eyes heard", wled_s[200] = "no WLED heard";
         taskENTER_CRITICAL(&lock);
         const nl_wled_telemetry_t w = wled;
         const bool wfresh = have_wled && esp_timer_get_time() - wled_us < 2000000;
+        const nl_wled_stream_t ws = wled_stream;
+        const bool sfresh = wled_stream_us && esp_timer_get_time() - wled_stream_us < 3000000 && ws.active;
         const nl_fin_state_t fs = fin_state;
         const bool ffresh = have_fins && esp_timer_get_time() - fins_us < 2000000;
         taskEXIT_CRITICAL(&lock);
@@ -359,6 +368,8 @@ void app_main(void)
             .eyes = e,
             .wled_fresh = wfresh,
             .wled = w,
+            .stream_fresh = sfresh,
+            .stream = ws,
             .bump_action = bump_held,
             .fins_fresh = ffresh,
             .fins = fs,
@@ -372,6 +383,12 @@ void app_main(void)
         if (wfresh)
             snprintf(wled_s, sizeof(wled_s), "wled: %s bri %d, preset %d, fx %d, %u fps, %u LEDs", w.on ? "on" : "off",
                      w.bri, w.preset, w.fx, w.fps, w.leds);
+        if (wfresh && sfresh) {
+            const size_t n = strlen(wled_s);
+            snprintf(wled_s + n, sizeof(wled_s) - n, ", stream from %u.%u.%u.%u: %u stalls/min (%u slow), longest %u ms, %lu stalls total",
+                     ws.source_ip[0], ws.source_ip[1], ws.source_ip[2], ws.source_ip[3], ws.stalls, ws.slow, ws.max_gap_ms,
+                     (unsigned long)ws.stalls_total);
+        }
         ESP_LOGI(TAG, "ch %d%s | %s | %s | radio rx %lu tx %lu fail %lu", st.channel, st.anchoring ? " (anchor)" : st.locked ? "" : " (scanning)",
                  eyes_s, wled_s, (unsigned long)st.rx, (unsigned long)st.tx, (unsigned long)st.tx_fail);
     }

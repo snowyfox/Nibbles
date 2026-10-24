@@ -390,6 +390,38 @@ static void test_power_limiter(void)
     CHECK(sizeof(nl_fin_state_t) == 7, "fin state message is 7 bytes (got %u)", (unsigned)sizeof(nl_fin_state_t));
 }
 
+static void test_stream_gaps(void)
+{
+    nl_stream_gaps_t g;
+    nl_stream_gaps_init(&g);
+    nl_wled_stream_t out = {0};
+    // 50 fps for 10 s, one 30 ms hiccup, one 70 ms late frame, two stalls (120, 400 ms).
+    uint32_t t = 5000;
+    for (int i = 0; i < 500; i++) {
+        t += i == 100 ? 30 : i == 200 ? 70 : i == 300 ? 120 : i == 400 ? 400 : 20;
+        nl_stream_gaps_packet(&g, t);
+    }
+    nl_stream_gaps_summary(&g, t, &out);
+    CHECK(out.slow == 3 && out.stalls == 2 && out.max_gap_ms == 400 && out.stalls_total == 2,
+          "slow 3, stalls 2, longest 400 ms (got %u, %u, %u, total %u)", out.slow, out.stalls, out.max_gap_ms,
+          (unsigned)out.stalls_total);
+    // The first packet, and a restart after the stream stopped, aren't stalls.
+    nl_stream_gaps_packet(&g, t + 5000);
+    nl_stream_gaps_summary(&g, t + 5000, &out);
+    CHECK(out.stalls == 2 && out.max_gap_ms == 400, "a 5 s restart isn't counted (stalls %u, max %u)", out.stalls, out.max_gap_ms);
+    // A minute later the window has moved on; the total remains.
+    nl_stream_gaps_summary(&g, t + 70000, &out);
+    CHECK(out.slow == 0 && out.stalls == 0 && out.max_gap_ms == 0 && out.stalls_total == 2,
+          "after a minute only the total remains (slow %u, stalls %u, total %u)", out.slow, out.stalls, (unsigned)out.stalls_total);
+    // Gaps in a slot reused a minute later replace the old ones.
+    nl_stream_gaps_packet(&g, t + 70000);
+    nl_stream_gaps_packet(&g, t + 70150);
+    nl_stream_gaps_summary(&g, t + 70150, &out);
+    CHECK(out.stalls == 1 && out.max_gap_ms == 150 && out.stalls_total == 3, "new minute: 1 stall of 150 ms (got %u, %u)",
+          out.stalls, out.max_gap_ms);
+    CHECK(sizeof(nl_wled_stream_t) == 15, "stream message is 15 bytes (got %u)", (unsigned)sizeof(nl_wled_stream_t));
+}
+
 int main(void)
 {
     srand(1);
@@ -404,6 +436,7 @@ int main(void)
     test_wled_audio();
     test_power_limit();
     test_power_limiter();
+    test_stream_gaps();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }
