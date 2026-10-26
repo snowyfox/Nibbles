@@ -1,0 +1,4 @@
+(fp_lib_table (version 7)
+  (lib (name "nibbles")(type "KiCad")(uri "${KIPRJMOD}/nibbles.pretty")(options "")(descr "Nibbles: the CH224K footprint (for the USB-C to LEMO dongle; unused here)"))
+  (lib (name "nibbles_ti")(type "KiCad")(uri "${KIPRJMOD}/nibbles_ti.pretty")(options "")(descr "TI land patterns from Ultra Librarian (regenerate; not committed)"))
+)

@@ -13,13 +13,29 @@ the only one that needs 4 layers. If it misbehaves, last year's USB-C
 modules (plan B in docs/power.md) plug into the same port while this board
 is reworked, and nothing else changes.
 
+- The KiCad files are edited by hand now (2026-10-26): the schematic is
+  drawn with the parts wired to the BQ25798's pins, like TI's typical
+  application, and the generator refuses to overwrite it. The short
+  two-pin nets (BTST, BATP, SDRV, PROG, CE, ILIM, TS, STAT) use KiCad's
+  automatic names; PMID, SYS, SW1, SW2, REGN and the cable's nets keep
+  theirs.
 - **4 layers**: top parts and short connections, In1 a solid ground plane,
   In2 SW1/SW2 and power, bottom anything else.
 - All 34 footprints, every pad on its net, **roughly placed** on a
-  placeholder 54 x 33 mm outline (`PLACE_CHARGER` in
-  `make_power_board_kicad.py`); not routed. Input from the power board on
-  the left (J21), the battery output on the right (J22), the I2C cable (J23)
-  and the cells' NTC (J4) on the bottom.
+  54 x 30 mm outline (`PLACE_CHARGER` in `make_power_board_kicad.py`; the
+  enclosure is narrow, so keep the short side near 30 mm); not routed.
+  Input from the power board on the left (J21), the battery output on the
+  right (J22), the cells' NTC (J4) and the I2C cable (J23) on the bottom.
+  All parts on the top side, so JLCPCB's economic assembly or a single
+  stencil pass at home both work.
+- Layout reference: KXUSBC2 (github.com/manuelkasper/kxusbc2,
+  CERN-OHL-W-2.0), a proven 4-layer BQ25792 design in KiCad (the BQ25792
+  is the BQ25798's pin-compatible sibling). Same 0.1 uF positions at PMID
+  and SYS as here; its inductor sits on the far side of the IC, reached
+  through vias, where this board keeps the datasheet's order (caps first,
+  inductor behind them). Worth copying: ground poured on all four layers
+  with many vias around the IC and the caps' ground pads, and SW1/SW2 as
+  copper areas on several layers stitched with vias.
 - Net class **Power**, 3 mm, vias 0.8/0.4 mm (DOCK_VIN, PMID, SYS, SW1,
   SW2, PACK_F; 1 oz copper): up to ~6 A in the inductor when boosting from
   a low dock. Better as short pours, as in TI's layout example; neck down

@@ -8,6 +8,8 @@ every footprint placed and every pad on its net.
         writes hardware/power_board/kicad/ and hardware/charger_board/kicad/
     $KPY tools/hardware/make_power_board_kicad.py --project-only
         only the design rules and net classes in each .kicad_pro
+    $KPY tools/hardware/make_power_board_kicad.py charger
+        just one board (the power board's KiCad files are hand-edited now)
 
 Run it with KiCad's own Python: the board is built with KiCad's pcbnew
 module. The design itself (parts, nets, layout, part numbers) is the one in
@@ -537,12 +539,12 @@ ORIGIN = (50.0, 50.0)  # where a board sits on KiCad's page
 # under the IC, on In2), the VBUS 0402 and REGN cap at the left pins, BAT
 # caps at the right pins, the slow parts below. Input on the left edge,
 # battery on the right, I2C and the NTC on the bottom.
-U2_AT = (27.0, 16.0)
+U2_AT = (27.0, 14.5)
 CHARGER = {
     "U2": (0, 0, 0),
     "C16": (-1.0, -3.1, 0), "C22": (1.0, -3.1, 180),  # PMID, SYS 0.1 uF
     "C13": (-2.0, -5.0, 0), "C17": (2.0, -5.0, 180),  # PMID, SYS 10 uF
-    "L1": (0, -10.5, 0),
+    "L1": (0, -9.7, 0),
     "C14": (-7.0, -5.5, 0), "C15": (-7.0, -8.0, 0),  # PMID
     "C18": (7.2, -5.5, 180), "C19": (7.2, -8.0, 180), "C20": (7.2, -10.5, 180), "C21": (7.2, -13.0, 180),  # SYS
     "C12": (-3.0, -3.1, 0), "C26": (-5.0, -1.4, 0), "C25": (-4.6, 0.4, 0),  # VBUS 0.1 uF, BTST1, REGN
@@ -556,8 +558,8 @@ CHARGER = {
 }
 PLACE_CHARGER = {k: (U2_AT[0] + x, U2_AT[1] + y, r) for k, (x, y, r) in CHARGER.items()}
 PLACE_CHARGER.update({
-    "J21": (13.6, 16.0, 90), "J22": (40.4, 16.0, 270),
-    "J23": (27.0, 29.8, 0), "J4": (37.0, 26.2, 0),
+    "J21": (13.6, 15.0, 90), "J22": (40.4, 14.5, 270),
+    "J23": (30.5, 26.8, 0), "J4": (19.5, 23.2, 0),
 })
 
 # Power board: power runs left to right. The LEMO's power (J2) top left,
@@ -605,17 +607,26 @@ LAYOUT = {
               "note": "Left edge: LEMO (dock power J2, dock signals J7) and pack (J3). "
                       "Top edge: dock LED (J8), charger port (J10 input, J11 battery, J12 I2C). "
                       "Right edge: lights (J5), base board (J6). Bottom edge: keypad port (J9)."},
-    "charger": {"place": PLACE_CHARGER, "size": (54.0, 33.0), "layers": 4, "plane": "In1.Cu",
+    "charger": {"place": PLACE_CHARGER, "size": (54.0, 30.0), "layers": 4, "plane": "In1.Cu",
                 "note": "Left edge: input from the power board (J21). Right edge: battery (J22). "
-                        "Bottom edge: I2C (J23), NTC on the cells (J4)."},
+                        "Bottom edge: NTC on the cells (J4), I2C (J23). Short side kept to 30 mm "
+                        "for the enclosure."},
 }
 
 
+# Boards whose KiCad files are edited by hand now (schematics redrawn with the
+# parts wired together, 2026-10-26): never rewritten unless forced.
+HAND_EDITED = {"power", "charger"}
+
+
 def check_board_unrouted():
-    """Refuse to overwrite a board someone has started routing in KiCad (set
-    NIBBLES_OVERWRITE_BOARD=1 to overwrite anyway). Placement-only edits
-    aren't caught here; KiCad's .history/ keeps those."""
+    """Refuse to overwrite a hand-edited board, or one someone has started
+    routing in KiCad (set NIBBLES_OVERWRITE_BOARD=1 to overwrite anyway).
+    Placement-only edits aren't caught here; KiCad's .history/ keeps those."""
     path = os.path.join(OUTDIR, NAME + ".kicad_pcb")
+    if BOARD in HAND_EDITED and not os.environ.get("NIBBLES_OVERWRITE_BOARD"):
+        sys.exit(f"{os.path.relpath(OUTDIR, REPO)} is edited by hand in KiCad now: not overwriting it. "
+                 "Set NIBBLES_OVERWRITE_BOARD=1 to regenerate it anyway (it loses those edits).")
     if os.path.exists(path) and not os.environ.get("NIBBLES_OVERWRITE_BOARD"):
         txt = open(path).read()
         if "(segment" in txt or "(via" in txt or "(arc" in txt:
@@ -720,7 +731,8 @@ def write_board(root_uuid, sheet_uuids):
 def main():
     M.assign_parts()
     collect_variants()
-    for board in M.BOARDS:
+    only = [a for a in sys.argv[1:] if a in M.BOARDS]  # e.g. "charger": just that board
+    for board in only or M.BOARDS:
         use_board(board)
         if "--project-only" in sys.argv:  # rules and net classes only; schematic and board untouched
             patch_project()

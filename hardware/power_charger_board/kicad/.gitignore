@@ -1,0 +1,11 @@
+# TI land patterns converted from Ultra Librarian downloads: regenerate with
+# tools/hardware/make_power_board_kicad.py (their terms may not allow republishing).
+nibbles_ti.pretty/
+# KiCad per-user and cache files
+*.kicad_prl
+*-backups/
+fp-info-cache
+_autosave-*
+*.lck
+# KiCad's local history (a git repo of autosaves)
+.history/
