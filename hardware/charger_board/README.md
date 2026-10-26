@@ -20,6 +20,11 @@ is reworked, and nothing else changes.
   `make_power_board_kicad.py`); not routed. Input from the power board on
   the left (J21), the battery output on the right (J22), the I2C cable (J23)
   and the cells' NTC (J4) on the bottom.
+- Net class **Power**, 3 mm, vias 0.8/0.4 mm (DOCK_VIN, PMID, SYS, SW1,
+  SW2, PACK_F; 1 oz copper): up to ~6 A in the inductor when boosting from
+  a low dock. Better as short pours, as in TI's layout example; neck down
+  where they meet the BQ25798's pins. Everything else 0.25 mm; ground is
+  In1 plus top pours with several vias at each capacitor.
 - The BQ25798 is laid out after its datasheet (section 8.4.1, Figure 8-21):
   0402s from PMID and SYS to GND right at those pins, a 10 uF beside each,
   the inductor just above (SW1/SW2 go down through vias under the IC to

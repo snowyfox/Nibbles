@@ -6,6 +6,8 @@ every footprint placed and every pad on its net.
     KPY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
     $KPY tools/hardware/make_power_board_kicad.py
         writes hardware/power_board/kicad/ and hardware/charger_board/kicad/
+    $KPY tools/hardware/make_power_board_kicad.py --project-only
+        only the design rules and net classes in each .kicad_pro
 
 Run it with KiCad's own Python: the board is built with KiCad's pcbnew
 module. The design itself (parts, nets, layout, part numbers) is the one in
@@ -466,6 +468,26 @@ def write_project():
         '(descr "Nibbles power board symbols"))\n)\n')
 
 
+# Track widths (IPC-2221, outer layers, 10 C rise; docs in each board's
+# README): the power board is ordered with 2 oz copper, the charger board
+# 1 oz. Ground stays Default: it's a plane and pours. Clearance stays 0.15 mm
+# everywhere (the TPS25982's pads). class -> (settings, nets)
+NETCLASSES = {
+    "power": {
+        # the lights' path and its sources: 8 A continuous, ~11 A worst case
+        "Power": ({"track_width": 5.0, "via_diameter": 1.0, "via_drill": 0.5},
+                  ["DOCK_RAW", "DOCK_VIN", "LIGHT_BUS", "EFUSE_OUT", "LIGHT_OUT", "PACK_RAW", "PACK_F"]),
+        # 5 V buck: up to 3 A
+        "Supply": ({"track_width": 1.0, "via_diameter": 0.8, "via_drill": 0.4}, ["+5V", "BUCK_SW"]),
+    },
+    "charger": {
+        # input, charge and switching currents: up to ~6 A in the inductor when boosting
+        "Power": ({"track_width": 3.0, "via_diameter": 0.8, "via_drill": 0.4},
+                  ["DOCK_VIN", "PMID", "SYS", "SW1", "SW2", "PACK_F"]),
+    },
+}
+
+
 def patch_project():
     """JLCPCB-friendly rules into the project file KiCad wrote with the board."""
     path = os.path.join(OUTDIR, NAME + ".kicad_pro")
@@ -475,6 +497,13 @@ def patch_project():
         # JLCPCB's standard processes manage 0.1 mm spacing; keep some margin.
         "min_clearance": 0.127, "min_track_width": 0.127, "min_via_diameter": 0.6,
         "min_through_hole_diameter": 0.3, "min_copper_edge_clearance": 0.3, "min_hole_clearance": 0.25})
+    # Pre-defined sizes for the track width / via size menus (and W / Shift+W while
+    # routing), so a Power net can neck down into small pins: the ideal diodes'
+    # ANODE/CATHODE sense pins, pull-ups and dividers carry almost no current.
+    ds = pro["board"]["design_settings"]
+    ds["track_widths"] = [0.0, 0.25, 0.5, 1.0, 1.5, 3.0, 5.0]  # the first entry is the net class width
+    ds["via_dimensions"] = [{"diameter": 0.0, "drill": 0.0}, {"diameter": 0.6, "drill": 0.3},
+                            {"diameter": 0.8, "drill": 0.4}, {"diameter": 1.0, "drill": 0.5}]
     classes = pro.setdefault("net_settings", {}).setdefault("classes", [])
     default = next((c for c in classes if c.get("name") == "Default"), None)
     if default is None:
@@ -482,6 +511,12 @@ def patch_project():
         classes.append(default)
     # 0.15 mm: TI's TPS25982 land pattern has 0.165 mm gaps to its thermal pads.
     default.update({"clearance": 0.15, "track_width": 0.25, "via_diameter": 0.6, "via_drill": 0.3})
+    # This board's net classes (replacing any earlier ones), so routing picks the width per net.
+    ns = pro["net_settings"]
+    ns["classes"] = [default] + [dict(default, name=name, priority=i, **cfg)
+                                 for i, (name, (cfg, _)) in enumerate(NETCLASSES[BOARD].items())]
+    ns["netclass_patterns"] = [{"netclass": name, "pattern": net}
+                               for name, (_, nets) in NETCLASSES[BOARD].items() for net in nets]
     json.dump(pro, open(path, "w"), indent=2)
 
 
@@ -687,7 +722,11 @@ def main():
     collect_variants()
     for board in M.BOARDS:
         use_board(board)
-        write_project_files()
+        if "--project-only" in sys.argv:  # rules and net classes only; schematic and board untouched
+            patch_project()
+            print(f"rules and net classes -> {os.path.relpath(OUTDIR, REPO)}/{NAME}.kicad_pro")
+        else:
+            write_project_files()
 
 
 def write_project_files():

@@ -14,10 +14,14 @@ one design description, `tools/hardware/make_power_board_sch.py`:
 
 KiCad is the one to continue in: its files are text, so they can be checked
 and edited outside the GUI (`kicad-cli` runs the ERC and DRC and makes the
-JLCPCB outputs). The KiCad project has:
-- the schematic: a root sheet and the three sheets below, every net on
-  global labels (plain net names, the same names as on the charger board),
-  intentionally open pins flagged no-connect;
+JLCPCB outputs). Since 2026-10-26 the KiCad files are the master copy: the
+schematic has been rearranged and the board placed and routed in KiCad, so
+the generator no longer writes this project (it refuses a board with tracks).
+The KiCad project has:
+- the schematic: one sheet, merged from the generator's three (1 input,
+  2 lighting path, 3 logic, stacked top to bottom with their notes), every
+  net on global labels (plain net names, the same names as on the charger
+  board), intentionally open pins flagged no-connect;
 - the board: **2 layers** (top parts and connections, a solid ground plane
   on the bottom), all 65 footprints with every pad on its net, **roughly
   placed** (`PLACE_POWER` in `make_power_board_kicad.py`) on a placeholder
@@ -34,7 +38,17 @@ JLCPCB outputs). The KiCad project has:
     right edge) and keypad port (J9, bottom edge) bottom right;
 - project rules for JLCPCB's standard process: 0.15 mm default clearance
   (TI's TPS25982 land pattern has 0.165 mm gaps to its thermal pads),
-  0.25 mm hole-to-copper.
+  0.25 mm hole-to-copper;
+- net classes, so routing picks the width per net (IPC-2221, outer layers,
+  10 °C rise, **2 oz copper**): **Power** 5 mm, vias 1.0/0.5 mm (DOCK_RAW,
+  DOCK_VIN, LIGHT_BUS, EFUSE_OUT, LIGHT_OUT, PACK_RAW, PACK_F: 8 A
+  continuous, ~11 A worst case); **Supply** 1 mm (+5V, BUCK_SW); everything
+  else 0.25 mm. Better still, make the Power nets copper zones on both
+  layers, joined by 12-15 vias (~1 A per 0.3 mm via) wherever they change
+  layer, and keep the bottom ground plane unbroken under them (it carries
+  the return). Short narrow necks into FET, eFuse and connector pads are
+  fine. `NETCLASSES` in `make_power_board_kicad.py`; `--project-only`
+  rewrites just the rules and net classes.
 Checked: KiCad's netlist connects exactly the design's 40 nets; ERC is
 clean; DRC shows only unrouted connections and silkscreen crowding (no
 courtyard overlaps).
@@ -88,7 +102,7 @@ are reversed: check before plugging in).
   LEMO's contacts. They still hold up the converter's input while the ideal
   diodes switch. Unplugging always breaks the lights' current (all LEMO
   contacts part together); at ~15 V that arc is small, as last year showed.
-- Three sheets: 1 input (dock connector, the LEMO's ideal diode, dock LED),
+- Three sheets (one page in KiCad): 1 input (dock connector, the LEMO's ideal diode, dock LED),
   2 lighting path (pack input, ideal diodes, eFuse, INA226), 3 logic (5 V
   buck, I/O expander, base connector, charger and keypad ports). Each sheet
   starts with notes on its design choices.
