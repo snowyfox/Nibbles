@@ -2,7 +2,11 @@
 
 Design for Nibbles' power: the internal battery in the pole base, the custom
 power board, and the external battery dock. Status: **design agreed, no
-hardware built yet.** Part choices are the current plan and still need
+hardware built yet.** First-draft KiCad projects with JLCPCB parts and
+footprints, roughly placed: the [power board](../hardware/power_board/README.md)
+and the [charger board](../hardware/charger_board/README.md) that plugs into
+it (the INA228 had no JLCPCB stock; the board uses the pin-compatible
+INA226). Part choices are the current plan and still need
 datasheet verification before layout. Numbers marked *estimate* should be
 replaced with measurements once hardware exists.
 
@@ -13,34 +17,36 @@ replaced with measurements once hardware exists.
 - Between sets or when moving between stages, a cable from a backpack dock
   plugs in to run the lights and recharge the internal pack at the same time.
 - Plugging and unplugging never makes the lights flicker or reboot anything.
-- At home or in a hotel, everything charges over USB-C PD.
+- At home or in a hotel, everything charges over USB-C PD, through a small
+  USB-C to LEMO charging dongle. The totem's only power input is the LEMO.
 - Every battery that travels stays under 100 Wh (airline carry-on limit).
 
 ## System overview
 
 ```mermaid
 flowchart LR
-  USB["USB-C PD in<br/>(20 V)"] --> PD["PD sink<br/>CH224K"]
-  PD --> CHG["Charger<br/>BQ25798 (input 1)"]
-  DOCK["Dock<br/>VB99 V-mount batteries"] -- "LEMO 1K.308 cable" --> CHG2["BQ25798 (input 2)"]
-  DOCK -- "LEMO" --> MUX["Priority switch<br/>(ideal diodes)"]
-  CHG --> PACK["Internal pack<br/>4S1P Vapcell F63"]
-  CHG2 --> PACK
+  DOCK["Dock<br/>VB99 V-mount batteries"] -- "LEMO 1K.308 cable" --> LEMO["LEMO ideal diode<br/>(nothing flows back out)"]
+  DONGLE["Charging dongle<br/>USB-C PD in, LEMO out"] -. "or, at home" .-> LEMO
+  LEMO -- "charger port" --> CHG["Charger board<br/>BQ25798"]
+  LEMO --> MUX["Priority switch<br/>(ideal diodes)"]
+  CHG -- "charger port" --> PACK["Internal pack<br/>4S1P Vapcell F63"]
   PACK --> MUX
   MUX --> EFUSE["eFuse + INA228"]
   EFUSE --> CONV["Lighting converter<br/>100 W, out 5 V"]
   CONV --> LEDS["WLED lights"]
-  CHG -- "system rail" --> BUCK["5 V buck"]
+  MUX --> BUCK["5 V buck"]
   BUCK --> BASE["Base station<br/>Waveshare ESP32-S3-Touch-LCD-3.49 V2"]
 ```
 
-Three pieces of hardware:
+Five pieces of hardware:
 
 | Piece | What it is | Code |
 | --- | --- | --- |
 | Base station | Existing Waveshare ESP32-S3-Touch-LCD-3.49 **V2** (screen, touch, main brain) | `firmware/base/` |
 | Power board | New custom PCB in the pole base, next to the internal pack | none (read over I2C by the base) |
+| Charger board | Small custom PCB (BQ25798) on the power board's charger port; swappable for plan B's modules | none (read over I2C by the base) |
 | Dock | New small PCB in a backpack enclosure holding VB99 batteries, with an ESP32-C3 | `firmware/dock/` (new) |
+| Charging dongle | Small USB-C PD sink (CH224K) with a LEMO plug, for charging without the dock | none |
 
 The Waveshare board stays as a display module for this iteration. A fully
 integrated board (bare 172×640 AXS15231B panel on a custom PCB with an
@@ -99,17 +105,30 @@ Worst case over the dock cable is lights at full plus quick charging, around
 
 ## Power board
 
-### Charging (USB-C PD and dock)
+### Charging (dock, or the USB-C dongle)
 
-- **PD sink: CH224K**, set to request **20 V only**. Ignore 28 V (EPR); it
-  exceeds the charger's limit.
-- **Charger: TI BQ25798.** 1–4S buck-boost with integrated FETs, NVDC power
-  path, I2C control and ADC. Its dual-input selector takes USB-C on one input
-  and the dock on the other, so the internal pack recharges from the VB99s
-  with no extra circuitry.
+- **One power input: the LEMO.** No USB-C on the totem (decided
+  2026-10-25): one sealed connector instead of two. At home, a separate
+  **USB-C to LEMO dongle** (a CH224K PD sink and a LEMO plug) feeds the same
+  input as the dock.
+- **Charger: TI BQ25798**, on its own board (split 2026-10-25). 1–4S
+  buck-boost with integrated FETs, NVDC power path, I2C control and ADC.
+  With one input it needs no input FETs: the dock goes straight to VBUS
+  (datasheet section 7.3.5.2, Figure 8-1). It's the riskiest part and the
+  only one needing 4 layers, so it plugs into the power board's **charger
+  port** (two XT30s, input and battery, plus a JST-GH 6 I2C cable) and can
+  be swapped on its own; plan B's modules use the same two XT30s.
+- **Nothing flows back out through the LEMO:** an ideal diode right after
+  it (the user's rule from last year's design). The dock then has a second,
+  separate ideal diode into the lights, so the pack can't feed the
+  charger's input through the light bus.
 - Everything on the high-voltage side rated **25 V or more**.
-- With the Anker Prime 240 W, use port 1 and a **5 A e-marked cable**
-  (100 W at 20 V; a standard 3 A cable limits it to 60 W).
+- **Dongle voltage (open):** the dock input's TVS (SMBJ18A, for the dock's
+  16.8 V) starts to conduct at about 20 V, so the dongle asks for **15 V**,
+  or the TVS changes (SMBJ20A/22A) for a 20 V dongle. 15 V PD is usually
+  3 A (45 W): enough for standard charging (~34 W), not quick charging.
+  20 V with a 5 A e-marked cable from the Anker Prime 240 W (port 1) gives
+  100 W.
 
 ### Lighting path
 
@@ -139,18 +158,114 @@ Worst case over the dock cable is lights at full plus quick charging, around
 
 ### Logic supply
 
-- **5 V buck** from the system rail to power the Waveshare board (not an LDO;
+- **5 V buck** from the ideal diodes' output (dock or pack) to power the
+  Waveshare board, so it runs with no charger board fitted (not an LDO;
   16.8 V to 5 V in an LDO wastes most of the power). Low quiescent current,
   since it is always on.
+- **Keypad port** (JST-GH 6, the same I2C cable as the charger's): the
+  physical buttons' I/O expander joins the power I2C bus and shares its
+  interrupt. The keypad itself is still open (`hardware/keypad_board/`
+  later, or hand wired).
+- **Dock LED header:** a panel LED lit straight from the dock's voltage,
+  replacing last year's LEMO switch's light.
 - Leave the Waveshare board's own battery header **empty** so its onboard
   charger does not fight this power system.
 
 ### PCB notes
 
-- High-current path (up to ~11 A: full-white lights plus quick charging
-  from the dock) on copper pours; consider 2 oz copper at JLCPCB.
-- Give the BQ25798 copper area for heat (3–5 W while quick charging).
+- **Charger board: 4 layers** (decided 2026-10-25): the BQ25798's layout
+  guidelines need an inner ground plane under it, with the inductor
+  connections on another layer. In1 is a solid ground plane. Give the
+  BQ25798 copper area for heat (3–5 W while quick charging).
+- **Power board: 2 layers**, a ground plane on the bottom. High-current path
+  (up to ~11 A: full-white lights plus quick charging from the dock) on
+  copper pours on both layers; 2 oz copper at JLCPCB.
 - XT30 for the internal pack connection.
+
+## Plan B: last year's modules
+
+Under 30 days remain (2026-10-25). Two levels of fallback, both using
+last year's boards, which worked for a season and which the user still has:
+- **Only the charger board misbehaves:** the 60 W and 140 W modules plug
+  into the power board's charger port instead (the 60 W board's input on
+  J10, the 140 W charger's XT30 on J11). Everything else on the power board
+  stays.
+- **The power board is late or broken:** the base goes back to last year's
+  wiring, below.
+
+All three are AliExpress modules:
+
+```mermaid
+flowchart LR
+  LEMO["LEMO (dock DC)"] --> ID["Ideal diode<br/>(no backfeed to the dock)"]
+  ID --> BUCK60["60 W DC to USB-C PD<br/>(buck only)"]
+  BUCK60 -- "USB-C, under 50 mm" --> CHG140["140 W PD3.1 charger<br/>4S version"]
+  CHG140 -- "XT30" --> FUSE["Pack fuse"]
+  PACK["Internal pack<br/>4S BMS"] --> MAIN["Main power switch<br/>(latching, hidden at the pole bottom)"]
+  MAIN --> FUSE
+  ID -- "main input" --> SW["Dual DC switch module"]
+  FUSE -- "standby input" --> SW
+  SW --> CONV["Lighting converter"]
+  SW --> LOGIC["5 V buck, base station"]
+```
+
+Built from the user's 2025 hand-drawn wiring diagram (notebook pages
+33–34) and their memory of how it was actually wired. The drawing was the
+plan; the rushed build differed:
+- **Two latching buttons:**
+  - **LEMO disconnect:** the first, wired right after the LEMO and before
+    the split to the charger and the switch module. It disconnects the dock
+    without unplugging the cable. **Dropped for this year** (decided
+    2026-10-25): it took a lot of enclosure space. Its only real use was its
+    built-in light showing that the dock was connected and supplying power.
+  - **Main power switch:** the second, in the pack line right after the
+    BMS, before anything else. It's buried at the bottom of the pole so it
+    can't be bumped. With it off and no LEMO, everything is off.
+- **Displays:** the off-the-shelf voltage and battery-level displays (one
+  pair per source in the drawing) ended up as one pair on the internal pack;
+  the other pair was lost on the first festival night. The base station's
+  screen (pack voltage from the INA226) replaces them.
+- **The drawing's XT30 bulkhead** (with an ideal-diode arrow into the pack
+  side) was never built and its purpose is forgotten; leave it out.
+
+Two parts of the drawing never made it in and should for plan B:
+- **The ideal diode right after the LEMO**, so current can never leave the
+  shark and feed back into the dock. The 140 W charger is bidirectional, and
+  a step-down converter like the 60 W board conducts backwards through its
+  high-side MOSFET when its output is above its input. So without this
+  diode, the pack could push current out through the LEMO. Rate it for the
+  whole input (lights plus charging, about 15 A).
+- **The pack fuse.** The drawing says 5 A, but full white draws 6–8 A from
+  the pack, so 5 A would blow; use **15 A** (the power board's F1 is 15 A).
+
+| Module | Listing | What matters |
+| --- | --- | --- |
+| 60 W DC to USB-C PD | AliExpress item 3256808575222807 | 6–35 V in, **step-down only**, PD 3.0 (PPS), QC; USB-C and USB-A outputs (both in use at once drops to 5 V) |
+| 140 W PD3.1 charger, 4S | AliExpress item 3256809095018238 | Charges from USB-C up to 140 W, fixed 16.8 V (4.2 V per cell); XT30PW-M battery socket; 10K B3380 NTC marked on the board; bidirectional (the USB-C port can output); chip unreadable in photos (maybe Injoinic IP2366, unverified) |
+| Dual DC switch, 15 A | AliExpress item 3256809109056944 | 6–36 V, MCU controlled; prefers the main input whatever its voltage; switches in about 0.1 ms; ~6 mA itself |
+
+- **Charge rate is set by the 60 W board, not the charger.** It only steps
+  down, so from the dock's 11.2–16.8 V it can offer 12 V (about 36 W), and
+  15 V only while the dock is near full. That means roughly 2 A into the
+  pack, the F63's standard rate. Check on the bench what it actually
+  negotiates, and what happens when the dock sags below the offered voltage.
+- **Switch settings** (TP1 and TP2 are measured from ground; the threshold
+  is 5 × the test point): VR1 = switch to the pack below about **12.0 V**
+  (TP1 = 2.40 V), VR2 = back to the dock above about **13.0 V** (TP2 =
+  2.60 V), held for 3 s. VR2 must be above VR1. These are starting points;
+  set them on the bench with the real dock and pack. A full-white flash
+  that dips the dock below VR1 only moves the lights to the pack for 3 s.
+- The switch's **SW** terminal turns its output on and off (the listing's
+  translation is unclear which way). If wired to the base, it can stand in
+  for the eFuse's on/off.
+- **Lost compared with the power board:** charging stops at 4.2 V per cell
+  instead of 4.1, no temperature cutoff unless the NTC can move against the
+  cells, no I2C control or status, no eFuse soft start or current limit,
+  two conversions (about 80–85% efficient while charging).
+- **To check on the bench before relying on it:** the charge voltage and
+  that charging stops at full; whether the pack slowly drains back into the
+  60 W board through the bidirectional link when the dock is unplugged; that
+  the lights don't flicker when the switch moves between dock and pack.
 
 ## Dock
 
@@ -168,8 +283,17 @@ Worst case over the dock cable is lights at full plus quick charging, around
   is not readable through the plate).
 - Usable energy per VB99 *estimate*: ~90 Wh, about 1.5–1.7 h at 50 W, under
   1 h at full white (100 W).
-- Fallback with no dock: VB99 models with a 100 W USB-C PD output can plug
-  straight into the power board's USB-C input.
+- Fallback with no dock: a VB99 with a USB-C PD output can charge the totem
+  through the USB-C to LEMO dongle.
+- **For this festival (2026-10-25): no dock board.** As last year, a cable
+  from a VB99's **D-Tap**: D-Tap plug, inline 15 A fuse, LEMO cable (pins
+  1-3 +, 4-6 ground, 7 and 8 unconnected: pin 8 goes to a 3.3 V input on the
+  base, so never battery voltage). Swap batteries by unplugging; the
+  internal pack covers the gap. The D-Tap is rated 10 A, so the charger
+  starts with a 2 A input limit (set by resistors on the charger board):
+  lights at full (~7 A) plus charging stay under it with no firmware. The
+  smart dock above (several slots, handover, slot voltages) comes after the
+  festival; the power board needs no change for it.
 
 ## Dock cable
 
@@ -195,14 +319,23 @@ base end only and never carry current on it.
 
 ### Hot-plug rules
 
-1. The dock keeps its output **off** until it sees dock detect and the base
-   tells it to turn on; the eFuse ramps the output up gently. The contacts
-   never make or break under load.
-2. The base sends a regular heartbeat over the data line. If the dock misses
-   it, it turns its output off. (All LEMO contacts separate at nearly the same
-   moment, so dock detect alone is not enough.)
+The LEMO is plugged and unplugged often during a festival, with the battery
+out of reach, so there is no switch to turn off first (2026-10-25).
+
+1. **Plugging in:** the power board's LIGHT_BUS has only small ceramics; the
+   bulk caps sit behind the eFuse, which ramps them up. So a live dock
+   plugged into a switched-off shark charges only ~30 uF through the
+   contacts, and with the pack on, only the small difference in voltage.
+2. **Unplugging always breaks the load current**, up to ~10 A: all eight
+   LEMO contacts part at nearly the same moment, so no detect pin or
+   heartbeat can turn the dock off first (a heartbeat only notices after the
+   contacts have opened). At ~15 V the arc is small and short; last year's
+   cable did this all season. Inspect the contacts now and then; keep a
+   spare cable (LEMO contacts are replaceable).
 3. The internal pack's ideal diode covers the gap whenever external power
    disappears.
+4. The smart dock (later) still turns its output off when the heartbeat
+   stops, so a pulled cable's free end is never live.
 
 ### Mechanical
 
@@ -224,6 +357,8 @@ taking down the touchscreen.
 | --- | --- |
 | BQ25798 | 0x6B (fixed) |
 | INA228 | 0x40–0x4F (set by pins) |
+| TCA9534 (power board) | 0x20 |
+| Keypad expander | 0x21–0x27 |
 | BQ34Z100-G1 (if used) | 0x55 |
 
 GPIOs needed on the Waveshare V2 board, about 5 in total:
@@ -283,15 +418,23 @@ empties to limit cable current, cable heat and strain on the VB99.
 | below 12.0 V | 0 (lights only) |
 
 Also cap total input power at about 95 W, and let the thermistor override
-everything. Full-white lights alone now reach about 100 W, so with the
+everything. From a D-Tap (10 A), keep lights plus charging under about 9 A:
+the charger board powers up with a 2 A input limit, and the base raises it
+only when the lights' current leaves room. Full-white lights alone now reach about 100 W, so with the
 lights at full the cap leaves nothing for charging: the lights take
 priority (the charger's input current limit backs off), or raise the cap if
-the dock cable and VB99 allow (a VB99's 10 A output at ~14.5 V is ~145 W). Thresholds are starting points to tune on real hardware. Over
-USB-C, charge at the rate the PD source allows, up to 3.5 A.
+the dock cable and VB99 allow (a VB99's 10 A output at ~14.5 V is ~145 W). Thresholds are starting points to tune on real hardware. From
+the USB-C dongle, charge at the rate the PD source allows, up to 3.5 A.
 
 ## Open decisions
 
-- Internal pack BMS and gauge: separate BMS + BQ34Z100-G1, or BQ40Z50.
+- Internal pack BMS and gauge: **decided 2026-10-24: an off-the-shelf 4S
+  BMS on the cells, no fuel gauge** (the INA228 and the BQ25798's ADC give
+  the data; firmware estimates the charge).
+- USB-C to LEMO dongle: 15 V or 20 V (see Charging), and its design. It has
+  no processor for the dock's heartbeat (hot-plug rules), so its output is
+  live whenever it's plugged in to USB-C: decide whether that's acceptable
+  or it waits for dock detect.
 - Wide-input (9–36 V) lighting converter, 100 W or more: which part (later;
   the battery-aware WLED limit covers the low-voltage problem for now).
 - Exact VB99 model(s) in use and their output ratings.
