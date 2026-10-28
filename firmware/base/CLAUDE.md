@@ -43,7 +43,9 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   expanders at 0x38-0x3F, read every 10 ms, debounced over two reads,
   re-found every 2 s; boards that stop answering release their keys. Which
   switch is which key, and the boards' order on the LED chain, is
-  `KEYPAD_BOARDS` in `config.h`. The SK6812 LEDs run from GPIO 43 (RMT,
+  `KEYPAD_BOARDS` in `config.h`. A board can also be a PCF8574(T) module
+  (`KEYPAD_PCF8574`: no registers, read raw; no LEDs) for breadboard
+  prototypes; one at 0x27 is listed. The SK6812 LEDs run from GPIO 43 (RMT,
   `espressif/led_strip`), scaled by `KEYPAD_LED_LEVEL` (48/255) to keep the
   cable's 5 V current low. GPIO 43 is UART0 TX, so the ROM's boot banner
   can flicker them at power-up.

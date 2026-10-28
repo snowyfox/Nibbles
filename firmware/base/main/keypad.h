@@ -10,6 +10,10 @@
 
 typedef void (*keypad_cb_t)(ctl_key_t key, bool down);
 
+// The expander on a key board (the chip field of KEYPAD_BOARDS).
+#define KEYPAD_TCA9534  0   // TCA9534(A): the real key boards; LEDs on the chain
+#define KEYPAD_PCF8574  1   // PCF8574(T/AT) module, for breadboard prototypes: no LEDs
+
 esp_err_t keypad_start(keypad_cb_t cb);
 // Each logical key's colour (0xRRGGBB); the driver scales it to KEYPAD_LED_LEVEL.
 void keypad_set_leds(const uint32_t rgb[KEY_COUNT]);

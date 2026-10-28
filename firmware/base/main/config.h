@@ -56,10 +56,15 @@
 // jumpers) in the order their LEDs are chained (hub J2, J3, ...). Each lists
 // its switches top to bottom (switch 1 = P0 = its first LED); KEY_NONE for
 // a switch with no job. See controls.h for what the keys do.
+// The last entry is the breadboard prototype: a PCF8574T module (no LEDs;
+// switches between a pin and GND, its pins pull themselves up) at 0x27, all
+// three address jumpers high (PCF8574T: 0x20-0x27; PCF8574AT: 0x38-0x3F).
+// A board that isn't there is just never found, so the entries can stay.
 #define KEYPAD_BOARDS { \
-    { 0x38, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8 } }, \
-    { 0x39, 8, { KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS, KEY_PAGE, KEY_SHIFT, KEY_BLACKOUT, KEY_FIN_SENSOR } }, \
-    { 0x3A, 3, { KEY_TAKE, KEY_FLASH, KEY_UNLOCK } }, \
+    { 0x38, KEYPAD_TCA9534, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8 } }, \
+    { 0x39, KEYPAD_TCA9534, 8, { KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS, KEY_PAGE, KEY_SHIFT, KEY_BLACKOUT, KEY_FIN_SENSOR } }, \
+    { 0x3A, KEYPAD_TCA9534, 3, { KEY_TAKE, KEY_FLASH, KEY_UNLOCK } }, \
+    { 0x27, KEYPAD_PCF8574, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_EYES, KEY_BODY, KEY_SHIFT, KEY_TAKE } }, \
 }
 #define KEYPAD_POLL_MS       10
 // The key LEDs' data: GPIO 43 (U0TXD; the console is on USB), wired to the

@@ -13,6 +13,7 @@ static const char *TAG = "keypad";
 
 typedef struct {
     uint8_t addr;
+    uint8_t chip;                 // KEYPAD_TCA9534 or KEYPAD_PCF8574
     uint8_t keys;                 // switches fitted (8 on a column, 3 on the upper keypad)
     ctl_key_t map[8];             // logical key per switch (P0 = switch 1, the first LED)
 } board_t;
@@ -53,6 +54,7 @@ static void show_leds(void)
     // The chain runs through the boards in KEYPAD_BOARDS order, switch 1 first on each.
     int i = 0;
     for (int b = 0; b < NBOARDS; b++) {
+        if (boards[b].chip != KEYPAD_TCA9534) continue;   // prototypes have no LEDs
         for (int k = 0; k < boards[b].keys; k++, i++) {
             const uint32_t c = boards[b].map[k] ? rgb[boards[b].map[k]] : 0;
             led_strip_set_pixel(strip, i, (c >> 16 & 255) * KEYPAD_LED_LEVEL / 255,
@@ -84,6 +86,10 @@ static void keypad_task(void *arg)
                 if (found & 1 << b) continue;
                 if (i2c_master_probe(bus, boards[b].addr, 10) == ESP_OK) {
                     found |= 1 << b;
+                    if (boards[b].chip == KEYPAD_PCF8574) {   // all pins high: weak pull-ups, read as inputs
+                        const uint8_t all = 0xff;
+                        i2c_master_transmit(devs[b], &all, 1, 10);
+                    }
                     ESP_LOGI(TAG, "keypad board 0x%02x found (%d keys)", boards[b].addr, boards[b].keys);
                     leds_dirty = true;
                 }
@@ -91,8 +97,12 @@ static void keypad_task(void *arg)
         }
         for (int b = 0; b < NBOARDS; b++) {
             if (!(found & 1 << b)) continue;
+            // TCA9534: register 0 is the inputs. PCF8574: no registers, a plain read is
+            // the pins (writing the 0 would drive every pin low).
             uint8_t reg = 0, in;
-            if (i2c_master_transmit_receive(devs[b], &reg, 1, &in, 1, 10) != ESP_OK) {
+            const esp_err_t err = boards[b].chip == KEYPAD_PCF8574 ? i2c_master_receive(devs[b], &in, 1, 10)
+                                                                   : i2c_master_transmit_receive(devs[b], &reg, 1, &in, 1, 10);
+            if (err != ESP_OK) {
                 ESP_LOGW(TAG, "keypad board 0x%02x lost", boards[b].addr);
                 found &= ~(1 << b);
                 // whatever it had down comes up
@@ -123,7 +133,9 @@ static void keypad_task(void *arg)
 esp_err_t keypad_start(keypad_cb_t on_key)
 {
     cb = on_key;
-    for (int b = 0; b < NBOARDS; b++) led_count += boards[b].keys;
+    for (int b = 0; b < NBOARDS; b++)
+        if (boards[b].chip == KEYPAD_TCA9534) led_count += boards[b].keys;
+    if (!led_count) led_count = 1;   // the driver wants at least one
     const led_strip_config_t sc = {
         .strip_gpio_num = PIN_KEY_LEDS,
         .max_leds = led_count,
