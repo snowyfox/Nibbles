@@ -9,3 +9,5 @@ _autosave-*
 *.lck
 # KiCad's local history (a git repo of autosaves)
 .history/
+# Vendor 3D models (big; download links in ../README.md)
+3d/
