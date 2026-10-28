@@ -1,0 +1,7 @@
+LCSC Part Number,Quantity,Comment,Designator
+C89632,4,"10uF 35V (10uF 50V 1206: Samsung, Murata, Yageo and TDK all backordered; buy from LCSC)","C40,C41"
+C45783,4,"22uF 10V (22uF 25V 0805: Samsung obsolete, Murata, Yageo and TDK backordered; buy from LCSC)","C44,C45"
+C431092,6,"XT30PW-M (dock power, from the LEMO) (XT30 (Amass): not sold by DigiKey; LCSC or Amazon)","J2,J3,J5"
+C179623,6,"30V N-FET >= 15 A (NTMFS4C022NT1G: DigiKey shows no stock, 70 wk lead; buy from LCSC)","Q5,Q6,Q9"
+C2941042,6,"LM74700-Q1 (dock) (LM74700QDBVRQ1: out of stock, backorder to 27 Oct / 30 Nov; buy from LCSC)","U3,U4,U9"
+C2155765,2,"TPS259827ONRGET (TPS259827ONRGET: out of stock, next 250 due 27 Nov; buy from LCSC)",U5

@@ -4543,7 +4543,7 @@
 				)
 			)
 		)
-		(property "Value" "10nF (TBD)"
+		(property "Value" "22nF"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(uuid "418de7a1-0f79-4e18-8ed4-bd6101006934")
@@ -8512,7 +8512,7 @@
 				)
 			)
 		)
-		(property "Value" "22nF (TBD)"
+		(property "Value" "47nF"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(uuid "c0ec4e74-86d9-4e17-8ddc-9cd6bbc6e067")
@@ -21828,7 +21828,7 @@
 				)
 			)
 		)
-		(property "Value" "TBD (IMON)"
+		(property "Value" "1k"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(uuid "7f3a2dd1-9f60-4448-8ada-fdddcd881bb5")
@@ -26818,7 +26818,7 @@
 				)
 			)
 		)
-		(property "Value" "100nF (TBD)"
+		(property "Value" "22nF"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(uuid "3ce2cc03-a543-4dcb-bb47-80115d270fe8")

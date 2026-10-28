@@ -1,0 +1,50 @@
+LCSC,Manufacturer,Manufacturer Part Number,DigiKey stock 2026-10-28,Note
+C15850,KYOCERA AVX,KGM21AR51E106KU,980,"10uF 25V X5R 0805 (Samsung CL21A106KAYNNNE: backordered, 61 wk)"
+C131394,YAGEO,CC0402KRX7R9BB104,not checked,
+C19666,Samsung Electro-Mechanics,CL10A475KO8NNNC,"1,137",
+C1622,Samsung Electro-Mechanics,CL10B473KB8NNNC,"776,835",
+C106205,YAGEO,CC0402KRX7R9BB102,not checked,
+C14663,YAGEO,CC0603KRX7R9BB104,not checked,
+C2981459,Panasonic,EEH-ZK1E151XP,"1,517","150uF 25V hybrid polymer 6.3 x 8 mm, fits the 6.3 mm footprint (no 220uF 25V 6.3 mm in stock); 300 uF on EFUSE_OUT instead of 440"
+C21122,Samsung Electro-Mechanics,CL10B223KB8NNNC,"309,615",
+C89632,,,none,"10uF 50V 1206: Samsung, Murata, Yageo and TDK all backordered; buy from LCSC"
+C45783,,,none,"22uF 25V 0805: Samsung obsolete, Murata, Yageo and TDK backordered; buy from LCSC"
+C1589,Samsung Electro-Mechanics,CL10B103KB8NNNC,"134,771",
+C15849,YAGEO,CC0603KRX5R9BB105,"14,262","1uF 50V X5R 0603 (Samsung CL10A105KB8NNNC: backordered)"
+C10212,Littelfuse,SMBJ18A,"31,701",
+C48260,Texas Instruments,TPD1E10B06DPYR,"141,826",
+C8678,Vishay,SS34-E3/57T,"19,910",
+C2443310,Eaton,CC12H15A-TR,209,
+C431092,,,none,"XT30 (Amass): not sold by DigiKey; LCSC or Amazon"
+C161690,JST,BM02B-GHS-TBT,not checked,
+C2932674,Sullins,PPTC111LFBN-RC,"4,308","1x11 female, 8.5 mm (same height as the Kinghelm)"
+C189892,JST,BM06B-GHS-TBT,"27,525",
+C133062,JST,BM08B-GHS-TBT,"37,139",
+C285810,Eaton,HCM0703-2R2-R,"6,171","7.1 x 6.6 x 3.0 mm, Isat 14 A, 20 mohm (same specs as the Chilisin)"
+C285805,Eaton,HCM0703-6R8-R,"1,500","7.1 x 6.6 x 3.0 mm, Isat 8 A, 60 mohm"
+C2286,Lite-On,LTST-C191KRKT,"1,386,671",red 0603
+C179623,,,none,"NTMFS4C022NT1G: DigiKey shows no stock, 70 wk lead; buy from LCSC"
+C8545,onsemi,2N7002LT1G,not checked,
+C21190,YAGEO,RC0603FR-071KL,"2,040,867",
+C25803,YAGEO,RC0603FR-07100KL,not checked,
+C25771,YAGEO,RC0402FR-0727KL,not checked,
+C25076,YAGEO,RC0402FR-07100RL,not checked,
+C2933105,YAGEO,RC0402FR-075K23L,"28,047",
+C2998131,YAGEO,RC0402FR-0730K1L,"4,971",
+C98220,YAGEO,RC0603FR-0710KL,not checked,
+C4190,YAGEO,RC0603FR-072K2L,not checked,
+C22935,YAGEO,RC0603FR-071ML,not checked,
+C23121,YAGEO,RC0603FR-0786K6L,not checked,
+C22796,YAGEO,RC0603FR-07130RL,not checked,
+C154685,Vishay Dale,WSL25122L000FEA,not checked,"2 mohm 2512, 1 W (0.26 W at the 11.3 A limit)"
+C2933235,YAGEO,RC0603FR-0752K3L,not checked,
+C23162,YAGEO,RC0603FR-074K7L,not checked,
+C23234,YAGEO,RC0603FR-077K5L,not checked,
+C22857,YAGEO,RC0603FR-0710K7L,not checked,
+C22977,YAGEO,RC0603FR-072RL,"125,693",
+C2876593,Texas Instruments,BQ25798RQMR,"6,680",
+C2941042,,,none,"LM74700QDBVRQ1: out of stock, backorder to 27 Oct / 30 Nov; buy from LCSC"
+C2155765,,,none,"TPS259827ONRGET: out of stock, next 250 due 27 Nov; buy from LCSC"
+C49851,Texas Instruments,INA226AIDGSR,"38,615",
+C3200405,Texas Instruments,TPS62933DRLR,"62,378",
+C783615,Texas Instruments,TCA9534PWR,"24,888",
