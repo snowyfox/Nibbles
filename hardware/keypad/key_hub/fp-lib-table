@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "nibbles_keys") (type "KiCad") (uri "${KIPRJMOD}/../nibbles_keys.pretty") (options "") (descr "Nibbles keypad footprints"))
+)
