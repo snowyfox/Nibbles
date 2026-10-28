@@ -29,14 +29,16 @@ void ctl_init(ctl_t *c, uint32_t autolock_ms)
 {
     memset(c, 0, sizeof(*c));
     c->live.fins = c->standby.fins = -1;
+    c->fin_sensor = -1;
     c->target = c->target_before = TGT_ALL;
     c->autolock_ms = autolock_ms;
 }
 
-void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness)
+void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness, int fin_sensor)
 {
     c->live = *live;
     c->brightness = brightness;
+    c->fin_sensor = (int8_t)fin_sensor;
     c->have_live = live->body > 0 || live->eyes > 0 || live->fins >= 0;
     // Fill Standby from Live once, field by field as each side is first heard.
     if (c->standby.body == 0) c->standby.body = live->body;
@@ -73,16 +75,21 @@ static void bump_on(ctl_t *c, out_t *o, uint8_t slot, uint8_t action, int arg)
 
 static void bumps_off(ctl_t *c, out_t *o)
 {
-    for (uint8_t slot = TGT_BODY; slot <= TGT_EYES; slot++)
+    for (uint8_t slot = TGT_BODY; slot <= TGT_FINS; slot++)
         if (c->bump_slots & SLOT_BIT(slot)) emit(o, ACT_BUMP_END, slot, 0, 0);
     c->bump_slots = 0;
 }
 
-// A bump on the target's slots: ALL = body and eyes; FINS bumps nothing (the fins are part of the body).
+// A bump on the target's slots. A preset on ALL is the whole shark on that
+// preset, so fins running their own preset show the body's while it's held.
+// Flash and blackout on the body cover the fins (every WLED segment); on
+// FINS alone they do nothing (fin bumps are fin presets).
 static void bump_target(ctl_t *c, out_t *o, ctl_target_t t, uint8_t action, int arg)
 {
     if (t == TGT_ALL || t == TGT_BODY) bump_on(c, o, TGT_BODY, action, arg);
     if (t == TGT_ALL || t == TGT_EYES) bump_on(c, o, TGT_EYES, action, arg);
+    if (action == NL_BUMP_PRESET && t == TGT_FINS) bump_on(c, o, TGT_FINS, action, arg);
+    if (action == NL_BUMP_PRESET && t == TGT_ALL && c->live.fins > 0) bump_on(c, o, TGT_FINS, action, 0);
 }
 
 static ctl_target_t key_target(ctl_key_t k)
@@ -98,10 +105,10 @@ static void stage(ctl_t *c, int n)
 {
     const int preset = n + c->page * CTL_PAGE_SIZE;
     switch (c->target) {
-        case TGT_ALL:  c->standby.body = preset; c->standby.eyes = preset; break;
+        case TGT_ALL:  c->standby.body = preset; c->standby.eyes = preset; c->standby.fins = 0; break;
         case TGT_BODY: c->standby.body = preset; break;
         case TGT_EYES: c->standby.eyes = preset; break;
-        case TGT_FINS: if (n <= 2) c->standby.fins = n == 1; break;  // 1 follow, 2 locked
+        case TGT_FINS: c->standby.fins = preset; break;
     }
 }
 
@@ -122,9 +129,11 @@ static void latch_number(ctl_t *c, out_t *o)
         c->live.eyes = p;
         if (old.eyes > 0) c->standby.eyes = old.eyes;
     }
-    if (c->target == TGT_FINS && c->num_n <= 2 && (c->num_n == 1) != c->live.fins) {
-        emit(o, ACT_FINS, TGT_FINS, 0, c->num_n == 1);
-        c->live.fins = c->num_n == 1;
+    // FINS: that fin preset; ALL: the fins follow the body again
+    const int fins = c->target == TGT_FINS ? p : c->target == TGT_ALL ? 0 : -1;
+    if (fins >= 0 && fins != c->live.fins) {
+        emit(o, ACT_PRESET, TGT_FINS, 0, fins);
+        c->live.fins = fins;
         if (old.fins >= 0) c->standby.fins = old.fins;
     }
     bumps_off(c, o);
@@ -137,6 +146,7 @@ static void take_press(ctl_t *c, out_t *o)
     const uint8_t diff = ctl_standby_diff(c);
     if (diff & SLOT_BIT(TGT_BODY)) bump_on(c, o, TGT_BODY, NL_BUMP_PRESET, c->standby.body);
     if (diff & SLOT_BIT(TGT_EYES)) bump_on(c, o, TGT_EYES, NL_BUMP_PRESET, c->standby.eyes);
+    if (diff & SLOT_BIT(TGT_FINS)) bump_on(c, o, TGT_FINS, NL_BUMP_PRESET, c->standby.fins);
     c->take_preview = true;
 }
 
@@ -158,7 +168,7 @@ static void take_release(ctl_t *c, out_t *o, bool commit)
             if (old.eyes > 0) c->standby.eyes = old.eyes;
         }
         if (diff & SLOT_BIT(TGT_FINS)) {
-            emit(o, ACT_FINS, TGT_FINS, 0, c->standby.fins);
+            emit(o, ACT_PRESET, TGT_FINS, 0, c->standby.fins);
             c->live.fins = c->standby.fins;
             if (old.fins >= 0) c->standby.fins = old.fins;
         }
@@ -235,8 +245,8 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         case KEY_FIN_SENSOR:
             if (down) {
-                emit(&o, ACT_FINS, TGT_FINS, 0, c->live.fins < 0 ? 2 : !c->live.fins);
-                if (c->live.fins >= 0) c->live.fins = !c->live.fins;
+                emit(&o, ACT_FINS, TGT_FINS, 0, c->fin_sensor < 0 ? 2 : !c->fin_sensor);
+                if (c->fin_sensor >= 0) c->fin_sensor = !c->fin_sensor;
             }
             break;
         case KEY_TAKE:
@@ -313,11 +323,9 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
                            stby = preset == c->standby.body || preset == c->standby.eyes; break;
             case TGT_BODY: live = preset == c->live.body; stby = preset == c->standby.body; break;
             case TGT_EYES: live = preset == c->live.eyes; stby = preset == c->standby.eyes; break;
-            case TGT_FINS: live = n <= 2 && c->live.fins == (n == 1);
-                           stby = n <= 2 && c->standby.fins == (n == 1); break;
+            case TGT_FINS: live = preset == c->live.fins; stby = preset == c->standby.fins; break;
         }
         uint32_t col = c->page ? C_PAGE2 : C_IDLE;
-        if (c->target == TGT_FINS && n > 2) col = C_OFF;
         if (live && stby) col = C_BOTH;
         else if (live) col = C_LIVE;
         else if (stby) col = C_STANDBY;
@@ -333,7 +341,7 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     rgb[KEY_LATCH] = c->down[KEY_LATCH] ? 0xffffff : (c->num_bump != KEY_NONE || c->take_preview) ? (blink ? 0xffd000 : 0x403400) : C_IDLE;
     rgb[KEY_BLACKOUT] = c->down[KEY_BLACKOUT] ? 0xff0000 : 0x300000;
     rgb[KEY_FLASH] = c->down[KEY_FLASH] ? 0xffffff : 0x303030;
-    rgb[KEY_FIN_SENSOR] = c->live.fins == 1 ? 0x00c040 : c->live.fins == 0 ? 0x302000 : C_OFF;
+    rgb[KEY_FIN_SENSOR] = c->fin_sensor == 1 ? 0x00c040 : c->fin_sensor == 0 ? 0x302000 : C_OFF;
     // TAKE: green while Standby differs from Live (blinking), dim when they match.
     rgb[KEY_TAKE] = c->take_preview ? 0xffffff : ctl_standby_diff(c) ? (blink ? C_STANDBY : dim(C_STANDBY, 25)) : C_IDLE;
     rgb[KEY_UNLOCK] = c->down[KEY_UNLOCK] ? 0x40ff40 : 0x002000;

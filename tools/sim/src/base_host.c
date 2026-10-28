@@ -9,10 +9,11 @@ static ctl_t ctl;
 
 void base_init(unsigned autolock_ms) { ctl_init(&ctl, autolock_ms); }
 
-void base_set_live(int body, int eyes, int fins, int brightness)
+// fins: the fin preset (0 following the body); fin_sensor: the fins follow their angle sensor
+void base_set_live(int body, int eyes, int fins, int brightness, int fin_sensor)
 {
     const ctl_scene_t live = { (int16_t)body, (int16_t)eyes, (int8_t)fins };
-    ctl_set_live(&ctl, &live, (uint8_t)brightness);
+    ctl_set_live(&ctl, &live, (uint8_t)brightness, fin_sensor);
 }
 
 // Actions as 4 ints each: type, target, bump, value. Returns how many.

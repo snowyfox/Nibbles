@@ -135,6 +135,42 @@ work in 2D (see above); to go back to 1D, follow
 `wled/backup/20260926-1850-pre-2d/REVERT.md` (delete `/ledmap.json`, reboot;
 tested on the bench).
 
+## Fin presets (2026-10-28; the usermod part not yet built or tested)
+
+The fins can run their own effect while the body keeps its preset. The map
+(`tools/sim/make_ledmap.py`) has a **fin panel**, 25 x 34 cells of 10 mm, to
+the right of the side view (columns 70-94). The body's segment stays on
+columns 0-69.
+
+- **Fin presets** are WLED presets **101-116** (fin preset 1-16 on the
+  base's keypad; `NL_FIN_PRESET_BASE` in `shared/nibbles_link`). Each one
+  is a segment on the fin panel, saved with **only that segment checked**
+  ("Checked segments only" in WLED's save dialog, segment bounds on,
+  brightness off), so it leaves the body alone. Bounds:
+  `{"id":1,"start":70,"stop":95,"startY":0,"stopY":34}`.
+- **Preset 100** = the fins follow the body: a preset that only switches
+  that segment off (`{"seg":[{"id":1,"stop":0}]}`).
+- **Body presets** saved the normal way (all segments) switch the fin
+  segment off, so they put the fins back to following the body; save them
+  with only the body segment checked to keep the fins' preset.
+- **Projection**, per fin preset: add `"nibbles":{"finproj":"side"}` or
+  `"top"` to the preset's JSON (WLED's preset editor, API mode).
+  - **Side:** the panel is the fins seen from starboard, like the side
+    view; at equal angles both fins land on the same cells.
+  - **Top:** seen from above, nose to the right, port in the upper half and
+    starboard in the lower.
+
+  Either way each fin LED's spot moves with the fin's hinge angle (or sits
+  at the modelled angle while FIN SENSOR has it locked).
+- **The usermod:**
+  - reports the body's preset in its telemetry and the fins' in
+    `NL_MSG_FIN_STATE` (`fin_preset`, `fin_proj`);
+  - runs fin bumps (`NL_TARGET_FINS`) beside body bumps;
+  - puts the fins' preset back after a body bump;
+  - queues its own preset applies (WLED keeps only one waiting).
+- **Where:** this runs where the effects are drawn: the main board in the
+  main board / display setup below. The display controller stays 1D.
+
 ## Main board and display (tested 2026-10-23)
 The controller (a classic ESP32 without PSRAM) renders the 2D map at only
 ~38 fps with ~70 KB free. Tested split: a faster **main** WLED renders

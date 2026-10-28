@@ -17,7 +17,7 @@ typedef enum {
     KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
                      // held first, then a number: cue that preset in Standby; + TAKE: Standby = Live
     KEY_BLACKOUT,    // bump while held
-    KEY_FIN_SENSOR,  // tap: fin LEDs follow the fins, or stay at the modelled angle (live)
+    KEY_FIN_SENSOR,  // tap: fin LEDs follow the fins' real angle, or stay at the modelled angle (live)
     KEY_TAKE,        // held: show Standby while held; + a tap of LATCH: swap Standby and Live
     KEY_FLASH,       // bump while held
     KEY_UNLOCK,      // hold: lock or unlock the keypad
@@ -25,10 +25,10 @@ typedef enum {
 } ctl_key_t;
 
 typedef enum {
-    TGT_ALL = 0,     // body and eyes (and fins, where it applies)
-    TGT_BODY,        // WLED
+    TGT_ALL = 0,     // the whole shark: body and eyes on one preset, the fins following the body
+    TGT_BODY,        // WLED's body segment
     TGT_EYES,
-    TGT_FINS,
+    TGT_FINS,        // WLED's fin segment (fin presets)
 } ctl_target_t;
 
 // What the shark shows (Live) or will show (Standby). Presets are 1-based on
@@ -36,14 +36,14 @@ typedef enum {
 typedef struct {
     int16_t body;
     int16_t eyes;
-    int8_t fins;     // 1 follow the fins, 0 locked at the model angle, -1 not known
+    int8_t fins;     // fin preset 1..16 (WLED preset NL_FIN_PRESET_BASE + n), 0 following the body, -1 not known
 } ctl_scene_t;
 
 typedef enum {
-    ACT_PRESET,      // target (TGT_BODY or TGT_EYES), value = preset (1-based)
-    ACT_FINS,        // value = 0 locked, 1 follow, 2 toggle
+    ACT_PRESET,      // target (TGT_BODY, TGT_EYES or TGT_FINS), value = preset (1-based; fins: 0 = follow the body)
+    ACT_FINS,        // the fins' angle sensor: value = 0 locked at the model angle, 1 follow, 2 toggle
     ACT_BRIGHTNESS,  // value = 0..255 (WLED; the eyes follow it)
-    ACT_BUMP,        // slot (TGT_BODY or TGT_EYES), bump = NL_BUMP_* action, value = arg
+    ACT_BUMP,        // slot (TGT_BODY, TGT_EYES or TGT_FINS), bump = NL_BUMP_* action, value = arg (fins: fin preset)
     ACT_BUMP_END,    // slot
 } ctl_act_type_t;
 
@@ -62,6 +62,7 @@ typedef struct {
     ctl_scene_t live, standby;
     bool have_live, standby_set;     // standby_set: Standby has been filled from Live once
     uint8_t brightness;              // WLED's, from telemetry
+    int8_t fin_sensor;               // the fins follow their angle sensor: 1, 0, -1 not known
     ctl_target_t target;             // latched target
     ctl_target_t target_before;      // to go back to after a held target key
     ctl_key_t target_key;            // target key being held, or KEY_NONE
@@ -77,14 +78,14 @@ typedef struct {
     ctl_key_t num_bump;              // number key held (bumping its preset), or KEY_NONE
     int num_n, num_preset;           // its number (1-8) and preset (with the page) when pressed
     bool take_preview;               // TAKE is down and the Standby bumps are on
-    uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, 1 << TGT_EYES) with a bump on
+    uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on
 } ctl_t;
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms);
 
 // Telemetry: what the shark shows now (fields 0 / -1 where not known yet).
 // The first complete picture also fills Standby.
-void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness);
+void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness, int fin_sensor);
 
 // A key went down or up. Returns how many actions it wrote to out (at most CTL_MAX_ACTIONS).
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out);

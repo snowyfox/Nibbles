@@ -646,7 +646,7 @@ static void fmt_preset(char *out, size_t n, int preset, const char *name)
     else snprintf(out, n, "Preset %d", preset);
 }
 
-static void fill_scene(scene_panel_t *sp, const ctl_scene_t *sc, const char *body, const char *eyes, int bri,
+static void fill_scene(scene_panel_t *sp, const ctl_scene_t *sc, const char *body, const char *eyes, const char *fins, int bri,
                        uint8_t bright_rows)
 {
     char text[40];
@@ -654,7 +654,8 @@ static void fill_scene(scene_panel_t *sp, const ctl_scene_t *sc, const char *bod
     lv_label_set_text(sp->val[0], text);
     fmt_preset(text, sizeof(text), sc->eyes, eyes);
     lv_label_set_text(sp->val[1], text);
-    lv_label_set_text(sp->val[2], sc->fins < 0 ? "--" : sc->fins ? "follow" : "locked");
+    if (sc->fins > 0) fmt_preset(text, sizeof(text), sc->fins, fins);   // a fin preset
+    lv_label_set_text(sp->val[2], sc->fins < 0 ? "--" : sc->fins ? text : "body");
     if (bri >= 0) lv_label_set_text_fmt(sp->val[3], "%d%%", (bri * 100 + 127) / 255);
     for (int i = 0; i < 3; i++)
         lv_obj_set_style_text_color(sp->val[i], lv_color_hex(bright_rows & (1 << (i + 1)) ? COL_TEXT : COL_DIM), 0);
@@ -736,9 +737,9 @@ static void main_update(const display_status_t *s)
     else lv_label_set_text(m.line4, "");
 
     // LIVE and STANDBY
-    fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->wled_fresh ? s->brightness : -1, 0xff);
+    fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);
     lv_label_set_text(m.live.note, s->wled_fresh || s->eyes_fresh ? "" : "not heard");
-    fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, -1, s->diff);
+    fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, s->stby_fins, -1, s->diff);
     lv_label_set_text(m.stby.val[3], s->diff ? "hold TAKE" : "same as Live");
     lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
     lv_label_set_text(m.stby.note, s->take_preview ? "PREVIEW" : "");

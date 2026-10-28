@@ -321,7 +321,7 @@ class Base:
         await send_to(writer, json.dumps({"base": msg}).encode(), 0x1)
 
     async def message(self, writer, m):
-        if "live" in m:            # what the page's WLED and eyes show: [body, eyes, fins, brightness]
+        if "live" in m:            # what the page's WLED and eyes show: [body, eyes, fin preset, brightness, fin sensor]
             self.lib.base_set_live(*[int(x) for x in m["live"]])
         if "key" in m and m["key"] in self.names:
             self.owner = writer

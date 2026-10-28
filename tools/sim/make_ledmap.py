@@ -28,6 +28,19 @@ A position (y, z) is over cell (round((y - u0 + ox) / cell - 0.5),
 round((v1 - z + oy) / cell - 0.5)), as for the mapped LEDs; turning a fin to
 calibrated angle a is a turn of (modelled - a) degrees about the turn axis.
 
+Fin panel (the fins' own segment): a region to the right of the side view,
+--fin-panel-mm cells, with no LEDs mapped in it. A preset that switches a
+segment on there gives the fins their own effect: the usermod places each fin
+LED in the panel by its hinge angle and shows the panel's colour there, in
+one of two projections (set per preset, {"nibbles":{"finproj":"side"|"top"}}):
+side, the fins seen from starboard (both fins land on the same cells at equal
+angles), or top, seen from above with the nose to the right (port in the
+upper half, starboard in the lower). "finpanel" in the file (ignored by WLED):
+  [px, py, pw, ph, mm_per_cell, side_y0, side_z1, top_y0, top_x0]
+A position is at panel cell (px + (y - side_y0) / mm, py + (side_z1 - z) / mm)
+seen from the side, or (px + (y - top_y0) / mm, py + (x - top_x0) / mm) from
+above (cell centres at +0.5, as for the side view).
+
 Memory: WLED keeps about 10 bytes per matrix cell (frame buffer, segment
 buffer, map), so --cells sets the RAM cost: 2400 cells ~ 24 KB. The shark's
 controller has no PSRAM and ~72 KB free, so keep it modest and check the free
@@ -96,6 +109,7 @@ def place(items, pos, grid, reach=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cells", type=int, default=2400, help="about how many matrix cells (RAM ~10 bytes each)")
+    ap.add_argument("--fin-panel-mm", type=float, default=10.0, help="fin panel cell size (0: no fin panel)")
     args = ap.parse_args()
 
     layout = json.load(open(LAYOUT))
@@ -155,6 +169,34 @@ def main():
     height += extra
     assert height <= 255
 
+    # The fin panel: big enough for both projections of the whole swing.
+    finpanel = None
+    if args.fin_panel_mm > 0 and layout.get("fin_hinges"):
+        swing = []
+        for h in layout["fin_hinges"]:
+            c = ch[h["channel"]]
+            for deg in range(-90, 91, 5):
+                a = math.radians(h["model_deg"] - deg)
+                swing += [turned(leds[i], h["point"], norm(h["turn"]), a) for i in range(c["start"], c["start"] + c["count"])]
+        mm = args.fin_panel_mm
+        ys, zs, xs = [q[1] for q in swing], [q[2] for q in swing], [q[0] for q in swing]
+        pw = int((max(ys) - min(ys)) / mm) + 2
+        ph = int(max(max(zs) - min(zs), max(xs) - min(xs)) / mm) + 2
+        px, py = width, 0
+        assert px + pw <= 255 and ph <= 255
+        # each projection centred in the panel
+        side_y0 = min(ys) - (pw * mm - (max(ys) - min(ys))) / 2
+        side_z1 = max(zs) + (ph * mm - (max(zs) - min(zs))) / 2
+        top_y0 = side_y0
+        top_x0 = min(xs) - (ph * mm - (max(xs) - min(xs))) / 2
+        finpanel = [px, py, pw, ph, mm, side_y0, side_z1, top_y0, top_x0]
+        for row in grid:
+            row += [-1] * pw
+        if ph > height:
+            grid += [[-1] * (width + pw) for _ in range(ph - height)]
+            height = ph
+        width += pw
+
     # Fin geometry for following the real fin angle (see the module docstring).
     num = lambda x: ("%.3f" % x).rstrip("0").rstrip(".")
     fingeo = [num(cell), num(u0), num(v1), num(ox), num(oy), str(len(layout.get("fin_hinges", [])))]
@@ -172,6 +214,8 @@ def main():
         f.write('{"n":"Nibbles side (starboard view)","width":%d,"height":%d,\n' % (width, height))
         f.write('"copy":%s,\n' % json.dumps(copy).replace(" ", ""))
         f.write('"fingeo":[%s],\n' % ",".join(fingeo))
+        if finpanel:
+            f.write('"finpanel":[%s],\n' % ",".join(num(v) for v in finpanel))
         f.write('"map":[\n')
         f.write(",\n".join(",".join(str(c) for c in row) for row in grid))
         f.write("]}\n")
@@ -207,6 +251,11 @@ def main():
           f"median {m[len(m) // 2]:.2f}, 90% within {m[int(len(m) * .9)]:.2f}, max {m[-1]:.2f} cells")
     print(f"partners copied by the usermod: {len(pm)} LEDs (channels {in_body} and {port_fin}), "
           f"from their partner's cell: median {pm[len(pm) // 2]:.2f}, max {pm[-1]:.2f} cells")
+    if finpanel:
+        px, py, pw, ph = finpanel[:4]
+        print(f"fin panel: {pw} x {ph} cells of {finpanel[4]:g} mm at column {px}; segments: body "
+              f'{{"id":0,"start":0,"stop":{px},"startY":0,"stopY":{height}}}, fins '
+              f'{{"id":1,"start":{px},"stop":{px + pw},"startY":{py},"stopY":{py + ph}}}')
     print(f"copy: {copy}   -> {os.path.relpath(out, REPO)} and ledmap_preview.svg")
 
 

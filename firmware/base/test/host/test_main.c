@@ -29,7 +29,7 @@ static bool has(ctl_act_type_t type, int target, int value)
 static void live(ctl_t *c, int body, int eyes, int fins)
 {
     const ctl_scene_t s = { body, eyes, fins };
-    ctl_set_live(c, &s, 128);
+    ctl_set_live(c, &s, 128, 1);
 }
 
 static void test_standby_fills_from_live(void)
@@ -39,10 +39,10 @@ static void test_standby_fills_from_live(void)
     CHECK(!c.standby_set);
     live(&c, 3, 0, -1);           // WLED heard first
     CHECK(c.standby.body == 3 && c.standby.eyes == 0 && !c.standby_set);
-    live(&c, 3, 5, 1);            // then the eyes
-    CHECK(c.standby.body == 3 && c.standby.eyes == 5 && c.standby.fins == 1 && c.standby_set);
+    live(&c, 3, 5, 0);            // then the eyes (the fins follow the body)
+    CHECK(c.standby.body == 3 && c.standby.eyes == 5 && c.standby.fins == 0 && c.standby_set);
     CHECK(ctl_standby_diff(&c) == 0);
-    live(&c, 4, 5, 1);            // Live moving on by itself doesn't drag Standby along
+    live(&c, 4, 5, 0);            // Live moving on by itself doesn't drag Standby along
     CHECK(c.standby.body == 3);
 }
 
@@ -50,7 +50,7 @@ static void test_number_is_a_bump(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     // ALL: holding 4 shows preset 4 on both while held, and nothing else changes
     press(&c, KEY_NUM4);
     CHECK(has(ACT_BUMP, TGT_BODY, 4) && has(ACT_BUMP, TGT_EYES, 4));
@@ -65,7 +65,7 @@ static void test_latch_number(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_NUM5);
     press(&c, KEY_LATCH);
     CHECK(has(ACT_PRESET, TGT_BODY, 5) && has(ACT_PRESET, TGT_EYES, 5));
@@ -80,7 +80,7 @@ static void test_take_is_a_bump_latch_swaps(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_NUM3);                        // 3 Live, 1 in Standby
     press(&c, KEY_LATCH);
     release(&c, KEY_LATCH);
@@ -105,7 +105,7 @@ static void test_take_with_nothing_staged(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     CHECK(press(&c, KEY_TAKE) == 0);
     CHECK(release(&c, KEY_TAKE) == 0);
     CHECK(press(&c, KEY_LATCH) == 0);           // LATCH with nothing held: nothing
@@ -116,7 +116,7 @@ static void test_latch_first_cues_standby(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_LATCH);
     CHECK(tap(&c, KEY_NUM7) == 0 && nacts == 0);
     release(&c, KEY_LATCH);
@@ -132,7 +132,7 @@ static void test_targets(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     tap(&c, KEY_EYES);                          // tap latches the target
     CHECK(c.target == TGT_EYES);
     press(&c, KEY_NUM6);
@@ -147,20 +147,22 @@ static void test_targets(void)
     release(&c, KEY_NUM3);
     release(&c, KEY_BODY);
     CHECK(c.target == TGT_EYES && c.live.body == 1);
-    // FINS: hold 2 + LATCH = locked
+    // FINS: a number bumps that fin preset; LATCH keeps it
     tap(&c, KEY_FINS);
-    CHECK(press(&c, KEY_NUM2) == 0);            // nothing to bump
+    press(&c, KEY_NUM2);
+    CHECK(nacts == 1 && acts[0].type == ACT_BUMP && acts[0].target == TGT_FINS && acts[0].value == 2);
     press(&c, KEY_LATCH);
-    CHECK(has(ACT_FINS, TGT_FINS, 0) && c.live.fins == 0 && c.standby.fins == 1);
+    CHECK(has(ACT_PRESET, TGT_FINS, 2) && c.live.fins == 2 && c.standby.fins == 0);
     release(&c, KEY_LATCH);
     release(&c, KEY_NUM2);
+    CHECK(c.live.body == 1);                    // the body kept its preset
 }
 
 static void test_pages_and_brightness(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     tap(&c, KEY_PAGE);
     CHECK(c.page == 1);
     press(&c, KEY_NUM1);
@@ -180,11 +182,39 @@ static void test_pages_and_brightness(void)
     CHECK(c.page == 0);
 }
 
+static void test_fins_and_all(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 4);                          // the fins on their own preset 4
+    // ALL + a number: the whole shark, so the fins show the body's preset while held...
+    press(&c, KEY_NUM6);
+    CHECK(has(ACT_BUMP, TGT_BODY, 6) && has(ACT_BUMP, TGT_EYES, 6) && has(ACT_BUMP, TGT_FINS, 0));
+    // ...and LATCH puts them back to following the body
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_PRESET, TGT_FINS, 0) && c.live.fins == 0 && c.standby.fins == 4);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM6);
+    // TAKE swaps the fins too
+    press(&c, KEY_TAKE);
+    CHECK(has(ACT_BUMP, TGT_FINS, 4));
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_PRESET, TGT_FINS, 4) && c.live.fins == 4);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_TAKE);
+    // FIN SENSOR: the angle sensor, apart from the presets
+    tap(&c, KEY_FIN_SENSOR);
+    press(&c, KEY_FIN_SENSOR);
+    CHECK(has(ACT_FINS, TGT_FINS, 1) || has(ACT_FINS, TGT_FINS, 0));
+    release(&c, KEY_FIN_SENSOR);
+    CHECK(c.live.fins == 4);
+}
+
 static void test_flash_blackout(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_FLASH);
     CHECK(has(ACT_BUMP, TGT_BODY, 0) && has(ACT_BUMP, TGT_EYES, 0) && acts[0].bump == NL_BUMP_FLASH);
     release(&c, KEY_FLASH);
@@ -199,7 +229,7 @@ static void test_lock(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_UNLOCK);
     now += CTL_LOCK_HOLD_MS;
     ctl_tick(&c, now, acts);
@@ -231,7 +261,7 @@ static void test_autolock(void)
 {
     ctl_t c;
     ctl_init(&c, 60000);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     tap(&c, KEY_NUM2);
     now += 59000;
     ctl_tick(&c, now, acts);
@@ -245,7 +275,7 @@ static void test_leds(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
-    live(&c, 1, 1, 1);
+    live(&c, 1, 1, 0);
     press(&c, KEY_LATCH);
     tap(&c, KEY_NUM3);
     release(&c, KEY_LATCH);
@@ -298,6 +328,7 @@ int main(void)
     test_latch_first_cues_standby();
     test_targets();
     test_pages_and_brightness();
+    test_fins_and_all();
     test_flash_blackout();
     test_lock();
     test_autolock();

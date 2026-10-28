@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="700" height="430" style="background:#fff">
-<rect width="700" height="410" fill="#f4f4f4"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="950" height="430" style="background:#fff">
+<rect width="950" height="410" fill="#f4f4f4"/>
 <rect x="242" y="2" width="6" height="6" fill="none" stroke="#1e88e5"/>
 <line x1="255.0" y1="5.0" x2="270.2" y2="5.3" stroke="#999" stroke-width="0.6"/>
 <rect x="251" y="1" width="8" height="8" fill="#e53935"/>
@@ -1597,4 +1597,4 @@
 <rect x="462" y="342" width="6" height="6" fill="none" stroke="#43a047"/>
 <rect x="472" y="342" width="6" height="6" fill="none" stroke="#1e88e5"/>
 <rect x="482" y="342" width="6" height="6" fill="none" stroke="#43a047"/>
-<text x="4" y="425" font-size="12" font-family="sans-serif">70x41 cells of 8.9 mm; solid: mapped (channel 1 red, starboard fin 5 orange), outline: copied partners</text></svg>
+<text x="4" y="425" font-size="12" font-family="sans-serif">95x41 cells of 8.9 mm; solid: mapped (channel 1 red, starboard fin 5 orange), outline: copied partners</text></svg>

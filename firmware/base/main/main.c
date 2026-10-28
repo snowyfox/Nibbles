@@ -110,20 +110,21 @@ static void send_preset_index(int index) { send_cmd_to(NL_TARGET_EYES, NL_OP_PRE
 // STOP. One slot per receiver (the eyes and WLED each filter on their own
 // target bit), so the two can show different things at once, as TAKE's
 // preview does. Keys, pads, the bump button and serial all use the slots.
-enum { SLOT_EYES = 0, SLOT_WLED = 1 };
+enum { SLOT_EYES = 0, SLOT_WLED = 1, SLOT_FINS = 2, SLOTS };
 typedef struct {
     nl_bump_t b;
     bool on;
     int64_t next_hold;
 } bump_slot_t;
-static bump_slot_t slots[2];
+static bump_slot_t slots[SLOTS];
+static const uint8_t slot_target[SLOTS] = { NL_TARGET_EYES, NL_TARGET_WLED, NL_TARGET_FINS };
 static uint16_t bump_id;
 static SemaphoreHandle_t bump_mutex;
 
 static void slot_start(int i, uint8_t action, int arg)
 {
     xSemaphoreTake(bump_mutex, portMAX_DELAY);
-    slots[i].b = (nl_bump_t){ .id = ++bump_id, .target = i == SLOT_EYES ? NL_TARGET_EYES : NL_TARGET_WLED,
+    slots[i].b = (nl_bump_t){ .id = ++bump_id, .target = slot_target[i],
                               .action = action, .phase = NL_BUMP_START, .intensity = 255, .arg = (int16_t)arg };
     slots[i].on = true;
     slots[i].next_hold = esp_timer_get_time() + NL_BUMP_KEEPALIVE_MS * 1000LL;
@@ -159,7 +160,7 @@ static void bump_keepalive(void)
 {
     const int64_t now = esp_timer_get_time();
     xSemaphoreTake(bump_mutex, portMAX_DELAY);
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < SLOTS; i++) {
         if (!slots[i].on || now < slots[i].next_hold) continue;
         slots[i].b.phase = NL_BUMP_HOLD;
         slots[i].next_hold = now + NL_BUMP_KEEPALIVE_MS * 1000LL;
@@ -246,12 +247,17 @@ static void do_ctl_action(const ctl_action_t *a)
     switch (a->type) {
         case ACT_PRESET:
             if (a->target == TGT_BODY) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, a->value);
+            else if (a->target == TGT_FINS) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, NL_FIN_PRESET_BASE + a->value);
             else send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, a->value - 1);
             break;
         case ACT_FINS:       send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, a->value); break;
+        // Fin presets are WLED presets NL_FIN_PRESET_BASE + n (the base itself: follow the body).
         case ACT_BRIGHTNESS: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a->value); break;
-        case ACT_BUMP:       slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value); break;
-        case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED); break;
+        case ACT_BUMP:
+            if (a->target == TGT_FINS) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value);
+            else slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value);
+            break;
+        case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED); break;
     }
 }
 
@@ -509,13 +515,13 @@ void app_main(void)
 
         // What the shark shows, for Live; remember the names that come with it.
         const ctl_scene_t live = { .body = wfresh ? w.preset : 0, .eyes = fresh ? e.preset + 1 : 0,
-                                   .fins = ffresh ? fs.follow : -1 };
+                                   .fins = ffresh ? fs.fin_preset : -1 };
         if (wfresh && w.preset && w.name[0]) memcpy(wled_names[w.preset], w.name, NL_NAME_LEN);
         if (fresh && e.preset + 1 < 64 && e.name[0]) memcpy(eye_names[e.preset + 1], e.name, NL_NAME_LEN);
         ctl_action_t acts[CTL_MAX_ACTIONS];
         uint32_t rgb[KEY_COUNT];
         xSemaphoreTake(ctl_mutex, portMAX_DELAY);
-        ctl_set_live(&ctl, &live, wfresh ? w.bri : 0);
+        ctl_set_live(&ctl, &live, wfresh ? w.bri : 0, ffresh ? fs.follow : -1);
         const int nacts = ctl_tick(&ctl, now_ms(), acts);
         ctl_led_colors(&ctl, now_ms(), rgb);
         const ctl_t c = ctl;
@@ -567,6 +573,9 @@ void app_main(void)
         name_of(ds.live_eyes, eye_names, 64, c.live.eyes);
         name_of(ds.stby_body, wled_names, 256, c.standby.body);
         name_of(ds.stby_eyes, eye_names, 64, c.standby.eyes);
+        name_of(ds.live_fins, wled_names, 256, c.live.fins > 0 ? NL_FIN_PRESET_BASE + c.live.fins : 0);
+        name_of(ds.stby_fins, wled_names, 256, c.standby.fins > 0 ? NL_FIN_PRESET_BASE + c.standby.fins : 0);
+        ds.fin_sensor = c.fin_sensor;
         const uint8_t found = keypad_boards_found();
         ds.keypads_found = __builtin_popcount(found);
         ds.keypads_total = keypad_board_count();

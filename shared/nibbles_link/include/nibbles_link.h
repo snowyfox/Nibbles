@@ -138,6 +138,7 @@ typedef struct NL_PACKED {
 typedef enum {
     NL_TARGET_EYES = 1,
     NL_TARGET_WLED = 2,
+    NL_TARGET_FINS = 4,     // bumps only: WLED's fin segment (fin presets, see NL_FIN_PRESET_BASE)
 } nl_target_t;
 
 typedef enum {
@@ -192,7 +193,7 @@ typedef enum {
 
 typedef struct NL_PACKED {
     uint16_t id;            // one id per press; all messages of a press share it
-    uint8_t target;         // nl_target_t (bit mask: NL_TARGET_EYES | NL_TARGET_WLED)
+    uint8_t target;         // nl_target_t (bit mask: NL_TARGET_EYES | NL_TARGET_WLED | NL_TARGET_FINS)
     uint8_t action;         // nl_bump_action_t
     uint8_t phase;          // nl_bump_phase_t
     uint8_t intensity;      // 0..255
@@ -295,10 +296,26 @@ typedef enum {
     NL_FIN_SRC_LOCKED = 3,  // following is off: the modelled angle
 } nl_fin_src_t;
 
+// Fin presets: the fins' own segment (a panel beside the side view in WLED's
+// 2D map) runs its own effect. WLED preset NL_FIN_PRESET_BASE + n (n 1..16)
+// is fin preset n, saved with only the fin segment; NL_FIN_PRESET_BASE itself
+// switches the fin segment off, so the fins show the body's colours again.
+// Preset commands and bumps for the fins use those ids (bumps with
+// NL_TARGET_FINS, so a fin bump and a body bump can be held together).
+#define NL_FIN_PRESET_BASE  100
+#define NL_FIN_PRESET_COUNT 16
+
+typedef enum {
+    NL_FIN_PROJ_SIDE = 0,   // fin panel seen from starboard: both fins on the same cells at equal angles
+    NL_FIN_PROJ_TOP = 1,    // seen from above: port and starboard on opposite halves
+} nl_fin_proj_t;
+
 typedef struct NL_PACKED {
     uint8_t follow;         // 1: fin LEDs follow the fins' angle (NL_OP_FIN_FOLLOW)
     int16_t angle_cdeg[2];  // angle in use per fin ([NL_FIN_PORT], [NL_FIN_STARBOARD]), or NL_FIN_NONE
     uint8_t source[2];      // nl_fin_src_t per fin
+    uint8_t fin_preset;     // the fin preset showing (1..NL_FIN_PRESET_COUNT), 0 = the fins follow the body
+    uint8_t fin_proj;       // nl_fin_proj_t of the fin panel in use
 } nl_fin_state_t;
 
 // ---------------------------------------------------------------- streamed lights

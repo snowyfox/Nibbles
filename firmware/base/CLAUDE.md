@@ -53,12 +53,17 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   `test/host`): like a video switcher. Live is what the shark shows (from
   telemetry); Standby is staged.
   - Targets ALL / BODY (WLED) / EYES / FINS: tap to select, hold for just
-    the keys pressed meanwhile.
+    the keys pressed meanwhile. **FINS** works like the others with fin
+    presets (WLED presets 101-116, the fins' own segment; see
+    `wled/README.md`, "Fin presets"): numbers bump them, LATCH keeps them.
+    **ALL** is the whole shark: body and eyes on that preset and the fins
+    following the body (fin preset 0; while a number is held, a fins bump
+    to preset 100 shows that). Fins get their own bump slot.
   - **Everything is a bump until it's latched** (the user's design,
     2026-10-28): holding a number key shows that preset on the target
     (page 2: 9-16) and it goes back on release. Tap **LATCH** while holding
     it to keep it: commands go out, then the bumps let go, and the old Live
-    drops into Standby. FINS: 1 = follow the fins, 2 = locked (no bump).
+    drops into Standby.
   - **TAKE** held shows Standby (bumps) and goes back on release; tap LATCH
     while holding it to keep the swap (Standby then holds the old Live, so
     TAKE + LATCH again goes back).

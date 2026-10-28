@@ -29,6 +29,16 @@
 //   Info page and passed to the simulator. With the 2D map, a fin whose angle
 //   is known follows it: each of its LEDs shows the side view's colour at the
 //   spot it is really over ("fingeo" in /ledmap.json, from make_ledmap.py).
+// - Fin presets (the fins' own segment): the 2D map has a fin panel beside the
+//   side view ("finpanel" in /ledmap.json). While a segment is on there, each
+//   fin LED shows the panel's colour where it sits by its hinge angle (or the
+//   modelled angle), seen from the side or from above ({"nibbles":{"finproj":
+//   "side"|"top"}}, usually stored in the fin preset). WLED presets
+//   NL_FIN_PRESET_BASE + n are fin presets (saved with only the fin segment);
+//   NL_FIN_PRESET_BASE switches the segment off. The body's preset and the
+//   fins' are tracked apart: telemetry reports the body's, NL_MSG_FIN_STATE
+//   the fins'. Fin bumps (NL_TARGET_FINS) run beside body bumps, and this
+//   usermod's preset applies go through a queue (WLED keeps one waiting).
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -155,6 +165,21 @@ class NibblesUsermod : public Usermod {
     nl_bump_rx_t bumps;
     String savedState;
     bool haveSaved = false;
+    // Fin presets and fin bumps (NL_TARGET_FINS), beside the body's.
+    nl_bump_rx_t finBumps;
+    bool finBumpOn = false;
+    uint8_t finBumpRestore = 0;   // the fin preset to go back to (NL_FIN_PRESET_BASE: following the body)
+    uint8_t finPreset = 0;        // 1..16 showing, 0 = following the body
+    uint8_t finAtBump = 0;        // finPreset when the body bump began
+    uint8_t bodyPreset = 0;       // the last preset outside the fin presets
+    int lastSeenPreset = -1;
+    unsigned long panelOffSince = 0;
+    // WLED holds one waiting preset; ours queue here, the next once the last has landed.
+    uint8_t presetQueue[4] = { 0 };
+    uint8_t presetQueueLen = 0;
+    uint8_t presetWaiting = 0;
+    unsigned long presetIssuedAt = 0;
+    static bool isFinPreset(int id) { return id >= NL_FIN_PRESET_BASE && id <= NL_FIN_PRESET_BASE + NL_FIN_PRESET_COUNT; }
     uint8_t savedPreset = 0;
     int pendingPreset = 0, pendingBri = -1;  // commands received during a bump
 
@@ -260,6 +285,7 @@ class NibblesUsermod : public Usermod {
       uint16_t *dst;              // the matrix cell that drives each LED
       uint16_t *src;              // the cell each LED is over at srcDeg
       float srcDeg;               // NAN: not worked out yet
+      uint8_t srcMode;            // 0 the side view, 1 + nl_fin_proj_t the fin panel
     };
     FinFollow finFollow[2] = {};
     uint8_t finFollowCount = 0;
@@ -267,6 +293,11 @@ class NibblesUsermod : public Usermod {
     uint32_t *finColors = nullptr;
     uint16_t finColorsLen = 0;
     uint8_t finFollowing = 0;     // bit per fin following its angle on the last frame
+    // The fin panel: px, py, pw, ph, mm per cell, side_y0, side_z1, top_y0, top_x0 (see make_ledmap.py).
+    float finPanel[9] = { 0 };
+    bool haveFinPanel = false;
+    bool finPanelOn = false;      // a segment is on in the panel
+    uint8_t finProj = NL_FIN_PROJ_SIDE;
 
     // One number from a JSON array; false at its closing bracket or the end.
     static bool nextNumber(File &f, float &out) {
@@ -323,10 +354,30 @@ class NibblesUsermod : public Usermod {
         else freeFinFollow();
       }
       f.close();
+      haveFinPanel = false;
+      f = WLED_FS.open(F("/ledmap.json"), "r");
+      if (!f) return;
+      if (f.find("\"finpanel\":[")) {
+        bool ok = true;
+        for (int i = 0; i < 9 && ok; i++) ok = nextNumber(f, finPanel[i]);
+        haveFinPanel = ok && finPanel[2] >= 1 && finPanel[3] >= 1 && finPanel[4] > 0;
+      }
+      f.close();
     }
 
-    // Swing a fin to deg and find the cell each of its LEDs is over now.
-    void placeFin(FinFollow &f, float deg, unsigned W, unsigned H) {
+    // Whether a segment is on in the fin panel (the fins then show it).
+    bool panelSegmentOn() const {
+      if (!haveFinPanel) return false;
+      for (unsigned i = 0; i < strip.getSegmentsNum(); i++) {
+        const Segment &sg = strip.getSegment(i);
+        if (sg.isActive() && sg.on && sg.start >= (unsigned)finPanel[0]) return true;
+      }
+      return false;
+    }
+
+    // Swing a fin to deg and find the cell each of its LEDs is over now: in the
+    // side view (mode 0), or in the fin panel seen from the side or from above.
+    void placeFin(FinFollow &f, float deg, unsigned W, unsigned H, uint8_t mode) {
       const float a = (f.modelDeg - deg) * (float)M_PI / 180.0f, cs = cosf(a), sn = sinf(a);
       const float *k = f.turn, *c = f.hinge;
       const float cell = finGrid[0], u0 = finGrid[1], v1 = finGrid[2], ox = finGrid[3], oy = finGrid[4];
@@ -337,12 +388,29 @@ class NibblesUsermod : public Usermod {
         const float kx[3] = { k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0] };
         float q[3];
         for (int j = 0; j < 3; j++) q[j] = c[j] + v[j] * cs + kx[j] * sn + k[j] * kv * (1 - cs);
-        long x = lroundf((q[1] - u0 + ox) / cell - 0.5f), y = lroundf((v1 - q[2] + oy) / cell - 0.5f);
-        x = x < 0 ? 0 : x >= (long)W ? (long)W - 1 : x;
-        y = y < 0 ? 0 : y >= (long)H ? (long)H - 1 : y;
+        long x, y, x0 = 0, y0 = 0, x1 = W - 1, y1 = H - 1;
+        if (mode == 0) {
+          x = lroundf((q[1] - u0 + ox) / cell - 0.5f);
+          y = lroundf((v1 - q[2] + oy) / cell - 0.5f);
+        } else {
+          const float *P = finPanel;
+          x0 = (long)P[0]; y0 = (long)P[1]; x1 = x0 + (long)P[2] - 1; y1 = y0 + (long)P[3] - 1;
+          if (mode == 1 + NL_FIN_PROJ_TOP) {   // from above, nose right, starboard down
+            x = x0 + lroundf((q[1] - P[7]) / P[4] - 0.5f);
+            y = y0 + lroundf((q[0] - P[8]) / P[4] - 0.5f);
+          } else {                             // from starboard, like the side view
+            x = x0 + lroundf((q[1] - P[5]) / P[4] - 0.5f);
+            y = y0 + lroundf((P[6] - q[2]) / P[4] - 0.5f);
+          }
+        }
+        x = x < x0 ? x0 : x > x1 ? x1 : x;
+        y = y < y0 ? y0 : y > y1 ? y1 : y;
+        x = x >= (long)W ? (long)W - 1 : x;
+        y = y >= (long)H ? (long)H - 1 : y;
         f.src[i] = (uint16_t)(y * W + x);
       }
       f.srcDeg = deg;
+      f.srcMode = mode;
     }
 
     // Fins whose angle is known: gather the colours under each LED (from the
@@ -353,11 +421,16 @@ class NibblesUsermod : public Usermod {
       const unsigned long now = millis();
       const unsigned W = Segment::maxWidth, H = Segment::maxHeight;
       unsigned n = 0;
+      const uint8_t mode = finPanelOn ? 1 + finProj : 0;
       for (int k = 0; k < finFollowCount; k++) {
         FinFollow &f = finFollow[k];
         float deg;
-        if (!f.dst || !f.src || f.side > 1 || !finAngle(f.side, now, deg)) continue;
-        if (isnan(f.srcDeg) || fabsf(deg - f.srcDeg) >= 0.2f) placeFin(f, deg, W, H);
+        if (!f.dst || !f.src || f.side > 1) continue;
+        if (!finAngle(f.side, now, deg)) {
+          if (!mode) continue;    // the side view: the static map already has the fin at its modelled angle
+          deg = f.modelDeg;       // the panel: locked, or no sensor
+        }
+        if (isnan(f.srcDeg) || f.srcMode != mode || fabsf(deg - f.srcDeg) >= 0.2f) placeFin(f, deg, W, H, mode);
         // NoMap: most cells have no LED of their own, and getPixelColor() reads those as black.
         for (unsigned i = 0; i < f.count && n < finColorsLen; i++) finColors[n++] = strip.getPixelColorNoMap(f.src[i]);
         finFollowing |= 1 << k;
@@ -504,7 +577,7 @@ class NibblesUsermod : public Usermod {
       const nl_audio_t &a = lastAudioOut;
       const nl_eye_telemetry_t &e = eyes;
       int len = snprintf(buf, sizeof(buf),
-        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"on\":%s,\"limit_ma\":%u,\"pack_mv\":%u}", bri, currentPreset,
+        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"finps\":%d,\"finproj\":%d,\"on\":%s,\"limit_ma\":%u,\"pack_mv\":%u}", bri, bodyPreset, finPreset, finProj,
         bri ? "true" : "false", (unsigned)BusManager::ablMilliampsMax(), power.heard ? (unsigned)power.pack_mv : 0u);
       if (lastAudioOutAt && now - lastAudioOutAt < 1000)
         len += snprintf(buf + len, sizeof(buf) - len,
@@ -641,6 +714,8 @@ class NibblesUsermod : public Usermod {
           st.angle_cdeg[f] = NL_FIN_NONE;
         }
       }
+      st.fin_preset = finPreset;
+      st.fin_proj = finProj;
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_FIN_STATE, &st, sizeof(st));
     }
 
@@ -648,15 +723,15 @@ class NibblesUsermod : public Usermod {
       nl_wled_telemetry_t t = {};
       t.on = bri > 0;
       t.bri = bri ? bri : briLast;
-      t.preset = currentPreset;
+      t.preset = bodyPreset;   // the fins' preset goes in NL_MSG_FIN_STATE
       t.fx = strip.getMainSegment().mode;
       t.palette = strip.getMainSegment().palette;
       t.channel = WiFi.channel();
       t.fps = strip.getFps();
       t.leds = strip.getLengthTotal();
       refreshPresets();  // only reads the file after presets change
-      auto it = presetNames.find(currentPreset);
-      if (currentPreset && it != presetNames.end()) strlcpy(t.name, it->second.c_str(), sizeof(t.name));
+      auto it = presetNames.find(bodyPreset);
+      if (bodyPreset && it != presetNames.end()) strlcpy(t.name, it->second.c_str(), sizeof(t.name));
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_WLED_TELEMETRY, &t, sizeof(t));
     }
 
@@ -729,14 +804,19 @@ class NibblesUsermod : public Usermod {
       refreshPresets();
       switch (cmd.op) {
         case NL_OP_PRESET_SET:  id = cmd.arg; break;
-        case NL_OP_PRESET_NEXT: id = stepPreset(currentPreset, +1); break;
-        case NL_OP_PRESET_PREV: id = stepPreset(currentPreset, -1); break;
+        case NL_OP_PRESET_NEXT: id = stepPreset(bodyPreset, +1); break;
+        case NL_OP_PRESET_PREV: id = stepPreset(bodyPreset, -1); break;
         default: return NL_ACK_UNSUPPORTED;
       }
       return presetExists(id) ? NL_ACK_OK : NL_ACK_BAD_ARG;
     }
 
     void applyCommand(int id) {
+      if (id > 0 && isFinPreset(id)) {   // the fins: their own bump, else at once
+        if (finBumpOn) finBumpRestore = id;
+        else queuePreset(id);
+        return;
+      }
       // During a bump the saved state comes back on release, which would undo
       // the command: keep it for then instead.
       if (haveSaved) {
@@ -745,7 +825,7 @@ class NibblesUsermod : public Usermod {
         return;
       }
       if (id > 0) {
-        applyPreset(id, CALL_MODE_DIRECT_CHANGE);
+        queuePreset(id);
       } else {
         bri = -id;
         stateUpdated(CALL_MODE_DIRECT_CHANGE);
@@ -775,10 +855,11 @@ class NibblesUsermod : public Usermod {
     void bumpBegin(const nl_bump_t &b) {
       haveSaved = saveState();
       savedPreset = currentPreset;
+      finAtBump = finPreset;
       bumpCount++;
       if (b.action == NL_BUMP_PRESET) {
         refreshPresets();
-        if (presetExists(b.arg)) applyPreset(b.arg, CALL_MODE_DIRECT_CHANGE);
+        if (presetExists(b.arg)) queuePreset(b.arg);
         return;
       }
       // Instant change (tt = transition 0 for this call only), every segment.
@@ -799,15 +880,20 @@ class NibblesUsermod : public Usermod {
     void bumpEnd() {
       if (!haveSaved) return;
       haveSaved = false;
+      bool refin = finPreset != finAtBump;   // the fins changed preset during the bump
       if (pendingPreset) {
-        applyPreset(pendingPreset, CALL_MODE_DIRECT_CHANGE);  // a preset command came in during the bump
+        refin = true;                // the body's new preset leaves the fin segment as the bump left it
+        queuePreset(pendingPreset);  // a preset command came in during the bump
       } else {
         // Put everything back instantly.
         String json = savedState;
         if (json.startsWith("{")) json = "{\"tt\":0," + json.substring(1);
         applyJson(json);
         currentPreset = savedPreset;  // restoring the state clears it; it's the same look
+        lastSeenPreset = currentPreset;
       }
+      // Put the fins' own preset back over the restored state (not under a fin bump: that restores itself).
+      if (haveFinPanel && refin && !finBumpOn) queuePreset(finPreset ? NL_FIN_PRESET_BASE + finPreset : NL_FIN_PRESET_BASE);
       if (pendingBri >= 0) {
         bri = pendingBri;
         stateUpdated(CALL_MODE_DIRECT_CHANGE);
@@ -827,6 +913,58 @@ class NibblesUsermod : public Usermod {
       if (ev != NL_BUMP_EV_NONE)
         Serial.printf("nibbles: bump %s (action %d)\n", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
 #endif
+    }
+
+    // Fin bumps: show a fin preset while held, then go back to the fins' own.
+    void finBumpEvent(nl_bump_event_t ev) {
+      if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
+        if (finBumpOn) queuePreset(finBumpRestore);
+        finBumpOn = false;
+      }
+      if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
+        const nl_bump_t &b = finBumps.bump;
+        refreshPresets();
+        if (b.action == NL_BUMP_PRESET && isFinPreset(b.arg) && presetExists(b.arg)) {
+          finBumpRestore = finPreset ? NL_FIN_PRESET_BASE + finPreset : NL_FIN_PRESET_BASE;
+          finBumpOn = true;
+          bumpCount++;
+          queuePreset(b.arg);
+        }
+      }
+    }
+
+    // Our preset applies, one at a time (WLED keeps a single waiting preset).
+    void queuePreset(uint8_t id) {
+      if (!presetExists(id)) { refreshPresets(); if (!presetExists(id)) return; }
+      if (presetQueueLen && presetQueue[presetQueueLen - 1] == id) return;
+      if (presetQueueLen == sizeof(presetQueue)) memmove(presetQueue, presetQueue + 1, --presetQueueLen);
+      presetQueue[presetQueueLen++] = id;
+    }
+
+    void presetQueueLoop(unsigned long now) {
+      if (presetWaiting && currentPreset != presetWaiting && now - presetIssuedAt < 300) return;  // not landed yet
+      presetWaiting = 0;
+      if (!presetQueueLen) return;
+      presetWaiting = presetQueue[0];
+      memmove(presetQueue, presetQueue + 1, --presetQueueLen);
+      presetIssuedAt = now;
+      applyPreset(presetWaiting, CALL_MODE_DIRECT_CHANGE);
+    }
+
+    // Which preset is the body's and which the fins', as presets land.
+    void trackPresets(unsigned long now) {
+      if (currentPreset != lastSeenPreset) {
+        lastSeenPreset = currentPreset;
+        if (isFinPreset(currentPreset)) {
+          if (!finBumpOn) finPreset = currentPreset - NL_FIN_PRESET_BASE;
+        } else if (currentPreset > 0 && !haveSaved) {
+          bodyPreset = currentPreset;
+        }
+      }
+      // A body preset saved with every segment switches the fin segment off: the fins follow the body again.
+      if (finPanelOn || !haveFinPanel) panelOffSince = 0;
+      else if (!panelOffSince) panelOffSince = now;
+      else if (finPreset && !finBumpOn && now - panelOffSince > 500) finPreset = 0;
     }
 
     void handle(const RxItem &it) {
@@ -857,6 +995,7 @@ class NibblesUsermod : public Usermod {
         nl_bump_t b;
         memcpy(&b, pl, sizeof(b));
         if (b.target & NL_TARGET_WLED) bumpEvent(nl_bump_rx_message(&bumps, &b, millis()));
+        if (b.target & NL_TARGET_FINS) finBumpEvent(nl_bump_rx_message(&finBumps, &b, millis()));
       } else if (h.type == NL_MSG_CMD && len == sizeof(nl_cmd_t)) {
         nl_cmd_t cmd;
         memcpy(&cmd, pl, sizeof(cmd));
@@ -883,6 +1022,7 @@ class NibblesUsermod : public Usermod {
     void setup() override {
       nl_power_limiter_init(&power, &powerModel);
       nl_bump_rx_init(&bumps);
+      nl_bump_rx_init(&finBumps);
       nl_ar_init(&arState);
       nl_stream_gaps_init(&streamGaps);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
@@ -907,6 +1047,8 @@ class NibblesUsermod : public Usermod {
       streamLoop();  // also without the radio, for the Info page
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
+      presetQueueLoop(millis());
+      trackPresets(millis());
       if (!radioUp()) return;
       for (;;) {
         RxItem it;
@@ -922,6 +1064,7 @@ class NibblesUsermod : public Usermod {
         handle(it);
       }
       bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
+      finBumpEvent(nl_bump_rx_tick(&finBumps, millis()));
       const unsigned long now = millis();
       if (now - lastHeartbeat >= ANCHOR_HEARTBEAT_MS) {
         lastHeartbeat = now;
@@ -955,6 +1098,7 @@ class NibblesUsermod : public Usermod {
     // Called by WLED after the frame is put together, before it goes to the LEDs.
     void handleOverlayDraw() override {
       if (!strip.isMatrix) return;
+      finPanelOn = panelSegmentOn();
       gatherFinColors();
       if (copyPairs)
         for (unsigned i = 0; i < copyPairCount; i++)
@@ -1071,6 +1215,9 @@ class NibblesUsermod : public Usermod {
       // from the base ("mv":0 forgets: back to the ceiling).
       // {"nibbles":{"finfollow":true|false}}: fin LEDs follow the fins, or stay put
       if (!root[F("nibbles")][F("finfollow")].isNull()) setFinFollow(root[F("nibbles")][F("finfollow")].as<bool>());
+      // {"nibbles":{"finproj":"side"|"top"}}: how the fin panel is laid over the fins (stored in fin presets)
+      const char *proj = root[F("nibbles")][F("finproj")] | (const char *)nullptr;
+      if (proj) finProj = !strcmp(proj, "top") ? NL_FIN_PROJ_TOP : NL_FIN_PROJ_SIDE;
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
       JsonObject sw = root[F("nibbles")][F("finsweep")];
       if (!sw.isNull()) {

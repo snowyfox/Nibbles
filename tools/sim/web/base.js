@@ -24,7 +24,10 @@ const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4 };
 const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
 const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET' };
 
-let baseState = null, baseEvent = 'Nibbles base', wledPs = 0, wledPresetNames = {}, finFollow = true;
+// Fin presets: WLED preset FIN_BASE + n (FIN_BASE itself: the fins follow the body); see nibbles_link.h.
+const FIN_BASE = 100, FIN_COUNT = 16;
+const isFinPreset = (id) => id >= FIN_BASE && id <= FIN_BASE + FIN_COUNT;
+let baseState = null, baseEvent = 'Nibbles base', wledPs = 0, wledPresetNames = {}, finFollow = true, finPreset = 0;
 let baseLightsMw = 0, baseBumping = 0;
 const baseKeyEls = {};
 
@@ -80,14 +83,20 @@ function baseEyeName(n) { return eyesReady && n > 0 && n <= sim._eyes_preset_cou
 
 setInterval(() => {
   if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ base: { live: [wledPs > 0 ? wledPs : 0, baseEyePreset(), finFollow ? 1 : 0, +$('bri').value] } }));
+  ws.send(JSON.stringify({ base: { live: [wledPs > 0 ? wledPs : 0, baseEyePreset(), finPreset, +$('bri').value, finFollow ? 1 : 0] } }));
   if (!finFollow && lightsFrom !== 'shark') finsFromShark({ finfollow: false });   // the bench has no usermod: lock them here
 }, 250);
 
 // The WLED preset and fin following, from app.js's polling or the live shark's mirror.
-function baseWledState(state) { if (state && 'ps' in state && !bumpSaved.on) wledPs = state.ps; }   // a bump's preset isn't Live
+// WLED's last applied preset: a fin preset is the fins', anything else the body's (a bump's isn't Live).
+function baseWledState(state) {
+  if (!state || !('ps' in state) || bumpSaved.on || finBumpSaved) return;
+  if (isFinPreset(state.ps)) finPreset = state.ps - FIN_BASE;
+  else if (state.ps > 0) wledPs = state.ps;
+}
 function baseFromShark(m) {
-  if (m.wled && 'ps' in m.wled && !bumpSaved.on) wledPs = m.wled.ps;
+  if (m.wled && 'ps' in m.wled && !bumpSaved.on) wledPs = m.wled.ps;   // the usermod reports body and fins apart
+  if (m.wled && 'finps' in m.wled && !finBumpSaved) finPreset = m.wled.finps;
   if ('finfollow' in m) finFollow = !!m.finfollow;
 }
 function baseWledPresets(presets) {
@@ -112,6 +121,18 @@ async function wledBump(action, arg) {
           : action === 2 ? { on: false, tt: 0 } : { ps: arg, tt: 0 };
   await wledPost(s).catch(() => {});
 }
+// Fin bumps: a fin preset while held, then the fins' own again.
+let finBumpSaved = null;
+async function finBump(n) {
+  if (finBumpSaved === null) finBumpSaved = finPreset;
+  await wledPost({ ps: FIN_BASE + n, tt: 0 }).catch(() => {});
+}
+async function finBumpEnd() {
+  if (finBumpSaved === null) return;
+  const back = finBumpSaved;
+  finBumpSaved = null;
+  await wledPost({ ps: FIN_BASE + back, tt: 0 }).catch(() => {});
+}
 async function wledBumpEnd() {
   if (!bumpSaved.on) return;
   bumpSaved.on = false;
@@ -122,7 +143,12 @@ async function wledBumpEnd() {
 
 function baseActions(list) {
   for (const [type, target, bump, value] of list) {
-    if (type === ACT.PRESET && target === TGT.BODY) {
+    if (type === ACT.PRESET && target === TGT.FINS) {
+      if (finBumpSaved !== null) finBumpSaved = value;   // under a fin bump: its release lands here
+      else wledPost({ ps: FIN_BASE + value }).catch(() => {});
+      finPreset = value;
+      baseEvent = value ? `fins preset ${value}` : 'fins follow the body';
+    } else if (type === ACT.PRESET && target === TGT.BODY) {
       wledPost({ ps: value }).catch(() => {});
       wledPs = value;
       if (bumpSaved.on) bumpSaved.ps = value;   // a TAKE under its preview bump: the release keeps the new preset
@@ -138,6 +164,10 @@ function baseActions(list) {
       $('bri').value = value;
       $('bri').oninput();
       baseEvent = `brightness ${Math.round(value * 100 / 255)}%`;
+    } else if (type === ACT.BUMP && target === TGT.FINS) {
+      finBump(value);
+    } else if (type === ACT.BUMP_END && target === TGT.FINS) {
+      finBumpEnd();
     } else if (type === ACT.BUMP && target === TGT.BODY) {
       wledBump(bump, value);
     } else if (type === ACT.BUMP) {
@@ -187,7 +217,7 @@ function baseDraw() {
   const rows = (pre, sc, bri, diff) => {
     $(pre + '0').textContent = preset(sc[0], wledPresetNames[sc[0]]);
     $(pre + '1').textContent = preset(sc[1], baseEyeName(sc[1]));
-    $(pre + '2').textContent = sc[2] < 0 ? '--' : sc[2] ? 'follow' : 'locked';
+    $(pre + '2').textContent = sc[2] < 0 ? '--' : sc[2] ? preset(sc[2], wledPresetNames[FIN_BASE + sc[2]]) : 'body';
     for (let i = 0; i < 3; i++) $(pre + i).style.color = diff === null || diff & (1 << (i + 1)) ? 'var(--text)' : '#4a505a';
     if (bri !== null) $(pre + '3').textContent = `${Math.round(bri * 100 / 255)}%`;
   };

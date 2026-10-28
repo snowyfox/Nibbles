@@ -387,7 +387,7 @@ static void test_power_limiter(void)
     CHECK(nl_power_limiter_tick(&l, 600001) == 0, "pack_mv 0 forgets: back out of the way");
     CHECK(sizeof(nl_battery_t) == 7, "battery message is 7 bytes (got %u)", (unsigned)sizeof(nl_battery_t));
     CHECK(sizeof(nl_fin_pose_t) == 8, "fin pose message is 8 bytes (got %u)", (unsigned)sizeof(nl_fin_pose_t));
-    CHECK(sizeof(nl_fin_state_t) == 7, "fin state message is 7 bytes (got %u)", (unsigned)sizeof(nl_fin_state_t));
+    CHECK(sizeof(nl_fin_state_t) == 9, "fin state message is 9 bytes (got %u)", (unsigned)sizeof(nl_fin_state_t));
 }
 
 static void test_stream_gaps(void)
