@@ -19,6 +19,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "power_math.h"
 
 static const char *TAG = "display";
 
@@ -299,8 +300,8 @@ typedef struct {
 } card_t;
 
 static card_t eyes_card, wled_card, radio_card;
-static lv_obj_t *screen, *pages, *page0, *page1, *pad_flash, *pad_black;
-static lv_obj_t *event_labels[2];  // one per page
+static lv_obj_t *screen, *pages, *pagem, *page0, *page1, *pad_flash, *pad_black;  // main, details, presets
+static lv_obj_t *event_labels[3];  // one per page
 #define event_label event_labels[0]
 static volatile int page_wanted = -1;  // page change asked for over serial
 
@@ -510,11 +511,250 @@ static void build_preset_page(void)
 
 static void set_event_text(const char *text, uint32_t color)
 {
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
         if (!event_labels[i]) continue;
         lv_obj_set_style_text_color(event_labels[i], lv_color_hex(color), 0);
         lv_label_set_text(event_labels[i], text);
     }
+}
+
+// ------------------------------------------------------------------ main page
+// Portrait, top to bottom: POWER (pack, dock, charging, lights), LIVE (what
+// the shark shows), STANDBY (what TAKE will show; rows that differ are
+// bright), then the keypad: target, page, lock, links and the event line.
+#define COL_LIVE     0xff3030
+#define COL_STANDBY  0x30e060
+#define COL_FINS     0xff8000
+
+typedef struct {
+    lv_obj_t *panel, *title, *note, *val[4], *key[4];
+} scene_panel_t;
+
+static struct {
+    lv_obj_t *power, *source, *pct, *volts, *amps, *bar, *line1, *line2, *line3, *line4;
+    scene_panel_t live, stby;
+    lv_obj_t *target, *target_name, *page, *shift, *lock, *links, *keys;
+} m;
+
+static lv_obj_t *make_panel(lv_obj_t *parent, int y, int h, uint32_t border)
+{
+    lv_obj_t *p = lv_obj_create(parent);
+    lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(p, 4, y);
+    lv_obj_set_size(p, 164, h);
+    lv_obj_set_style_bg_color(p, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_radius(p, 10, 0);
+    lv_obj_set_style_pad_all(p, 0, 0);
+    lv_obj_set_style_border_color(p, lv_color_hex(border), 0);
+    lv_obj_set_style_border_width(p, border ? 2 : 0, 0);
+    return p;
+}
+
+static lv_obj_t *at(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int x, int y, int w)
+{
+    lv_obj_t *l = label(parent, font, color);
+    lv_obj_set_pos(l, x, y);
+    if (w) {
+        lv_obj_set_width(l, w);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    }
+    return l;
+}
+
+// The STANDBY panel and the target box work as keys by touch too (TAKE, and the next target).
+static void on_key_touch(lv_event_t *ev)
+{
+    const ctl_key_t key = (ctl_key_t)(intptr_t)lv_event_get_user_data(ev);
+    const lv_event_code_t code = lv_event_get_code(ev);
+    if (!action_cb) return;
+    if (code == LV_EVENT_PRESSED) action_cb(DISPLAY_KEY, true, key);
+    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) action_cb(DISPLAY_KEY, false, key);
+}
+
+static void touch_key(lv_obj_t *obj, ctl_key_t key)
+{
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(obj, on_key_touch, LV_EVENT_PRESSED, (void *)(intptr_t)key);
+    lv_obj_add_event_cb(obj, on_key_touch, LV_EVENT_RELEASED, (void *)(intptr_t)key);
+    lv_obj_add_event_cb(obj, on_key_touch, LV_EVENT_PRESS_LOST, (void *)(intptr_t)key);
+}
+
+static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t color)
+{
+    static const char *keys[] = { "BODY", "EYES", "FINS", "BRI" };
+    static const uint32_t key_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_TITLE };
+    sp->panel = make_panel(pagem, y, 132, color);
+    sp->title = at(sp->panel, &lv_font_montserrat_16, color, 8, 5, 0);
+    lv_label_set_text(sp->title, title);
+    sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 92, 7, 66);
+    lv_obj_set_style_text_align(sp->note, LV_TEXT_ALIGN_RIGHT, 0);
+    for (int i = 0; i < 4; i++) {
+        sp->key[i] = at(sp->panel, &lv_font_montserrat_14, key_cols[i], 8, 30 + i * 25, 0);
+        lv_label_set_text(sp->key[i], keys[i]);
+        sp->val[i] = at(sp->panel, &lv_font_montserrat_16, COL_TEXT, 54, 28 + i * 25, 104);
+    }
+}
+
+static void build_main_page(void)
+{
+    m.power = make_panel(pagem, 4, 168, 0);
+    lv_obj_t *t = at(m.power, &lv_font_montserrat_16, COL_OK, 8, 5, 0);
+    lv_label_set_text(t, "POWER");
+    m.source = at(m.power, &lv_font_montserrat_14, COL_TITLE, 76, 6, 80);
+    lv_obj_set_style_text_align(m.source, LV_TEXT_ALIGN_RIGHT, 0);
+    m.pct = at(m.power, &lv_font_montserrat_40, COL_TEXT, 8, 26, 0);
+    m.volts = at(m.power, &lv_font_montserrat_16, COL_TEXT, 92, 32, 64);
+    m.amps = at(m.power, &lv_font_montserrat_16, COL_TITLE, 92, 52, 64);
+    lv_obj_set_style_text_align(m.volts, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_align(m.amps, LV_TEXT_ALIGN_RIGHT, 0);
+    m.bar = lv_bar_create(m.power);
+    lv_obj_set_pos(m.bar, 8, 76);
+    lv_obj_set_size(m.bar, 148, 10);
+    lv_bar_set_range(m.bar, 0, 100);
+    lv_obj_set_style_bg_color(m.bar, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    m.line1 = at(m.power, &lv_font_montserrat_16, COL_TEXT, 8, 92, 148);
+    m.line2 = at(m.power, &lv_font_montserrat_14, COL_TITLE, 8, 114, 148);
+    m.line3 = at(m.power, &lv_font_montserrat_14, COL_TITLE, 8, 132, 148);
+    m.line4 = at(m.power, &lv_font_montserrat_14, COL_BAD, 8, 150, 148);
+
+    scene_panel(&m.live, 178, "LIVE", COL_LIVE);
+    scene_panel(&m.stby, 316, "STANDBY", COL_STANDBY);
+    touch_key(m.stby.panel, KEY_TAKE);
+
+    m.target = make_panel(pagem, 454, 50, 0);
+    m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
+    m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
+    m.shift = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
+    lv_obj_set_style_text_align(m.page, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_align(m.shift, LV_TEXT_ALIGN_RIGHT, 0);
+    touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
+
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 510, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 532, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 550, 156);
+    event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
+    lv_obj_set_width(event_labels[2], 156);
+    lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(event_labels[2], 8, 572);
+    lv_label_set_text(event_labels[2], "Nibbles base");
+}
+
+static void fmt_preset(char *out, size_t n, int preset, const char *name)
+{
+    if (preset <= 0) snprintf(out, n, "--");
+    else if (name && name[0]) snprintf(out, n, "%d %s", preset, name);
+    else snprintf(out, n, "Preset %d", preset);
+}
+
+static void fill_scene(scene_panel_t *sp, const ctl_scene_t *sc, const char *body, const char *eyes, int bri,
+                       uint8_t bright_rows)
+{
+    char text[40];
+    fmt_preset(text, sizeof(text), sc->body, body);
+    lv_label_set_text(sp->val[0], text);
+    fmt_preset(text, sizeof(text), sc->eyes, eyes);
+    lv_label_set_text(sp->val[1], text);
+    lv_label_set_text(sp->val[2], sc->fins < 0 ? "--" : sc->fins ? "follow" : "locked");
+    if (bri >= 0) lv_label_set_text_fmt(sp->val[3], "%d%%", (bri * 100 + 127) / 255);
+    for (int i = 0; i < 3; i++)
+        lv_obj_set_style_text_color(sp->val[i], lv_color_hex(bright_rows & (1 << (i + 1)) ? COL_TEXT : COL_DIM), 0);
+}
+
+static uint32_t target_col(int t)
+{
+    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS };
+    return t >= 0 && t <= 3 ? cols[t] : COL_DIM;
+}
+
+static void fmt_ma(char *out, size_t n, int ma)
+{
+    const int a = ma < 0 ? -ma : ma;
+    snprintf(out, n, "%s%d.%d A", ma < 0 ? "-" : "", a / 1000, a % 1000 / 100);
+}
+
+static void main_update(const display_status_t *s)
+{
+    const power_status_t *p = &s->power;
+    char text[48], a[16];
+    // POWER
+    const bool board = p->have_charger || p->have_monitor || p->have_expander;
+    if (p->sim) { lv_label_set_text(m.source, "SIM"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_WLED), 0); }
+    else if (!board) { lv_label_set_text(m.source, "no board"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_DIM), 0); }
+    else if (p->docked) { lv_label_set_text(m.source, "DOCK"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_OK), 0); }
+    else { lv_label_set_text(m.source, "BATTERY"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_WARN), 0); }
+    if (p->pack_pct >= 0) {
+        lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
+        lv_bar_set_value(m.bar, p->pack_pct, LV_ANIM_OFF);
+        const uint32_t c = p->pack_pct > 40 ? COL_OK : p->pack_pct > 15 ? COL_WARN : COL_BAD;
+        lv_obj_set_style_bg_color(m.bar, lv_color_hex(c), LV_PART_INDICATOR);
+        lv_label_set_text_fmt(m.volts, "%d.%02d V", p->pack_mv / 1000, p->pack_mv % 1000 / 10);
+    } else {
+        lv_label_set_text(m.pct, "--");
+        lv_bar_set_value(m.bar, 0, LV_ANIM_OFF);
+        lv_label_set_text(m.volts, "");
+    }
+    if (p->have_charger) { fmt_ma(a, sizeof(a), p->ibat_ma); lv_label_set_text(m.amps, a); }
+    else lv_label_set_text(m.amps, "");
+    // What the pack is doing
+    if (!board && !p->sim) {
+        lv_label_set_text(m.line1, "Power board not found");
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_DIM), 0);
+    } else if (p->have_charger && !p->charger_ok) {
+        lv_label_set_text(m.line1, "Charger NOT set up");
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_BAD), 0);
+    } else if (p->docked && p->have_charger) {
+        const chg_state_t cs = (chg_state_t)p->chg_state;
+        if (cs == CHG_DONE) snprintf(text, sizeof(text), "Dock: pack full");
+        else if (cs == CHG_NOT_CHARGING) snprintf(text, sizeof(text), "Dock: not charging");
+        else { fmt_ma(a, sizeof(a), p->ibat_ma); snprintf(text, sizeof(text), "Charging %s", a); }
+        lv_label_set_text(m.line1, text);
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
+    } else if (p->docked) {
+        lv_label_set_text(m.line1, "On the dock");
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
+    } else if (p->runtime_min >= 0) {
+        lv_label_set_text_fmt(m.line1, "%d h %02d min left", p->runtime_min / 60, p->runtime_min % 60);
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(p->runtime_min > 45 ? COL_TEXT : COL_WARN), 0);
+    } else {
+        lv_label_set_text(m.line1, "On the pack");
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_TEXT), 0);
+    }
+    if (p->have_monitor) {
+        fmt_ma(a, sizeof(a), p->light_ma);
+        lv_label_set_text_fmt(m.line2, "Lights %d W  %s", (p->light_mw + 500) / 1000, a);
+    } else lv_label_set_text(m.line2, "Lights: no reading");
+    if (p->have_charger) {
+        char cell[16] = "--";
+        if (p->cell_c10 != INT16_MIN) snprintf(cell, sizeof(cell), "%d\xc2\xb0" "C", (p->cell_c10 + 5) / 10);
+        lv_label_set_text_fmt(m.line3, "Cells %s  chg %d\xc2\xb0" "C", cell, (p->die_c10 + 5) / 10);
+    } else lv_label_set_text(m.line3, "");
+    // Problems, worst first
+    if (p->lights_off) lv_label_set_text(m.line4, "LIGHTS SWITCHED OFF");
+    else if (p->have_expander && !p->efuse_pg) lv_label_set_text(m.line4, "eFuse tripped / off");
+    else if (p->fault0 || p->fault1) lv_label_set_text_fmt(m.line4, "Charger fault %02x %02x", p->fault0, p->fault1);
+    else if (p->ts_flags & 0x09) lv_label_set_text(m.line4, (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge");
+    else lv_label_set_text(m.line4, "");
+
+    // LIVE and STANDBY
+    fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->wled_fresh ? s->brightness : -1, 0xff);
+    lv_label_set_text(m.live.note, s->wled_fresh || s->eyes_fresh ? "" : "not heard");
+    fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, -1, s->diff);
+    lv_label_set_text(m.stby.val[3], s->diff ? "press TAKE" : "same as Live");
+    lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
+    lv_label_set_text(m.stby.note, s->take_preview ? "PREVIEW" : "");
+    lv_obj_set_style_text_color(m.stby.note, lv_color_hex(COL_STANDBY), 0);
+    lv_obj_set_style_bg_color(m.stby.panel, lv_color_hex(s->take_preview ? 0x0c3a18 : COL_CARD), 0);
+
+    // Keypad
+    lv_obj_set_style_bg_color(m.target, lv_color_hex(s->keys_locked ? COL_DIM : target_col(s->target)), 0);
+    lv_label_set_text(m.target_name, ctl_target_name((ctl_target_t)s->target));
+    lv_label_set_text(m.page, s->page ? "9-16" : "1-8");
+    lv_label_set_text(m.shift, s->shift ? "SHIFT" : "");
+    lv_label_set_text(m.lock, s->keys_locked ? "LOCKED: hold UNLOCK" : "");
+    lv_label_set_text_fmt(m.links, "Eyes %s  WLED %s  ch %d", s->eyes_fresh ? "ok" : "--", s->wled_fresh ? "ok" : "--", s->channel);
+    lv_obj_set_style_text_color(m.links, lv_color_hex(s->eyes_fresh && s->wled_fresh ? COL_TITLE : COL_WARN), 0);
+    if (s->keypads_found) lv_label_set_text_fmt(m.keys, "Keypads %d of %d", s->keypads_found, s->keypads_total);
+    else lv_label_set_text(m.keys, "No keypads found");
 }
 
 static void ui_build(void)
@@ -526,12 +766,15 @@ static void ui_build(void)
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_post(screen, true, 0);  // the bump outline goes over the pages
 
-    // Two pages side by side: swipe left for the preset grid, right to come back.
+    // Three pages side by side: the main page, swipe left for the preset
+    // grid, again for the details (the radio cards and bump pads).
     pages = lv_tileview_create(screen);
     lv_obj_set_style_bg_opa(pages, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(pages, LV_SCROLLBAR_MODE_OFF);
-    page0 = lv_tileview_add_tile(pages, 0, 0, LV_DIR_RIGHT);
-    page1 = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT);
+    pagem = lv_tileview_add_tile(pages, 0, 0, LV_DIR_RIGHT);
+    page1 = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    page0 = lv_tileview_add_tile(pages, 2, 0, LV_DIR_LEFT);
+    build_main_page();
 
     lv_obj_t *row = lv_obj_create(page0);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -607,6 +850,7 @@ static void set_slider(lv_obj_t *slider, int value, bool enabled)
 
 static void ui_update(const display_status_t *s)
 {
+    main_update(s);
     // Eyes
     card_stale(&eyes_card, !s->eyes_fresh);
     if (s->eyes_fresh) {
@@ -736,6 +980,7 @@ static void display_task(void *arg)
             last_bump = s.bump_action;
         }
         if (page_wanted >= 0) {
+            // pages: 0 main, 1 presets, 2 details (tiles in that order)
             lv_tileview_set_tile_by_index(pages, page_wanted, 0, LV_ANIM_OFF);
             page_wanted = -1;
         }

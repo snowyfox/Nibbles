@@ -12,7 +12,75 @@ charger). Demo code: https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49
 (screen pins: CS 9, PCLK 10, DATA0-3 11-14, RST 21, backlight 8; touch I2C
 SDA 17 / SCL 18 at 0x3B; sensors I2C SDA 47 / SCL 48).
 
-What it does now (`main/main.c`):
+## Version 2 (2026-10-28): power board, keypads, Live / Standby
+
+The base now has three jobs on top of the radio work below, each in its own
+file. Until the hardware exists, all of it can be driven from USB serial.
+
+- **Power board** (`main/power.c`, `power_math.c`): its own I2C bus on the
+  3.49's header (SDA 1, SCL 2, INT 3; dock detect on 5; 100 kHz, shared with
+  the keypads). Finds and re-finds each chip every 2 s:
+  - **BQ25798** (0x6B): at start-up turns the watchdog off (it would reset
+    ICHG and EN_CHG), D+/D- detection off, writes 16.8 V / 2.0 A
+    (`CHG_VREG_MV`, `CHG_ICHG_MA`), optionally lifts the input limit above
+    the ILIM_HIZ pin's 2 A (`CHG_IINDPM_MA`, 0 = leave it), turns the ADC on,
+    and **reads VREG and ICHG back; if they don't match it switches charging
+    off** (EN_CHG = 0) and the screen says "Charger NOT set up". Reads the
+    status, faults and ADC (VBUS, IBUS, VBAT, IBAT, VSYS, TS, die) every
+    200 ms. TS is turned into the cells' temperature for the board's
+    5.23k / 30.1k divider and 103AT NTC.
+  - **INA226** (0x40, checked by its maker and die IDs): 2 mOhm shunt, 1 mA
+    per bit, 16 averages: the lights' voltage, current and power.
+  - **TCA9534** (0x20): P0 LIGHT_OFF, P1 PACK_OFF (outputs, written low = on
+    before they're made outputs), P3 EFUSE_PG. PACK_OFF is only ever set
+    while docked.
+  - The pack's charge (`pack_percent`: a 21700 resting-voltage curve,
+    corrected for sag at 100 mOhm) and the runtime at the present load.
+  - Broadcasts `NL_MSG_BATTERY` every 200 ms (the INA226's voltage and
+    current) for WLED's battery-aware current limit. **`sim on` makes up
+    readings for the screen; those are never broadcast.**
+- **Keypads** (`main/keypad.c`; boards in `hardware/keypad/`): TCA9534A
+  expanders at 0x38-0x3F, read every 10 ms, debounced over two reads,
+  re-found every 2 s; boards that stop answering release their keys. Which
+  switch is which key, and the boards' order on the LED chain, is
+  `KEYPAD_BOARDS` in `config.h`. The SK6812 LEDs run from GPIO 43 (RMT,
+  `espressif/led_strip`), scaled by `KEYPAD_LED_LEVEL` (48/255) to keep the
+  cable's 5 V current low. GPIO 43 is UART0 TX, so the ROM's boot banner
+  can flicker them at power-up.
+- **Live / Standby** (`main/controls.c`, no ESP-IDF calls, host-tested in
+  `test/host`): like a video switcher. Live is what the shark shows (from
+  telemetry); Standby is staged.
+  - Targets ALL / BODY (WLED) / EYES / FINS: tap to select, hold for just
+    the keys pressed meanwhile.
+  - Number keys 1-8 stage that preset for the target in Standby (PAGE
+    flips to 9-16). FINS: 1 = follow the fins, 2 = locked.
+  - **TAKE**: a tap swaps Standby and Live (commands sent, then Standby holds
+    the old Live, so TAKE again goes back). Held longer than 350 ms it only
+    previews: Standby shows as bumps until released. The preview bumps start
+    on press, so a tap shows the new look at once and the commands land
+    under it.
+  - SHIFT + number: bump that preset on the target while held. SHIFT + TAKE:
+    Standby = Live. PAGE + number: brightness in eighths. FLASH and BLACKOUT:
+    bumps while held. FIN SENSOR: fins follow on / off, live.
+  - Hold UNLOCK 1 s to lock or unlock (`KEYPAD_AUTOLOCK_MS` locks after idle).
+  - Key LEDs: the target's Live preset red, Standby green, both amber; the
+    selected target in its colour; TAKE blinks green while Standby differs.
+  - Bumps now have a slot per receiver (eyes, WLED; each filters on its
+    target bit), so the eyes and WLED can bump different presets at once.
+    The pads, the bump button and serial bumps use the same slots.
+- **Main screen** (page 0, portrait): POWER (pack %, bar, volts and amps,
+  dock / battery / simulated, charging or time left, lights' watts, cell and
+  charger temperatures, faults), LIVE (red), STANDBY (green; rows that
+  differ bright; tap it = TAKE), and the target box (tap = next target),
+  page, SHIFT, lock, links, keypads found, the event line. Page 1 is the
+  preset grid, page 2 the old cards and bump pads.
+- Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
+  lists the names: 1-8, all, body, eyes, fins, page, shift, blackout,
+  finsensor, take, flash, unlock), `sim on|off`, `lights on|off`,
+  `power` (logs the power board), `page 0|1|2`.
+- Host tests: `make -C firmware/base/test/host`.
+
+Earlier features, still there (`main/main.c`):
 - Scans for the WLED usermod's anchor heartbeat like the eyes
   (`BASE_IS_ANCHOR 0`). If none is heard for 12 s (`BASE_ANCHOR_FALLBACK_MS`)
   it anchors channel 6 itself, so the eyes still have a channel. It then spends
