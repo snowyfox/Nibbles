@@ -57,6 +57,28 @@ the eye opening; **Head** zooms in on them. Where the screens sit is set in
 `make_layout.py` (`eye_screen_radius_mm`, `eye_screen_x_mm`). Rebuild
 after changing the eye code: `./build.sh` (Emscripten).
 
+## Base station
+The **BASE STATION** card is the base's keypad and screen. The keys run
+through the base firmware's own Live / Standby logic
+(`firmware/base/main/controls.c`): `server.py` builds it with the computer's
+C compiler into `build/libbase.so` (rebuilt when the source changes) and calls
+it through ctypes, so it needs no Emscripten. The page draws the screen like
+the base's main page (`display.c`) and carries out what the logic asks:
+- body (WLED) presets and brightness go to the WLED card's address over its
+  JSON API, as the WLED card's own controls do (the bench simulator, or the
+  live shark); fin following too (`{"nibbles":{"finfollow":..}}` on the
+  shark; the bench has no usermod, so its fins just show locked);
+- the eyes' presets and bumps go to the simulated eyes;
+- WLED bumps are imitated over JSON (flash: white at full brightness;
+  blackout: off; preset: that preset; then back), since on the shark they
+  go by radio.
+
+Click (and hold) the keys, or use the computer's keyboard: 1-8, A all,
+B body, E eyes, F fins, P page, Shift, Space TAKE, X flash, Z blackout,
+S fin sensor, U unlock (hold 1 s). The STANDBY panel works as TAKE by touch.
+POWER is simulated: the pack slider, "On the dock", and the lights' power
+estimated from the LED frames (17 mA per LED at full white, a 90% converter).
+
 ## The live shark
 **Lights: the shark, live** (WLED card) shows exactly what the shark's own
 controller shows, instead of the bench simulator. `server.py` asks the

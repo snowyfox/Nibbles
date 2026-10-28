@@ -38,6 +38,23 @@
   .eyectl label { margin: 0; }
   .eyectl label.check { display: flex; gap: 6px; align-items: center; color: var(--text); font-size: 14px; }
   #eyestatus { flex-wrap: wrap; gap: 4px; }
+  /* base station: its screen (firmware/base display.c, 172 x 640) and keypad */
+  .base { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  #basescreen { position: relative; width: 172px; height: 640px; background: #000; border-radius: 6px; flex: 0 0 auto; overflow: hidden; font-family: Montserrat, -apple-system, sans-serif; }
+  #basescreen .p { position: absolute; left: 4px; width: 164px; background: var(--card); border-radius: 10px; }
+  #basescreen .t { position: absolute; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bsrow { position: absolute; left: 8px; right: 6px; height: 22px; display: flex; gap: 6px; align-items: baseline; }
+  .bsrow b { width: 40px; font-size: 14px; font-weight: 400; flex: 0 0 auto; }
+  .bsrow span { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #basekeys { display: flex; gap: 14px; align-items: flex-start; }
+  .kcol { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .ktitle { color: var(--dim); font-size: 11px; margin-bottom: 2px; }
+  .key { width: 64px; height: 56px; border-radius: 8px; background: #2a2e38; border: 1px solid #3a3f4b; position: relative; cursor: pointer;
+         user-select: none; touch-action: none; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; }
+  .key.down { background: #3d4352; transform: translateY(1px); }
+  .key .led { position: absolute; top: 7px; left: 50%; width: 22px; height: 6px; margin-left: -11px; border-radius: 3px; background: #000; }
+  .key .kl { font-size: 11px; text-align: center; line-height: 1.1; color: var(--text); }
+  .bside { min-width: 200px; max-width: 420px; flex: 1; }
 </style>
 </head>
 <body>
@@ -121,12 +138,71 @@
         <div class="row" style="align-items:end"><button id="eyeflash">FLASH (hold)</button><button id="eyeblack">BLACKOUT (hold)</button></div>
       </div>
     </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:8px;align-items:center">
+        <h2 style="margin:0;flex:1">BASE STATION <span style="text-transform:none;letter-spacing:0">(the base firmware's own keypad logic: Live / Standby)</span></h2>
+      </div>
+      <div class="base">
+        <div id="basescreen">
+          <div class="p" style="top:4px;height:168px">
+            <span class="t" style="left:8px;top:5px;font-size:16px;color:var(--ok)">POWER</span>
+            <span class="t" id="bs_source" style="right:8px;top:6px;font-size:14px"></span>
+            <span class="t" id="bs_pct" style="left:8px;top:22px;font-size:40px"></span>
+            <span class="t" id="bs_volts" style="right:8px;top:32px;font-size:16px"></span>
+            <span class="t" id="bs_amps" style="right:8px;top:52px;font-size:16px;color:var(--dim)"></span>
+            <div style="position:absolute;left:8px;top:76px;width:148px;height:10px;background:#4a505a;border-radius:5px;overflow:hidden"><div id="bs_bar" style="height:100%"></div></div>
+            <span class="t" id="bs_line1" style="left:8px;top:92px;font-size:16px;width:148px"></span>
+            <span class="t" id="bs_line2" style="left:8px;top:114px;font-size:14px;color:var(--dim);width:148px"></span>
+            <span class="t" style="left:8px;top:132px;font-size:14px;color:var(--dim)">Cells 29°C  chg 41°C</span>
+          </div>
+          <div class="p" style="top:178px;height:132px;border:2px solid #ff3030">
+            <span class="t" style="left:8px;top:5px;font-size:16px;color:#ff3030">LIVE</span>
+            <div class="bsrow" style="top:28px"><b style="color:#ff7ad9">BODY</b><span id="bs_l0"></span></div>
+            <div class="bsrow" style="top:53px"><b style="color:#36c8ff">EYES</b><span id="bs_l1"></span></div>
+            <div class="bsrow" style="top:78px"><b style="color:#ff8000">FINS</b><span id="bs_l2"></span></div>
+            <div class="bsrow" style="top:103px"><b style="color:var(--dim)">BRI</b><span id="bs_l3"></span></div>
+          </div>
+          <div class="p" id="bs_stby" style="top:316px;height:132px;border:2px solid #30e060;cursor:pointer" title="TAKE (touch)">
+            <span class="t" style="left:8px;top:5px;font-size:16px;color:#30e060">STANDBY</span>
+            <span class="t" id="bs_preview" style="right:8px;top:7px;font-size:14px;color:#30e060"></span>
+            <div class="bsrow" style="top:28px"><b style="color:#ff7ad9">BODY</b><span id="bs_s0"></span></div>
+            <div class="bsrow" style="top:53px"><b style="color:#36c8ff">EYES</b><span id="bs_s1"></span></div>
+            <div class="bsrow" style="top:78px"><b style="color:#ff8000">FINS</b><span id="bs_s2"></span></div>
+            <div class="bsrow" style="top:103px"><b style="color:var(--dim)">BRI</b><span id="bs_s3"></span></div>
+          </div>
+          <div class="p" id="bs_target" style="top:454px;height:50px">
+            <span class="t" id="bs_tname" style="left:8px;top:8px;font-size:28px;color:#000"></span>
+            <span class="t" id="bs_page" style="right:8px;top:6px;font-size:14px;color:#000"></span>
+            <span class="t" id="bs_shift" style="right:8px;top:26px;font-size:14px;color:#000"></span>
+          </div>
+          <span class="t" id="bs_lock" style="left:8px;top:510px;font-size:16px;color:#ff4d4d"></span>
+          <span class="t" id="bs_links" style="left:8px;top:532px;font-size:14px;color:var(--dim)"></span>
+          <span class="t" style="left:8px;top:550px;font-size:14px;color:var(--dim)">Keypad: simulated</span>
+          <span class="t" id="bs_event" style="left:8px;top:572px;font-size:14px;width:156px"></span>
+        </div>
+        <div id="basekeys"></div>
+        <div class="bside">
+          <label for="basepack">Pack (simulated) <span id="basepackv">70%</span></label>
+          <input id="basepack" type="range" min="0" max="100" value="70">
+          <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--text);font-size:14px"><input id="basedock" type="checkbox"> On the dock</label>
+          <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--text);font-size:14px"><input id="basekb" type="checkbox" checked> Computer keyboard too</label>
+          <p style="color:var(--dim);font-size:12px;line-height:1.5">
+            Keys: 1-8 numbers · A all · B body · E eyes · F fins · P page · Shift · Space TAKE · X flash · Z blackout · S fin sensor · U unlock (hold 1 s).<br>
+            Number keys stage presets in Standby for the target; TAKE swaps Standby and Live (hold it to preview). SHIFT + number bumps a preset;
+            PAGE + number sets brightness; SHIFT + TAKE copies Live back to Standby. The STANDBY panel works as TAKE by touch.<br>
+            The body's commands go to the WLED card's address over its JSON API (bumps are imitated: on the shark they go by radio);
+            the eyes' go to the simulated eyes.
+          </p>
+        </div>
+      </div>
+    </div>
   </section>
 </main>
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 <script src="sim.js"></script>
 <script src="app.js"></script>
 <script src="eyes.js"></script>
+<script src="base.js"></script>
 <script type="module" src="view3d.js"></script>
 </body>
 </html>

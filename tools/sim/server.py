@@ -16,9 +16,17 @@
   UDP 4050 and the eyes' audio features and telemetry as JSON to UDP 4051,
   and passes both to the page (the JSON as text messages). The page's sound
   then goes nowhere: the shark listens with its own mic.
+- The base station's keypad: the page's simulated keys ({"base": {"key": ..,
+  "down": ..}}) run through the base firmware's own Live / Standby logic
+  (firmware/base/main/controls.c, built here with the computer's C compiler
+  and called through ctypes); the page gets its state, key LED colours and
+  the actions to carry out (preset and brightness changes, bumps).
 """
 import argparse
 import asyncio
+import ctypes
+import subprocess
+import time
 import base64
 import hashlib
 import json
@@ -33,6 +41,8 @@ DDP_PORT = 4048          # the simulator WLED's network LED bus
 MIRROR_PORT = 4050       # the shark's mirror stream (DDP); its JSON state on MIRROR_PORT + 1
 MIRROR_RENEW_S = 2
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 clients = set()
 WEB_CONFIG = {}
 mode = {"source": "sim", "ip": None}   # "sim": the bench WLED; "shark": mirror the real controller
@@ -143,6 +153,8 @@ async def handle(reader, writer, audio_sock, wled_ip):
                         continue
                     if req.get("source") in ("sim", "shark"):
                         await set_mode(req["source"], req.get("ip"))
+                    elif "base" in req and base.lib:
+                        await base.message(writer, req["base"])
                 elif opcode == 0x2 and len(data) == 44 and mode["source"] == "sim":  # audio sync packet
                     audio_sock.sendto(data, AUDIO_SYNC_GROUP)
                     if wled_ip:
@@ -255,6 +267,88 @@ async def keep_mirroring():
         await asyncio.sleep(MIRROR_RENEW_S)
 
 
+# ------------------------------------------------------------------ base station keypad
+
+class Base:
+    """The base firmware's keypad logic (controls.c), shared by every page."""
+    SOURCES = [os.path.join(HERE, "src", "base_host.c"), os.path.join(REPO, "firmware", "base", "main", "controls.c")]
+
+    def __init__(self):
+        self.lib = None
+        self.owner = None          # the page that last pressed a key: it carries out the actions
+        self.last = None
+        self.t0 = time.monotonic()
+        self.out = (ctypes.c_int * 64)()
+        self.names = []
+
+    def build(self):
+        """Compile (if a source changed) and load; None if there's no C compiler."""
+        out = os.path.join(HERE, "build", "libbase.so")
+        deps = self.SOURCES + [os.path.join(REPO, "firmware", "base", "main", "controls.h")]
+        try:
+            if not os.path.exists(out) or any(os.path.getmtime(d) > os.path.getmtime(out) for d in deps):
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-I", os.path.join(REPO, "firmware", "base", "main"),
+                                "-I", os.path.join(REPO, "shared", "nibbles_link", "include"), "-o", out] + self.SOURCES,
+                               check=True)
+            lib = ctypes.CDLL(out)
+        except (OSError, subprocess.CalledProcessError) as e:
+            print(f"base keypad not available (no C compiler?): {e}")
+            return
+        lib.base_key_name.restype = ctypes.c_char_p
+        lib.base_target_name.restype = ctypes.c_char_p
+        lib.base_init(0)
+        self.names = [lib.base_key_name(k).decode() for k in range(lib.base_key_count())]
+        self.lib = lib
+
+    def now_ms(self):
+        return int((time.monotonic() - self.t0) * 1000) & 0xFFFFFFFF
+
+    def actions(self, n):
+        return [list(self.out[i * 4:i * 4 + 4]) for i in range(n)]
+
+    def state(self):
+        st = (ctypes.c_int * 13)()
+        self.lib.base_state(st)
+        leds = (ctypes.c_uint * len(self.names))()
+        self.lib.base_leds(self.now_ms(), leds)
+        v = list(st)
+        return {"live": v[0:3], "standby": v[3:6], "target": self.lib.base_target_name(v[6]).decode(),
+                "page": v[7], "locked": bool(v[8]), "preview": bool(v[9]), "shift": bool(v[10]), "diff": v[11],
+                "bri": v[12], "leds": {self.names[k]: "#%06x" % leds[k] for k in range(1, len(self.names))}}
+
+    async def send(self, writer, msg):
+        await send_to(writer, json.dumps({"base": msg}).encode(), 0x1)
+
+    async def message(self, writer, m):
+        if "live" in m:            # what the page's WLED and eyes show: [body, eyes, fins, brightness]
+            self.lib.base_set_live(*[int(x) for x in m["live"]])
+        if "key" in m and m["key"] in self.names:
+            self.owner = writer
+            n = self.lib.base_key(self.names.index(m["key"]), 1 if m.get("down") else 0, self.now_ms(), self.out)
+            await self.send(writer, {"actions": self.actions(n), **self.state()})
+        elif "hello" in m:
+            await self.send(writer, {"keys": self.names[1:], **self.state()})
+
+    async def run(self):
+        """Holding UNLOCK, auto-lock and the blinking TAKE: tick, and send changes to every page."""
+        while True:
+            await asyncio.sleep(0.05)
+            if not self.lib or not clients:
+                continue
+            n = self.lib.base_tick(self.now_ms(), self.out)
+            st = self.state()
+            if n and self.owner in clients:
+                await self.send(self.owner, {"actions": self.actions(n), **st})
+            elif st != self.last:
+                for w in list(clients):
+                    await self.send(w, st)
+            self.last = st
+
+
+base = Base()
+
+
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8080)
@@ -269,6 +363,8 @@ async def main():
     await loop.create_datagram_endpoint(lambda: DDPReceiver("shark"), local_addr=("0.0.0.0", MIRROR_PORT))
     await loop.create_datagram_endpoint(MirrorState, local_addr=("0.0.0.0", MIRROR_PORT + 1))
     asyncio.ensure_future(keep_mirroring())
+    base.build()
+    asyncio.ensure_future(base.run())
     WEB_CONFIG["shark"] = args.shark
     server = await asyncio.start_server(lambda r, w: handle(r, w, audio_sock, args.wled), "0.0.0.0", args.port)
     print(f"Nibbles simulator: http://localhost:{args.port}/  (bench WLED {args.wled}, DDP on UDP {DDP_PORT}; "

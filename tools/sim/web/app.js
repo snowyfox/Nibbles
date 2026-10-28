@@ -62,14 +62,17 @@ function connect() {
     if (typeof e.data === 'string') {  // the lights' source, or the live shark's state
       const m = JSON.parse(e.data);
       if ('source' in m) showSource(m);
-      else { eyesFromShark(m); finsFromShark(m); }
+      else if ('base' in m) baseMessage(m.base);
+      else { eyesFromShark(m); finsFromShark(m); baseFromShark(m); }
       return;
     }
     leds = new Uint8Array(e.data);
+    baseFrame(leds);  // before the screen conversion: the base's estimate of the lights' power
     for (let i = 0; i < leds.length; i++) leds[i] = toScreen[leds[i]];
     frames++;
     if (view === '3d' && window.nibbles3d) window.nibbles3d.update(leds);
   };
+  ws.onopen = () => baseHello();
   ws.onclose = () => { status('lost the simulator server; retrying…'); setTimeout(connect, 1000); };
 }
 
@@ -208,6 +211,7 @@ async function loadWled() {
       .sort((a, b) => a[1].n.localeCompare(b[1].n))
       .forEach(([id, p]) => sel.add(new Option(`${p.n} (${id})`, id)));
     sel.value = state.ps > 0 ? String(state.ps) : '';
+    baseWledPresets(presets);
     showWledState(state);
   } catch (e) {
     $('preset').innerHTML = '<option>WLED not reachable</option>';
@@ -227,6 +231,7 @@ function showWledState(state) {
   if (document.activeElement !== $('bri')) { $('bri').value = state.bri; $('briv').textContent = state.bri; }
   wledOn = state.on;
   eyesWledBrightness(state.on, state.bri);
+  baseWledState(state);
 }
 // The bench WLED can be changed elsewhere (its own page); check now and then.
 // (The live shark's state arrives with every mirrored frame.)
