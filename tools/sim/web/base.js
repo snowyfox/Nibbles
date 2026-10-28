@@ -14,7 +14,12 @@ const BASE_COLS = [
 // Computer keyboard: hold like the real keys.
 const BASE_KEYBOARD = { Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6', Digit7: '7', Digit8: '8',
   KeyA: 'all', KeyB: 'body', KeyE: 'eyes', KeyF: 'fins', KeyP: 'page', ShiftLeft: 'latch', ShiftRight: 'latch', KeyL: 'latch',
-  KeyZ: 'blackout', KeyS: 'finsensor', Space: 'take', KeyX: 'flash', KeyU: 'unlock' };
+  KeyZ: 'blackout', KeyS: 'finsensor', Space: 'take', KeyX: 'flash', KeyU: 'unlock',
+  // The number pad (physical keys, so Num Lock doesn't matter): 1-8 the numbers, 0 TAKE, Enter LATCH
+  // (both big keys, easy to hold and tap together), / * - = the targets, + PAGE, . FLASH, 9 BLACKOUT.
+  Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4', Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8',
+  Numpad0: 'take', NumpadEnter: 'latch', NumpadDivide: 'body', NumpadMultiply: 'eyes', NumpadSubtract: 'all',
+  NumpadEqual: 'fins', NumLock: 'fins', NumpadAdd: 'page', NumpadDecimal: 'flash', Numpad9: 'blackout' };
 const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4 };
 const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
 const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET' };
@@ -46,7 +51,7 @@ function baseBuildKeypad() {
   const held = new Set();
   window.addEventListener('keydown', (e) => {
     const name = BASE_KEYBOARD[e.code];
-    if (!name || e.repeat || !$('basekb').checked || e.target.closest('input, select, textarea')) return;
+    if (!name || e.repeat || !$('basekb').checked || (e.target.closest && e.target.closest('input, select, textarea'))) return;
     e.preventDefault();
     held.add(e.code);
     baseKeyEls[name].classList.add('down');

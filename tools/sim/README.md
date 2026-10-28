@@ -75,7 +75,9 @@ the base's main page (`display.c`) and carries out what the logic asks:
 
 Click (and hold) the keys, or use the computer's keyboard: 1-8, A all,
 B body, E eyes, F fins, P page, Shift or L for LATCH, Space TAKE, X flash,
-Z blackout, S fin sensor, U unlock (hold 1 s). Numbers and TAKE are bumps;
+Z blackout, S fin sensor, U unlock (hold 1 s). Or the number pad: 1-8 the
+numbers, 0 TAKE, Enter LATCH, / body, * eyes, - all, = (or Clear) fins,
++ page, . flash, 9 blackout. Numbers and TAKE are bumps;
 tap LATCH while holding one to keep it. The STANDBY panel works as TAKE by touch.
 POWER is simulated: the pack slider, "On the dock", and the lights' power
 estimated from the LED frames (17 mA per LED at full white, a 90% converter).
