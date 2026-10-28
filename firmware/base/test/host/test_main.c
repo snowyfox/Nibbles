@@ -70,6 +70,7 @@ static void test_latch_number(void)
     press(&c, KEY_LATCH);
     CHECK(has(ACT_PRESET, TGT_BODY, 5) && has(ACT_PRESET, TGT_EYES, 5));
     CHECK(acts[0].type == ACT_PRESET && acts[nacts - 1].type == ACT_BUMP_END);  // commands before the bumps let go
+    CHECK(acts[0].target == TGT_BODY && acts[0].bump == 1);   // ALL: the WLED preset's eye settings may come too
     release(&c, KEY_LATCH);
     CHECK(release(&c, KEY_NUM5) == 0);          // nothing changes back
     CHECK(c.live.body == 5 && c.live.eyes == 5);
@@ -144,9 +145,12 @@ static void test_targets(void)
     press(&c, KEY_BODY);
     press(&c, KEY_NUM3);
     CHECK(nacts == 1 && acts[0].target == TGT_BODY);
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_PRESET, TGT_BODY, 3) && acts[0].bump == 0);   // BODY: body only
+    release(&c, KEY_LATCH);
     release(&c, KEY_NUM3);
     release(&c, KEY_BODY);
-    CHECK(c.target == TGT_EYES && c.live.body == 1);
+    CHECK(c.target == TGT_EYES && c.live.body == 3);
     // FINS: a number bumps that fin preset; LATCH keeps it
     tap(&c, KEY_FINS);
     press(&c, KEY_NUM2);
@@ -155,7 +159,7 @@ static void test_targets(void)
     CHECK(has(ACT_PRESET, TGT_FINS, 2) && c.live.fins == 2 && c.standby.fins == 0);
     release(&c, KEY_LATCH);
     release(&c, KEY_NUM2);
-    CHECK(c.live.body == 1);                    // the body kept its preset
+    CHECK(c.live.body == 3);                    // the body kept its preset
 }
 
 static void test_pages_and_brightness(void)

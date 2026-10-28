@@ -20,6 +20,8 @@ static uint16_t tx_seq;
 static nl_audio_t rx_audio;
 static nl_eye_state_t rx_eye;
 static nl_heartbeat_t rx_heartbeat;
+static nl_eye_look_t rx_look;      // the leader's look (from a WLED preset)
+static bool rx_look_new;
 static int64_t rx_audio_us, rx_eye_us, peer_us;
 static uint32_t tx_frames, own_frames;
 static uint16_t my_fps_x10, my_late;
@@ -76,6 +78,9 @@ static void handle(const nl_frame_t *f)
     } else if (f->type == NL_MSG_EYE_STATE && f->len == sizeof(nl_eye_state_t) && me == NL_ROLE_EYE_EARS) {
         memcpy(&rx_eye, f->payload, sizeof(rx_eye));
         rx_eye_us = now;
+    } else if (f->type == NL_MSG_EYE_LOOK && f->len == sizeof(nl_eye_look_t) && me == NL_ROLE_EYE_EARS) {
+        memcpy(&rx_look, f->payload, sizeof(rx_look));
+        rx_look_new = true;
     }
     taskEXIT_CRITICAL(&lock);
 }
@@ -156,6 +161,18 @@ bool link_get_eye_state(nl_eye_state_t *out, uint32_t max_age_ms)
 void link_send_audio(const nl_audio_t *a) { send(NL_MSG_AUDIO, a, sizeof(*a)); }
 
 void link_send_eye_state(const nl_eye_state_t *s) { send(NL_MSG_EYE_STATE, s, sizeof(*s)); }
+
+void link_send_look(const nl_eye_look_t *l) { send(NL_MSG_EYE_LOOK, l, sizeof(*l)); }
+
+bool link_take_look(nl_eye_look_t *out)
+{
+    taskENTER_CRITICAL(&lock);
+    const bool got = rx_look_new;
+    if (got) *out = rx_look;
+    rx_look_new = false;
+    taskEXIT_CRITICAL(&lock);
+    return got;
+}
 
 void link_set_status(uint16_t fps_x10, uint16_t late_frames)
 {

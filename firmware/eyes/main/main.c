@@ -23,8 +23,8 @@
 static const char *TAG = "nibbles";
 
 
-// Preset commands and bumps from the radio, handed to the eye task.
-static QueueHandle_t radio_cmds, radio_bumps;
+// Preset commands, bumps and looks (from WLED presets) from the radio, handed to the eye task.
+static QueueHandle_t radio_cmds, radio_bumps, radio_looks;
 
 typedef struct {
     nl_bump_t bump;
@@ -73,6 +73,12 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
         if (it.bump.target & NL_TARGET_EYES) xQueueSend(radio_bumps, &it, 0);
         return;
     }
+    if (h->type == NL_MSG_EYE_LOOK && len == sizeof(nl_eye_look_t) && h->role == NL_ROLE_WLED) {
+        nl_eye_look_t l;
+        memcpy(&l, pl, sizeof(l));
+        xQueueOverwrite(radio_looks, &l);   // only the newest matters
+        return;
+    }
     if (h->type != NL_MSG_CMD || len != sizeof(nl_cmd_t)) return;
     nl_cmd_t cmd;
     memcpy(&cmd, pl, sizeof(cmd));
@@ -82,7 +88,7 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_
     const bool repeat = cmd.id == last_id && memcmp(mac, last_mac, 6) == 0;
     uint8_t status = NL_ACK_OK;
     if (cmd.target != NL_TARGET_EYES) status = NL_ACK_UNSUPPORTED;
-    else if (cmd.op == NL_OP_PRESET_SET && (cmd.arg < 0 || cmd.arg >= preset_count)) status = NL_ACK_BAD_ARG;
+    else if (cmd.op == NL_OP_PRESET_SET && !preset_valid(cmd.arg)) status = NL_ACK_BAD_ARG;  // a look slot once filled
     else if (cmd.op == NL_OP_BRIGHTNESS_SET || cmd.op == NL_OP_BRIGHTNESS_STEP) status = NL_ACK_UNSUPPORTED;  // follows WLED
     else if (cmd.op == NL_OP_REACTIVITY && (cmd.arg < NL_REACT_PRESET || cmd.arg > NL_REACT_PEAKS)) status = NL_ACK_BAD_ARG;
     else if (cmd.op < NL_OP_PRESET_SET || cmd.op > NL_OP_REACTIVITY) status = NL_ACK_UNSUPPORTED;
@@ -114,6 +120,9 @@ static void eye_task(void *arg)
     int64_t next_swap = last + (int64_t)PRESET_CYCLE_S * 1000000;
     render_set_preset(0);
     ESP_LOGI(TAG, "preset 0: %s", presets[0].name);
+    nl_eye_look_t last_look;   // the leader's newest look, passed on again now and then
+    bool have_look = false;
+    int64_t next_look_send = 0;
     int frames = 0, late_total = 0;
     const nl_role_t role = board_role();
     const nl_side_t side = board_side();
@@ -156,7 +165,8 @@ static void eye_task(void *arg)
                 next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
                 ESP_LOGI(TAG, "radio command: presets %s", auto_cycle ? "cycle" : "held");
             } else {
-                const int base = eye.swap_pending ? next_preset : preset_index;
+                int base = eye.swap_pending ? next_preset : preset_index;
+                if (base >= preset_count) base = 0;   // stepping from a look: back to the built-in ones
                 if (cmd.op == NL_OP_PRESET_SET) next_preset = cmd.arg;
                 else if (cmd.op == NL_OP_PRESET_NEXT) next_preset = (base + 1) % preset_count;
                 else next_preset = (base + preset_count - 1) % preset_count;
@@ -167,6 +177,29 @@ static void eye_task(void *arg)
                 ESP_LOGI(TAG, "radio command: preset %d next", next_preset);
             }
         }
+
+        // A look from a WLED preset: into the slot not on screen, then blink to
+        // it like any other preset change; the port eye gets it over the cable.
+        nl_eye_look_t look;
+        if (!following && radio_looks && xQueueReceive(radio_looks, &look, 0) == pdTRUE) {
+            const int idx = preset_set_look(&look, rendered);
+            if (idx >= 0) {
+                last_look = look;
+                have_look = true;
+                link_send_look(&look);
+                next_look_send = now + 2000000;
+                next_preset = idx;
+                eye_request_swap(&eye);
+                auto_cycle = false;
+                next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
+                ESP_LOGI(TAG, "look \"%.*s\" from WLED preset %d (preset index %d)", NL_NAME_LEN, look.name, look.id, idx);
+            }
+        }
+        if (have_look && role == NL_ROLE_EYE_LEADER && now >= next_look_send) {
+            next_look_send = now + 2000000;   // again for a port eye that restarted
+            link_send_look(&last_look);
+        }
+        if (role == NL_ROLE_EYE_EARS && link_take_look(&look)) preset_set_look(&look, rendered);
 
         // Bumps: flash and blackout are drawn by the eye at once; a preset bump
         // blinks to its preset and blinks back on release (see swap_now below).
@@ -183,7 +216,7 @@ static void eye_task(void *arg)
         if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
             eye_set_bump(&eye, bumps.bump.action);
             // Preset bumps are 1-based (the same number means the same on WLED).
-            if (bumps.bump.action == NL_BUMP_PRESET && bumps.bump.arg >= 1 && bumps.bump.arg <= preset_count)
+            if (bumps.bump.action == NL_BUMP_PRESET && bumps.bump.arg >= 1 && preset_valid(bumps.bump.arg - 1))
                 bump_preset = bumps.bump.arg - 1;
         }
         if (ev != NL_BUMP_EV_NONE) ESP_LOGI(TAG, "bump %s (action %d)", ev == NL_BUMP_EV_END ? "end" : "begin", bumps.bump.action);
@@ -191,7 +224,7 @@ static void eye_task(void *arg)
         // Cycle through the visual presets; the eye blinks to hide each change.
         if (!following && auto_cycle && now >= next_swap) {
             next_swap += (int64_t)PRESET_CYCLE_S * 1000000;
-            next_preset = (preset_index + 1) % preset_count;
+            next_preset = preset_index >= preset_count ? 0 : (preset_index + 1) % preset_count;
             eye_request_swap(&eye);
         }
 
@@ -202,9 +235,9 @@ static void eye_task(void *arg)
         eye_update(&eye, &a, &m, dt);
         if (following) {
             eye_apply_shared(&eye, &shared, side, &m);
-            if (shared.preset != preset_index && shared.preset < preset_count) {
+            if (shared.preset != preset_index && preset_valid(shared.preset)) {
                 preset_index = shared.preset;
-                ESP_LOGI(TAG, "preset %d: %s (from the leader)", preset_index, presets[preset_index].name);
+                ESP_LOGI(TAG, "preset %d: %s (from the leader)", preset_index, preset_get(preset_index)->name);
             }
             if (preset_index != rendered) {  // the leader's lids are shut for it
                 rendered = preset_index;
@@ -219,17 +252,17 @@ static void eye_task(void *arg)
             if (eye.p.swap_now) {
                 if (next_preset != preset_index) {
                     preset_index = next_preset;
-                    ESP_LOGI(TAG, "preset %d: %s", preset_index, presets[preset_index].name);
+                    ESP_LOGI(TAG, "preset %d: %s", preset_index, preset_get(preset_index)->name);
                 }
                 const int show = bump_preset >= 0 ? bump_preset : preset_index;
                 if (show != rendered) {
                     rendered = show;
                     render_set_preset(rendered);
-                    if (bump_preset >= 0) ESP_LOGI(TAG, "bump preset %d: %s", rendered, presets[rendered].name);
+                    if (bump_preset >= 0) ESP_LOGI(TAG, "bump preset %d: %s", rendered, preset_get(rendered)->name);
                 }
             }
         }
-        const bool peaks = react == NL_REACT_PRESET ? presets[rendered].peak_beats : react == NL_REACT_PEAKS;
+        const bool peaks = react == NL_REACT_PRESET ? preset_get(rendered)->peak_beats : react == NL_REACT_PEAKS;
         eye_set_peak_beats(&eye, peaks);  // the preset on screen decides, unless the base overrides
         if (role == NL_ROLE_EYE_LEADER) {
             eye_export_shared(&eye, rendered, side, &shared);
@@ -261,7 +294,7 @@ static void eye_task(void *arg)
                 .flags = (uint8_t)((auto_cycle ? NL_EYE_AUTO_CYCLE : 0) | NL_EYE_REACT_FLAGS(react) |
                                    (eye.peak_beats ? NL_EYE_PEAKS_NOW : 0)),
             };
-            strlcpy(t.name, presets[rendered].name, sizeof(t.name));
+            strlcpy(t.name, preset_get(rendered)->name, sizeof(t.name));
             nl_espnow_broadcast(NL_MSG_EYE_TELEMETRY, &t, sizeof(t));
         }
 
@@ -319,6 +352,7 @@ void app_main(void)
     if (EYES_RADIO && board_role() == NL_ROLE_EYE_LEADER) {
         radio_cmds = xQueueCreate(4, sizeof(nl_cmd_t));
         radio_bumps = xQueueCreate(8, sizeof(bump_item_t));
+        radio_looks = xQueueCreate(1, sizeof(nl_eye_look_t));
         const nl_espnow_config_t rcfg = {
             .role = NL_ROLE_EYE_LEADER,
             .side = board_side(),

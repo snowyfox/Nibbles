@@ -570,14 +570,14 @@ void render_core_set_mirror(bool on)
     // After init only the simulator switches; the other set is built on first use.
     if (core_ready && !build_spirals(on)) return;  // out of memory: keep the current maps
     mirror = on;
-    spiral_map = spiral_maps[mirror][preset_index];
+    spiral_map = spiral_maps[mirror][preset_spiral_source(preset_index)];
 }
 
 void render_core_set_preset(int index)
 {
-    index %= preset_count;
+    if (!preset_valid(index)) index = 0;   // PRESET_LOOK and up: looks from WLED
     preset_index = index;
-    preset = &presets[index];
-    spiral_map = spiral_maps[mirror][index];
+    preset = preset_get(index);
+    spiral_map = spiral_maps[mirror][preset_spiral_source(index)];
     spin_restart = true;
 }

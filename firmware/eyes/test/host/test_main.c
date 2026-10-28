@@ -920,6 +920,34 @@ static void replay_imu(const char *path)
     fclose(fp);
 }
 
+// Looks from WLED presets: a built-in preset sent as a look comes back the same;
+// new looks alternate between the two slots; repeats are ignored; spirals snap
+// to a built-in spiral shape.
+static void test_looks(void)
+{
+    CHECK(preset_look_index() == -1 && !preset_valid(PRESET_LOOK), "no look before one arrives");
+    nl_eye_look_t l;
+    preset_to_look(&presets[2], 42, &l);   // Inferno (rings, peak beats)
+    const int a = preset_set_look(&l, 0);
+    CHECK(a == PRESET_LOOK, "first look goes in slot 0 (index %d)", a);
+    const preset_t *p = preset_get(a);
+    CHECK(!strcmp(p->name, "Inferno") && p->peak_beats && p->rings == presets[2].rings &&
+          fabsf(p->ring_width - presets[2].ring_width) < 1e-6f && fabsf(p->palette[1].g - presets[2].palette[1].g) < 0.003f,
+          "a preset survives the trip through a look");
+    CHECK(preset_set_look(&l, a) == -1, "the same look again is a repeat");
+    preset_to_look(&presets[1], 43, &l);   // Hypno (a spiral)
+    l.spiral_twist = 100.0f;               // near Hypno's 110
+    const int b = preset_set_look(&l, a);
+    CHECK(b == PRESET_LOOK + 1 && preset_look_index() == b, "the next look takes the other slot (index %d)", b);
+    CHECK(preset_get(b)->spiral_arms == 3 && preset_get(b)->spiral_twist == presets[1].spiral_twist &&
+          presets[preset_spiral_source(b)].spiral_arms == 3, "a look's spiral snaps to the nearest built-in one");
+    CHECK(preset_get(a)->rings == presets[2].rings, "the look on screen is untouched by the next one");
+    l.id = 44;
+    const int c = preset_set_look(&l, b);
+    CHECK(c == PRESET_LOOK, "and back to slot 0, away from the one showing");
+    CHECK(!preset_valid(PRESET_ANY) && !preset_valid(-1), "indices past the look slots aren't presets");
+}
+
 int main(void)
 {
     const char *pcm = getenv("NIBBLES_PCM");
@@ -951,6 +979,7 @@ int main(void)
     test_motion_hype();
     test_spiral_tempo();
     test_sleep_wake();
+    test_looks();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

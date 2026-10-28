@@ -1,5 +1,8 @@
 #include "presets.h"
 
+#include <math.h>
+#include <string.h>
+
 // Spiral families: every preset in a family shares everything but its
 // palette (and so shares one spiral map).
 #define HYPNO_FAMILY                                                          \
@@ -177,4 +180,103 @@ float preset_spin_rate(const preset_t *ps, float tempo_bpm, float hype)
 {
     const float base = tempo_bpm > 0.0f ? tempo_bpm / 60.0f * ps->spin_per_beat : ps->spin;
     return base * (1.0f + hype);
+}
+
+// ------------------------------------------------------------------ the look slots
+static preset_t looks[2];
+static char look_names[2][NL_NAME_LEN];
+static bool look_filled[2];
+static int look_source[2];         // the built-in preset whose spiral each look uses
+static int look_newest = -1;       // slot of the newest look
+static nl_eye_look_t look_last;    // the newest look as received, to spot repeats
+
+bool preset_valid(int index)
+{
+    if (index >= 0 && index < preset_count) return true;
+    return index >= PRESET_LOOK && index < PRESET_ANY && look_filled[index - PRESET_LOOK];
+}
+
+const preset_t *preset_get(int index)
+{
+    if (index >= 0 && index < preset_count) return &presets[index];
+    if (preset_valid(index)) return &looks[index - PRESET_LOOK];
+    return &presets[0];
+}
+
+int preset_look_index(void) { return look_newest < 0 ? -1 : PRESET_LOOK + look_newest; }
+
+int preset_spiral_source(int index)
+{
+    if (index >= 0 && index < preset_count) return index;
+    return preset_valid(index) ? look_source[index - PRESET_LOOK] : 0;
+}
+
+// The built-in spiral nearest to arms and twist (-1 for no spiral).
+static int nearest_spiral(int arms, float twist)
+{
+    if (arms <= 0) return -1;
+    int best = -1;
+    float best_d = 0;
+    for (int i = 0; i < preset_count; i++) {
+        if (presets[i].spiral_arms <= 0) continue;
+        const float d = fabsf((float)(presets[i].spiral_arms - arms)) * 100.0f + fabsf(presets[i].spiral_twist - twist);
+        if (best < 0 || d < best_d) { best = i; best_d = d; }
+    }
+    return best;
+}
+
+int preset_set_look(const nl_eye_look_t *l, int showing)
+{
+    if (look_newest >= 0 && !memcmp(l, &look_last, sizeof(*l))) return -1;
+    look_last = *l;
+    const int n = showing == PRESET_LOOK ? 1 : 0;   // not the one on screen
+    preset_t *p = &looks[n];
+    memset(p, 0, sizeof(*p));
+    memcpy(look_names[n], l->name, NL_NAME_LEN);
+    look_names[n][NL_NAME_LEN - 1] = 0;
+    p->name = look_names[n][0] ? look_names[n] : "Look";
+    p->peak_beats = l->flags & NL_EYE_LOOK_PEAK_BEATS;
+    p->rainbow = l->flags & NL_EYE_LOOK_RAINBOW;
+    p->bands = l->flags & NL_EYE_LOOK_BANDS;
+    for (int i = 0; i < 4; i++)
+        p->palette[i] = (preset_rgb_t){ l->palette[i][0] / 255.0f, l->palette[i][1] / 255.0f, l->palette[i][2] / 255.0f };
+    p->hue_spread = l->hue_spread; p->sat = l->sat;
+    p->palette_step = l->palette_step; p->palette_music = l->palette_music;
+    p->rings = l->rings; p->ring_width = l->ring_width;
+    p->halo_sigma = l->halo_sigma; p->halo_amp = l->halo_amp;
+    p->fill = l->fill; p->flow = l->flow; p->wobble_px = l->wobble_px;
+    p->pupil_scale = l->pupil_scale; p->rim_amp = l->rim_amp; p->rim_white = l->rim_white;
+    p->ripple_pos = l->ripple_pos; p->ripple_white = l->ripple_white;
+    p->spin = l->spin; p->spin_per_beat = l->spin_per_beat;
+    const int src = nearest_spiral(l->spiral_arms, l->spiral_twist);
+    look_source[n] = src < 0 ? 0 : src;
+    p->spiral_arms = src < 0 ? 0 : presets[src].spiral_arms;   // the shape the eye has a map for
+    p->spiral_twist = src < 0 ? 0 : presets[src].spiral_twist;
+    look_filled[n] = true;
+    look_newest = n;
+    return PRESET_LOOK + n;
+}
+
+static uint8_t to_u8(float v) { return v <= 0 ? 0 : v >= 1 ? 255 : (uint8_t)lroundf(v * 255.0f); }
+
+void preset_to_look(const preset_t *p, uint8_t id, nl_eye_look_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->id = id;
+    out->flags = (p->peak_beats ? NL_EYE_LOOK_PEAK_BEATS : 0) | (p->rainbow ? NL_EYE_LOOK_RAINBOW : 0) |
+                 (p->bands ? NL_EYE_LOOK_BANDS : 0);
+    strncpy(out->name, p->name, NL_NAME_LEN - 1);
+    for (int i = 0; i < 4; i++) {
+        out->palette[i][0] = to_u8(p->palette[i].r);
+        out->palette[i][1] = to_u8(p->palette[i].g);
+        out->palette[i][2] = to_u8(p->palette[i].b);
+    }
+    out->rings = (uint8_t)p->rings; out->spiral_arms = (uint8_t)p->spiral_arms;
+    out->hue_spread = p->hue_spread; out->sat = p->sat;
+    out->palette_step = p->palette_step; out->palette_music = p->palette_music;
+    out->ring_width = p->ring_width; out->halo_sigma = p->halo_sigma; out->halo_amp = p->halo_amp;
+    out->fill = p->fill; out->flow = p->flow; out->wobble_px = p->wobble_px;
+    out->pupil_scale = p->pupil_scale; out->rim_amp = p->rim_amp; out->rim_white = p->rim_white;
+    out->ripple_pos = p->ripple_pos; out->ripple_white = p->ripple_white;
+    out->spiral_twist = p->spiral_twist; out->spin = p->spin; out->spin_per_beat = p->spin_per_beat;
 }

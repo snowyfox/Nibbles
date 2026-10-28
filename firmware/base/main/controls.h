@@ -40,7 +40,8 @@ typedef struct {
 } ctl_scene_t;
 
 typedef enum {
-    ACT_PRESET,      // target (TGT_BODY, TGT_EYES or TGT_FINS), value = preset (1-based; fins: 0 = follow the body)
+    ACT_PRESET,      // target (TGT_BODY, TGT_EYES or TGT_FINS), value = preset (1-based; fins: 0 = follow the body);
+                     // body: bump = 1 lets the WLED preset's eye settings through (ALL), 0 body only
     ACT_FINS,        // the fins' angle sensor: value = 0 locked at the model angle, 1 follow, 2 toggle
     ACT_BRIGHTNESS,  // value = 0..255 (WLED; the eyes follow it)
     ACT_BUMP,        // slot (TGT_BODY, TGT_EYES or TGT_FINS), bump = NL_BUMP_* action, value = arg (fins: fin preset)

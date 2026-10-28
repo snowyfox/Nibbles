@@ -246,7 +246,8 @@ static void do_ctl_action(const ctl_action_t *a)
 {
     switch (a->type) {
         case ACT_PRESET:
-            if (a->target == TGT_BODY) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, a->value);
+            // BODY: the WLED preset without its eye settings; ALL lets them through
+            if (a->target == TGT_BODY) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, a->value | (a->bump ? 0 : NL_PRESET_NO_EYES));
             else if (a->target == TGT_FINS) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, NL_FIN_PRESET_BASE + a->value);
             else send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, a->value - 1);
             break;

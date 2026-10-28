@@ -16,7 +16,7 @@ bool render_core_init(void *(*alloc)(size_t size));
 // face opposite ways) spin and twist as mirror images. Set before init on the
 // eye; the simulator switches per eye (the other set is built on first use).
 void render_core_set_mirror(bool on);
-// Select the visual preset (index into presets[], wraps).
+// Select the visual preset (index into presets[], or a look slot: see presets.h).
 void render_core_set_preset(int index);
 
 // Build this frame's colour tables from the eye's parameters.

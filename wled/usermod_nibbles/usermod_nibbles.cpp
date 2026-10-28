@@ -39,6 +39,12 @@
 //   fins' are tracked apart: telemetry reports the body's, NL_MSG_FIN_STATE
 //   the fins'. Fin bumps (NL_TARGET_FINS) run beside body bumps, and this
 //   usermod's preset applies go through a queue (WLED keeps one waiting).
+// - Eye settings in presets: a preset's "nibbles":{"eyes":{...}} goes to the
+//   eyes when the preset is applied: "preset" (1-based), "react"
+//   ("preset"|"beats"|"peaks") and "auto" as commands to the leader eye, or a
+//   whole "look" (every preset_t setting; nl_eye_look_t) broadcast as
+//   NL_MSG_EYE_LOOK. Skipped for presets applied with NL_PRESET_NO_EYES (the
+//   base's BODY target), bump presets and fin presets.
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -175,13 +181,26 @@ class NibblesUsermod : public Usermod {
     int lastSeenPreset = -1;
     unsigned long panelOffSince = 0;
     // WLED holds one waiting preset; ours queue here, the next once the last has landed.
-    uint8_t presetQueue[4] = { 0 };
+    // Entries with bit 8 set apply without their eye settings.
+    uint16_t presetQueue[4] = { 0 };
     uint8_t presetQueueLen = 0;
     uint8_t presetWaiting = 0;
     unsigned long presetIssuedAt = 0;
+    bool eyesMuted = false;       // the preset being applied mustn't touch the eyes
+    bool cmdNoEyes = false;       // the command being resolved had NL_PRESET_NO_EYES
+    // Eye settings from a preset, on their way to the eyes.
+    uint8_t eyesMac[6] = { 0 };
+    bool haveEyesMac = false;
+    nl_eye_look_t eyeLook = {};
+    uint8_t eyeLookSends = 0;
+    nl_cmd_t eyeCmds[3] = {};
+    uint8_t eyeCmdCount = 0, eyeCmdSends = 0;
+    uint16_t eyeCmdId = 0x8000;   // apart from the base's ids
+    unsigned long eyeSendNext = 0;
     static bool isFinPreset(int id) { return id >= NL_FIN_PRESET_BASE && id <= NL_FIN_PRESET_BASE + NL_FIN_PRESET_COUNT; }
     uint8_t savedPreset = 0;
     int pendingPreset = 0, pendingBri = -1;  // commands received during a bump
+    bool pendingNoEyes = false;
 
     // Mirror to the simulator.
     WiFiUDP mirrorUdp;
@@ -802,8 +821,9 @@ class NibblesUsermod : public Usermod {
         default: break;
       }
       refreshPresets();
+      cmdNoEyes = false;
       switch (cmd.op) {
-        case NL_OP_PRESET_SET:  id = cmd.arg; break;
+        case NL_OP_PRESET_SET:  id = cmd.arg & 0xFF; cmdNoEyes = cmd.arg & NL_PRESET_NO_EYES; break;
         case NL_OP_PRESET_NEXT: id = stepPreset(bodyPreset, +1); break;
         case NL_OP_PRESET_PREV: id = stepPreset(bodyPreset, -1); break;
         default: return NL_ACK_UNSUPPORTED;
@@ -820,12 +840,12 @@ class NibblesUsermod : public Usermod {
       // During a bump the saved state comes back on release, which would undo
       // the command: keep it for then instead.
       if (haveSaved) {
-        if (id > 0) pendingPreset = id;
+        if (id > 0) { pendingPreset = id; pendingNoEyes = cmdNoEyes; }
         else pendingBri = -id;
         return;
       }
       if (id > 0) {
-        queuePreset(id);
+        queuePreset(id, cmdNoEyes);
       } else {
         bri = -id;
         stateUpdated(CALL_MODE_DIRECT_CHANGE);
@@ -883,7 +903,7 @@ class NibblesUsermod : public Usermod {
       bool refin = finPreset != finAtBump;   // the fins changed preset during the bump
       if (pendingPreset) {
         refin = true;                // the body's new preset leaves the fin segment as the bump left it
-        queuePreset(pendingPreset);  // a preset command came in during the bump
+        queuePreset(pendingPreset, pendingNoEyes);  // a preset command came in during the bump
       } else {
         // Put everything back instantly.
         String json = savedState;
@@ -934,21 +954,80 @@ class NibblesUsermod : public Usermod {
     }
 
     // Our preset applies, one at a time (WLED keeps a single waiting preset).
-    void queuePreset(uint8_t id) {
+    // noEyes: apply it without its eye settings (body only, bumps, fin presets).
+    void queuePreset(uint8_t id, bool noEyes = true) {
       if (!presetExists(id)) { refreshPresets(); if (!presetExists(id)) return; }
-      if (presetQueueLen && presetQueue[presetQueueLen - 1] == id) return;
-      if (presetQueueLen == sizeof(presetQueue)) memmove(presetQueue, presetQueue + 1, --presetQueueLen);
-      presetQueue[presetQueueLen++] = id;
+      const uint16_t e = id | (noEyes ? 0x100 : 0);
+      if (presetQueueLen && presetQueue[presetQueueLen - 1] == e) return;
+      const unsigned cap = sizeof(presetQueue) / sizeof(presetQueue[0]);
+      if (presetQueueLen == cap) memmove(presetQueue, presetQueue + 1, --presetQueueLen * sizeof(presetQueue[0]));
+      presetQueue[presetQueueLen++] = e;
     }
 
     void presetQueueLoop(unsigned long now) {
       if (presetWaiting && currentPreset != presetWaiting && now - presetIssuedAt < 300) return;  // not landed yet
       presetWaiting = 0;
+      eyesMuted = false;
       if (!presetQueueLen) return;
-      presetWaiting = presetQueue[0];
-      memmove(presetQueue, presetQueue + 1, --presetQueueLen);
+      presetWaiting = presetQueue[0] & 0xFF;
+      eyesMuted = presetQueue[0] & 0x100;   // read by readFromJsonState while WLED applies it
+      memmove(presetQueue, presetQueue + 1, --presetQueueLen * sizeof(presetQueue[0]));
       presetIssuedAt = now;
       applyPreset(presetWaiting, CALL_MODE_DIRECT_CHANGE);
+    }
+
+    // A preset's eye settings, sent from loop(): the look broadcast three
+    // times, commands to the leader eye twice (same id; it applies each once).
+    void eyeSendLoop(unsigned long now) {
+      if ((!eyeLookSends && !eyeCmdSends) || now < eyeSendNext) return;
+      eyeSendNext = now + 40;
+      if (eyeLookSends) { send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_EYE_LOOK, &eyeLook, sizeof(eyeLook)); eyeLookSends--; }
+      if (eyeCmdSends && haveEyesMac) {
+        for (unsigned i = 0; i < eyeCmdCount; i++) send(eyesMac, NL_MSG_CMD, &eyeCmds[i], sizeof(nl_cmd_t));
+        eyeCmdSends--;
+      }
+    }
+
+    void eyeCommand(uint8_t op, int arg) {
+      if (eyeCmdCount >= 3) return;
+      eyeCmds[eyeCmdCount++] = { ++eyeCmdId, NL_TARGET_EYES, op, (int16_t)arg };
+      eyeCmdSends = 2;
+    }
+
+    // "eyes" settings in a preset (see the header comment).
+    void readEyeSettings(JsonObject eyesJ) {
+      if (eyesJ.isNull() || eyesMuted) return;
+      eyeCmdCount = 0;
+      JsonObject lk = eyesJ[F("look")];
+      if (!lk.isNull()) {
+        nl_eye_look_t &l = eyeLook;
+        l = {};
+        l.id = currentPreset;
+        strlcpy(l.name, lk[F("name")] | "Look", sizeof(l.name));
+        l.flags = ((lk[F("peak_beats")] | false) ? NL_EYE_LOOK_PEAK_BEATS : 0) |
+                  ((lk[F("rainbow")] | false) ? NL_EYE_LOOK_RAINBOW : 0) | ((lk[F("bands")] | false) ? NL_EYE_LOOK_BANDS : 0);
+        JsonArray pal = lk[F("palette")];
+        for (int i = 0; i < 4 && i < (int)pal.size(); i++)
+          for (int c = 0; c < 3; c++) l.palette[i][c] = (uint8_t)constrain((int)(pal[i][c] | 0), 0, 255);
+        l.rings = lk[F("rings")] | 0;
+        l.spiral_arms = lk[F("spiral_arms")] | 0;
+        l.hue_spread = lk[F("hue_spread")] | 0.0f;       l.sat = lk[F("sat")] | 0.0f;
+        l.palette_step = lk[F("palette_step")] | 0.0f;   l.palette_music = lk[F("palette_music")] | 0.0f;
+        l.ring_width = lk[F("ring_width")] | 0.0f;       l.halo_sigma = lk[F("halo_sigma")] | 0.0f;
+        l.halo_amp = lk[F("halo_amp")] | 0.0f;           l.fill = lk[F("fill")] | 0.0f;
+        l.flow = lk[F("flow")] | 0.0f;                   l.wobble_px = lk[F("wobble_px")] | 0.0f;
+        l.pupil_scale = lk[F("pupil_scale")] | 1.0f;     l.rim_amp = lk[F("rim_amp")] | 1.0f;
+        l.rim_white = lk[F("rim_white")] | 0.0f;         l.ripple_pos = lk[F("ripple_pos")] | 0.0f;
+        l.ripple_white = lk[F("ripple_white")] | 0.0f;   l.spiral_twist = lk[F("spiral_twist")] | 0.0f;
+        l.spin = lk[F("spin")] | 0.0f;                   l.spin_per_beat = lk[F("spin_per_beat")] | 0.0f;
+        eyeLookSends = 3;
+      } else if (!eyesJ[F("preset")].isNull()) {
+        eyeCommand(NL_OP_PRESET_SET, (eyesJ[F("preset")] | 1) - 1);
+      }
+      const char *react = eyesJ[F("react")] | (const char *)nullptr;
+      if (react) eyeCommand(NL_OP_REACTIVITY, !strcmp(react, "beats") ? NL_REACT_BEATS : !strcmp(react, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
+      if (!eyesJ[F("auto")].isNull()) eyeCommand(NL_OP_AUTO_CYCLE, (eyesJ[F("auto")] | false) ? 1 : 0);
+      eyeSendNext = 0;
     }
 
     // Which preset is the body's and which the fins', as presets land.
@@ -977,6 +1056,8 @@ class NibblesUsermod : public Usermod {
         memcpy(&eyes, pl, sizeof(eyes));
         eyesAt = millis();
         haveEyes = true;
+        memcpy(eyesMac, it.mac, 6);   // where the eye settings in presets go
+        haveEyesMac = true;
       } else if (h.type == NL_MSG_FIN_POSE && len == sizeof(nl_fin_pose_t)) {
         nl_fin_pose_t p;
         memcpy(&p, pl, sizeof(p));
@@ -1065,6 +1146,7 @@ class NibblesUsermod : public Usermod {
       }
       bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
       finBumpEvent(nl_bump_rx_tick(&finBumps, millis()));
+      eyeSendLoop(millis());
       const unsigned long now = millis();
       if (now - lastHeartbeat >= ANCHOR_HEARTBEAT_MS) {
         lastHeartbeat = now;
@@ -1218,6 +1300,7 @@ class NibblesUsermod : public Usermod {
       // {"nibbles":{"finproj":"side"|"top"}}: how the fin panel is laid over the fins (stored in fin presets)
       const char *proj = root[F("nibbles")][F("finproj")] | (const char *)nullptr;
       if (proj) finProj = !strcmp(proj, "top") ? NL_FIN_PROJ_TOP : NL_FIN_PROJ_SIDE;
+      readEyeSettings(root[F("nibbles")][F("eyes")]);
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
       JsonObject sw = root[F("nibbles")][F("finsweep")];
       if (!sw.isNull()) {

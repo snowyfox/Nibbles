@@ -35,6 +35,7 @@ typedef enum {
     NL_MSG_FIN_POSE = 10,   // the fins' hinge angles, fin sensor node -> radio, ~50 Hz
     NL_MSG_FIN_STATE = 11,  // whether the lights follow the fins, and the angles in use, WLED -> radio, 2 Hz
     NL_MSG_WLED_STREAM = 12, // how steadily a streamed picture arrives, WLED -> radio, 1 Hz
+    NL_MSG_EYE_LOOK = 13,   // an eye look from a WLED preset, WLED -> leader eye (radio) -> port eye (cable)
 } nl_msg_type_t;
 
 typedef enum {
@@ -152,6 +153,11 @@ typedef enum {
     NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
 } nl_op_t;
 
+// NL_OP_PRESET_SET to WLED: arg | NL_PRESET_NO_EYES applies the preset to the
+// body (and fins) only, skipping any eye settings stored in it (the base's
+// BODY target). Without it a preset's "eyes" settings go to the eyes too.
+#define NL_PRESET_NO_EYES   0x0100
+
 typedef struct NL_PACKED {
     uint16_t id;            // echoed in the ack; retries reuse it so a command applies once
     uint8_t target;         // nl_target_t
@@ -220,6 +226,31 @@ void nl_bump_rx_init(nl_bump_rx_t *rx);
 nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_t now_ms);
 // Call regularly; returns NL_BUMP_EV_END when the active bump times out.
 nl_bump_event_t nl_bump_rx_tick(nl_bump_rx_t *rx, uint32_t now_ms);
+
+// ---------------------------------------------------------------- eye looks
+// An eye look stored in a WLED preset ("nibbles":{"eyes":{"look":{..}}}):
+// everything the eyes' presets set (firmware/eyes/main/presets.h, preset_t),
+// so the WLED preset is the one place a look is defined. WLED sends it when
+// the preset is applied (a few times, same id); the leader eye shows it in its
+// look slot (preset index = its built-in preset count) and passes it to the
+// port eye over the cable. JSON keys are the field names below; colours are
+// [r, g, b] 0..255. Spirals use the eyes' existing spiral shapes (arms and
+// twist snap to the nearest built-in one).
+#define NL_EYE_LOOK_PEAK_BEATS  0x01    // ripple on every sound peak, not every beat
+#define NL_EYE_LOOK_RAINBOW     0x02    // rainbow colouring, not the palette
+#define NL_EYE_LOOK_BANDS       0x04    // hard-edged bands, not glowing rings
+
+typedef struct NL_PACKED {
+    uint8_t id;             // the WLED preset it came from (repeats share it)
+    uint8_t flags;          // NL_EYE_LOOK_*
+    char name[NL_NAME_LEN];
+    uint8_t palette[4][3];  // 0..255
+    uint8_t rings, spiral_arms;
+    float hue_spread, sat, palette_step, palette_music;
+    float ring_width, halo_sigma, halo_amp, fill, flow, wobble_px;
+    float pupil_scale, rim_amp, rim_white, ripple_pos, ripple_white;
+    float spiral_twist, spin, spin_per_beat;
+} nl_eye_look_t;
 
 // ---------------------------------------------------------------- battery and power limit
 // The lights' 5 V converter sits at the top of the pole and stutters when its

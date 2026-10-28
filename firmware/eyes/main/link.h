@@ -18,6 +18,10 @@ bool link_get_eye_state(nl_eye_state_t *out, uint32_t max_age_ms);
 
 void link_send_audio(const nl_audio_t *a);
 void link_send_eye_state(const nl_eye_state_t *s);
+// Looks from WLED presets: the leader passes them on (and again now and then,
+// for a port eye that restarted); the port eye takes each once.
+void link_send_look(const nl_eye_look_t *l);
+bool link_take_look(nl_eye_look_t *out);
 
 // Figures reported in our heartbeat.
 void link_set_status(uint16_t fps_x10, uint16_t late_frames);

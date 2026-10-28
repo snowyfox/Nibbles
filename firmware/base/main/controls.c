@@ -120,7 +120,7 @@ static void latch_number(ctl_t *c, out_t *o)
     const ctl_scene_t old = c->live;
     const int p = c->num_preset;
     if ((c->target == TGT_ALL || c->target == TGT_BODY) && p != c->live.body) {
-        emit(o, ACT_PRESET, TGT_BODY, 0, p);
+        emit(o, ACT_PRESET, TGT_BODY, c->target == TGT_ALL, p);   // ALL: the preset's eye settings too
         c->live.body = p;
         if (old.body > 0) c->standby.body = old.body;
     }

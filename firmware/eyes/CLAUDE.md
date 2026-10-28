@@ -182,6 +182,25 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   `render_core_init`), so the two eyes, which face opposite ways, twist and
   spin as mirror images on the shark. The simulator switches per eye.
 
+### Looks from WLED presets (`presets.c`, 2026-10-28; built, not yet run on the eyes)
+- **Receiving:** a WLED preset can hold a whole eye look (`nl_eye_look_t`,
+  every `preset_t` setting; see `wled/README.md`, "Eye settings in presets").
+  The usermod broadcasts it as `NL_MSG_EYE_LOOK`.
+- **Showing it:** the leader puts it in the look slot that isn't on screen
+  (preset indices 18 and 19, alternating), blinks to it like any preset
+  change, stops auto-cycling, and passes it to the port eye over the cable
+  (again every 2 s, for a port eye that restarted). The port eye stores it
+  and follows the leader's preset index as usual.
+- **Why two slots:** a new look is a change of index, so the port eye's
+  existing follow-the-index logic carries it, and the renderer never has a
+  preset change under it mid-frame.
+- **Spirals:** a look's arms and twist snap to the nearest built-in spiral,
+  whose map exists (maps take ~2 s each to build).
+- `preset_get()` / `preset_valid()` take any index, look slots included.
+  Telemetry still reports 18 presets; a look shows as index 18 or 19 with
+  its name.
+- `make -C test/host looks` prints the built-in presets as look JSON.
+
 ### Eye link (`link.c`, `board.c`)
 - The two eyes share one brain over a 3-wire cable: UART1 at 1 Mbaud, GPIO 17
   TX / 18 RX crossed, plus GND; frames from `shared/nibbles_link` (COBS + CRC-16).

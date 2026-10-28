@@ -171,6 +171,40 @@ columns 0-69.
 - **Where:** this runs where the effects are drawn: the main board in the
   main board / display setup below. The display controller stays 1D.
 
+## Eye settings in presets (2026-10-28; the usermod part not yet built or tested)
+
+A WLED preset can carry the eyes' settings, so the preset is the one place a
+whole look is defined. Add to the preset's JSON (WLED's preset editor, API
+mode) either:
+
+- **Level 1**, pick the eyes' own settings:
+  `"nibbles":{"eyes":{"preset":5,"react":"beats","auto":false}}`
+  - `preset` is 1-based; `react` is `preset`, `beats` or `peaks`.
+  - The usermod sends them to the leader eye as commands.
+- **Level 2**, the whole eye look:
+  `"nibbles":{"eyes":{"look":{"name":"Inferno","palette":[[140,0,0],...],"rings":7,...}}}`
+  - The look carries every setting of an eye preset: palette, rings, bands,
+    glow, flow, pupil, ripples and spiral.
+  - `make -C firmware/eyes/test/host looks` prints all 18 built-in eye
+    presets in this form, ready to paste and edit.
+  - The usermod broadcasts the look (`NL_MSG_EYE_LOOK`, three times). The
+    leader eye shows it behind its usual swap blink and passes it to the port
+    eye over the cable.
+  - Looks fill two slots after the built-in presets (indices 18 and 19,
+    alternating), so the base sees eye presets 19 and 20 with the look's
+    name.
+  - Spirals snap to the nearest built-in spiral shape (3 or 5 arms), whose
+    maps are built at boot.
+- `react` and `auto` can go with either level.
+
+When the eye settings apply:
+- **Apply:** a preset applied from WLED's own UI, or from the base with
+  **ALL** + number (the whole shark).
+- **Skipped:**
+  - **BODY** + number (the base sends `NL_PRESET_NO_EYES`);
+  - bump presets, which the base bumps on the eyes separately;
+  - fin presets.
+
 ## Main board and display (tested 2026-10-23)
 The controller (a classic ESP32 without PSRAM) renders the 2D map at only
 ~38 fps with ~70 KB free. Tested split: a faster **main** WLED renders

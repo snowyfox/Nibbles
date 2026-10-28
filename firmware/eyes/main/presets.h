@@ -4,6 +4,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
+#include "nibbles_link.h"
 
 typedef struct {
     float r, g, b;
@@ -46,6 +48,24 @@ typedef struct {
 
 extern const preset_t presets[];
 extern const int preset_count;
+
+// Looks from WLED presets (NL_MSG_EYE_LOOK) live after the built-in presets,
+// in two slots: preset indices PRESET_LOOK and PRESET_LOOK + 1. Each new look
+// goes in the slot not on screen, so a new look is a change of preset index
+// like any other: the leader blinks to it and the port eye follows its index.
+#define PRESET_LOOK preset_count
+#define PRESET_ANY  (preset_count + 2)       // indices 0 .. PRESET_ANY - 1
+const preset_t *preset_get(int index);       // an empty slot or a bad index: preset 0
+bool preset_valid(int index);                // a built-in preset or a filled look slot
+int preset_look_index(void);                 // the newest look's index, -1 = none yet
+// Take a new look into the slot that isn't `showing` (the index on screen).
+// Returns its index, or -1 if it is the newest look already (radio repeats).
+int preset_set_look(const nl_eye_look_t *look, int showing);
+// The built-in preset whose spiral map a preset uses (looks share one with the
+// nearest built-in spiral; their arms and twist are snapped to it).
+int preset_spiral_source(int index);
+// A preset as a look (the export tool and tests).
+void preset_to_look(const preset_t *p, uint8_t id, nl_eye_look_t *out);
 
 // Spin speed (turns per second) for a spiral preset: locked to the music's
 // tempo when there is one, the preset's calm spin otherwise, doubled by hype.

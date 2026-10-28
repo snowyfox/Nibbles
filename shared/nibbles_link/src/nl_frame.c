@@ -13,6 +13,8 @@ _Static_assert(NL_RADIO_MAX <= 250, "ESP-NOW packets are at most 250 bytes");
 _Static_assert(sizeof(nl_audio_t) == 40, "nl_audio_t layout");
 _Static_assert(sizeof(nl_eye_state_t) == 82, "nl_eye_state_t layout");
 _Static_assert(sizeof(nl_eye_state_t) <= NL_MAX_PAYLOAD, "payload too big");
+_Static_assert(sizeof(nl_eye_look_t) == 108, "nl_eye_look_t layout");
+_Static_assert(sizeof(nl_eye_look_t) <= NL_MAX_PAYLOAD, "eye look too big");
 
 uint16_t nl_crc16(const uint8_t *data, size_t len)
 {
