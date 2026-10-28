@@ -40,11 +40,11 @@ int base_tick(unsigned now_ms, int *out)
 }
 
 // live body, eyes, fins; standby body, eyes, fins; target, page, locked,
-// take_preview, shift, diff, brightness
+// take_preview, latch, diff, brightness
 void base_state(int out[13])
 {
     const int v[13] = { ctl.live.body, ctl.live.eyes, ctl.live.fins, ctl.standby.body, ctl.standby.eyes,
-                        ctl.standby.fins, ctl.target, ctl.page, ctl.locked, ctl.take_preview, ctl.down[KEY_SHIFT],
+                        ctl.standby.fins, ctl.target, ctl.page, ctl.locked, ctl.take_preview, ctl.down[KEY_LATCH],
                         ctl_standby_diff(&ctl), ctl.brightness };
     memcpy(out, v, sizeof(v));
 }

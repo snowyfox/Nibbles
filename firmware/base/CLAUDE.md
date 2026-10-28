@@ -54,19 +54,22 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   telemetry); Standby is staged.
   - Targets ALL / BODY (WLED) / EYES / FINS: tap to select, hold for just
     the keys pressed meanwhile.
-  - Number keys 1-8 stage that preset for the target in Standby (PAGE
-    flips to 9-16). FINS: 1 = follow the fins, 2 = locked.
-  - **TAKE**: a tap swaps Standby and Live (commands sent, then Standby holds
-    the old Live, so TAKE again goes back). Held longer than 350 ms it only
-    previews: Standby shows as bumps until released. The preview bumps start
-    on press, so a tap shows the new look at once and the commands land
-    under it.
-  - SHIFT + number: bump that preset on the target while held. SHIFT + TAKE:
-    Standby = Live. PAGE + number: brightness in eighths. FLASH and BLACKOUT:
-    bumps while held. FIN SENSOR: fins follow on / off, live.
+  - **Everything is a bump until it's latched** (the user's design,
+    2026-10-28): holding a number key shows that preset on the target
+    (page 2: 9-16) and it goes back on release. Tap **LATCH** while holding
+    it to keep it: commands go out, then the bumps let go, and the old Live
+    drops into Standby. FINS: 1 = follow the fins, 2 = locked (no bump).
+  - **TAKE** held shows Standby (bumps) and goes back on release; tap LATCH
+    while holding it to keep the swap (Standby then holds the old Live, so
+    TAKE + LATCH again goes back).
+  - LATCH held first, then a number: cue that preset in Standby without
+    showing it. LATCH + TAKE: Standby = Live. PAGE + number: brightness in
+    eighths. FLASH and BLACKOUT: bumps while held. FIN SENSOR: fins follow
+    on / off, live.
   - Hold UNLOCK 1 s to lock or unlock (`KEYPAD_AUTOLOCK_MS` locks after idle).
   - Key LEDs: the target's Live preset red, Standby green, both amber; the
-    selected target in its colour; TAKE blinks green while Standby differs.
+    selected target in its colour; TAKE blinks green while Standby differs; LATCH blinks while there's a
+    held number or TAKE to keep.
   - Bumps now have a slot per receiver (eyes, WLED; each filters on its
     target bit), so the eyes and WLED can bump different presets at once.
     The pads, the bump button and serial bumps use the same slots.
@@ -74,11 +77,11 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   dock / battery / simulated, charging or time left, lights' watts, cell and
   charger temperatures, faults), LIVE (red), STANDBY (green; rows that
   differ bright; tap it = TAKE), and the target box (tap = next target),
-  page, SHIFT, lock, links, keypads found, the event line. Page 1 is the
+  page, LATCH, lock, links, keypads found, the event line. Page 1 is the
   preset grid, page 2 the old cards and bump pads.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
-  lists the names: 1-8, all, body, eyes, fins, page, shift, blackout,
-  finsensor, take, flash, unlock), `sim on|off`, `lights on|off`,
+  lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
+  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`,
   `power` (logs the power board), `page 0|1|2`.
 - Host tests: `make -C firmware/base/test/host`.
 

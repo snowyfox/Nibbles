@@ -8,12 +8,12 @@
 const BASE_COLS = [
   { title: 'Numbers', keys: [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4'], ['5', '5'], ['6', '6'], ['7', '7'], ['8', '8']] },
   { title: 'Functions', keys: [['all', 'ALL'], ['body', 'BODY'], ['eyes', 'EYES'], ['fins', 'FINS'], ['page', 'PAGE'],
-                               ['shift', 'SHIFT'], ['blackout', 'BLACK OUT'], ['finsensor', 'FIN SENSOR']] },
+                               ['latch', 'LATCH'], ['blackout', 'BLACK OUT'], ['finsensor', 'FIN SENSOR']] },
   { title: 'Pole (upper)', keys: [['take', 'TAKE'], ['flash', 'FLASH'], ['unlock', 'UNLOCK']] },
 ];
 // Computer keyboard: hold like the real keys.
 const BASE_KEYBOARD = { Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6', Digit7: '7', Digit8: '8',
-  KeyA: 'all', KeyB: 'body', KeyE: 'eyes', KeyF: 'fins', KeyP: 'page', ShiftLeft: 'shift', ShiftRight: 'shift',
+  KeyA: 'all', KeyB: 'body', KeyE: 'eyes', KeyF: 'fins', KeyP: 'page', ShiftLeft: 'latch', ShiftRight: 'latch', KeyL: 'latch',
   KeyZ: 'blackout', KeyS: 'finsensor', Space: 'take', KeyX: 'flash', KeyU: 'unlock' };
 const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4 };
 const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
@@ -188,7 +188,7 @@ function baseDraw() {
   };
   rows('bs_l', s.live, +$('bri').value, null);
   rows('bs_s', s.standby, null, s.diff);
-  $('bs_s3').textContent = s.diff ? 'press TAKE' : 'same as Live';
+  $('bs_s3').textContent = s.diff ? 'hold TAKE' : 'same as Live';
   $('bs_s3').style.color = s.diff ? '#30e060' : '#4a505a';
   $('bs_preview').textContent = s.preview ? 'PREVIEW' : '';
   $('bs_stby').style.background = s.preview ? '#0c3a18' : 'var(--card)';
@@ -197,7 +197,7 @@ function baseDraw() {
   $('bs_target').style.background = s.locked ? '#4a505a' : tcol;
   $('bs_tname').textContent = s.target;
   $('bs_page').textContent = s.page ? '9-16' : '1-8';
-  $('bs_shift').textContent = s.shift ? 'SHIFT' : '';
+  $('bs_shift').textContent = s.latch ? 'LATCH' : '';
   $('bs_lock').textContent = s.locked ? 'LOCKED: hold UNLOCK' : '';
   $('bs_links').textContent = `Eyes sim  WLED ${lightsFrom === 'shark' ? 'shark' : 'bench'}`;
   const bumping = baseBumping || (s.preview ? 3 : 0);

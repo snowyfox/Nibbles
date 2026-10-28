@@ -533,7 +533,7 @@ typedef struct {
 static struct {
     lv_obj_t *power, *source, *pct, *volts, *amps, *bar, *line1, *line2, *line3, *line4;
     scene_panel_t live, stby;
-    lv_obj_t *target, *target_name, *page, *shift, *lock, *links, *keys;
+    lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
 } m;
 
 static lv_obj_t *make_panel(lv_obj_t *parent, int y, int h, uint32_t border)
@@ -624,9 +624,9 @@ static void build_main_page(void)
     m.target = make_panel(pagem, 454, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
-    m.shift = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
+    m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
     lv_obj_set_style_text_align(m.page, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_align(m.shift, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
     m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 510, 156);
@@ -739,7 +739,7 @@ static void main_update(const display_status_t *s)
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->wled_fresh ? s->brightness : -1, 0xff);
     lv_label_set_text(m.live.note, s->wled_fresh || s->eyes_fresh ? "" : "not heard");
     fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, -1, s->diff);
-    lv_label_set_text(m.stby.val[3], s->diff ? "press TAKE" : "same as Live");
+    lv_label_set_text(m.stby.val[3], s->diff ? "hold TAKE" : "same as Live");
     lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
     lv_label_set_text(m.stby.note, s->take_preview ? "PREVIEW" : "");
     lv_obj_set_style_text_color(m.stby.note, lv_color_hex(COL_STANDBY), 0);
@@ -749,7 +749,7 @@ static void main_update(const display_status_t *s)
     lv_obj_set_style_bg_color(m.target, lv_color_hex(s->keys_locked ? COL_DIM : target_col(s->target)), 0);
     lv_label_set_text(m.target_name, ctl_target_name((ctl_target_t)s->target));
     lv_label_set_text(m.page, s->page ? "9-16" : "1-8");
-    lv_label_set_text(m.shift, s->shift ? "SHIFT" : "");
+    lv_label_set_text(m.latch, s->latch ? "LATCH" : "");
     lv_label_set_text(m.lock, s->keys_locked ? "LOCKED: hold UNLOCK" : "");
     lv_label_set_text_fmt(m.links, "Eyes %s  WLED %s  ch %d", s->eyes_fresh ? "ok" : "--", s->wled_fresh ? "ok" : "--", s->channel);
     lv_obj_set_style_text_color(m.links, lv_color_hex(s->eyes_fresh && s->wled_fresh ? COL_TITLE : COL_WARN), 0);

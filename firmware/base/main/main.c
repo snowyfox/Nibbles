@@ -561,7 +561,7 @@ void app_main(void)
             .diff = ctl_standby_diff(&c),
             .keys_locked = c.locked,
             .take_preview = c.take_preview,
-            .shift = c.down[KEY_SHIFT],
+            .latch = c.down[KEY_LATCH],
         };
         name_of(ds.live_body, wled_names, 256, c.live.body);
         name_of(ds.live_eyes, eye_names, 64, c.live.eyes);

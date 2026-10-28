@@ -314,7 +314,7 @@ class Base:
         self.lib.base_leds(self.now_ms(), leds)
         v = list(st)
         return {"live": v[0:3], "standby": v[3:6], "target": self.lib.base_target_name(v[6]).decode(),
-                "page": v[7], "locked": bool(v[8]), "preview": bool(v[9]), "shift": bool(v[10]), "diff": v[11],
+                "page": v[7], "locked": bool(v[8]), "preview": bool(v[9]), "latch": bool(v[10]), "diff": v[11],
                 "bri": v[12], "leds": {self.names[k]: "#%06x" % leds[k] for k in range(1, len(self.names))}}
 
     async def send(self, writer, msg):

@@ -187,9 +187,10 @@
           <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--text);font-size:14px"><input id="basedock" type="checkbox"> On the dock</label>
           <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--text);font-size:14px"><input id="basekb" type="checkbox" checked> Computer keyboard too</label>
           <p style="color:var(--dim);font-size:12px;line-height:1.5">
-            Keys: 1-8 numbers · A all · B body · E eyes · F fins · P page · Shift · Space TAKE · X flash · Z blackout · S fin sensor · U unlock (hold 1 s).<br>
-            Number keys stage presets in Standby for the target; TAKE swaps Standby and Live (hold it to preview). SHIFT + number bumps a preset;
-            PAGE + number sets brightness; SHIFT + TAKE copies Live back to Standby. The STANDBY panel works as TAKE by touch.<br>
+            Keys: 1-8 numbers · A all · B body · E eyes · F fins · P page · Shift or L LATCH · Space TAKE · X flash · Z blackout · S fin sensor · U unlock (hold 1 s).<br>
+            Everything is a bump until it's latched: hold a number to show that preset on the target, and tap LATCH while holding it to keep it
+            (the old Live drops into Standby). Hold TAKE to show Standby; tap LATCH while holding it to keep the swap. LATCH held first, then a
+            number, cues that preset in Standby unseen; LATCH + TAKE copies Live back to Standby. PAGE + number sets brightness. The STANDBY panel works as TAKE by touch.<br>
             The body's commands go to the WLED card's address over its JSON API (bumps are imitated: on the shark they go by radio);
             the eyes' go to the simulated eyes.
           </p>

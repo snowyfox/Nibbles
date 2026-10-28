@@ -7,7 +7,7 @@
 
 static const char *const key_names[KEY_COUNT] = {
     "none", "1", "2", "3", "4", "5", "6", "7", "8",
-    "all", "body", "eyes", "fins", "page", "shift", "blackout", "finsensor", "take", "flash", "unlock",
+    "all", "body", "eyes", "fins", "page", "latch", "blackout", "finsensor", "take", "flash", "unlock",
 };
 
 const char *ctl_key_name(ctl_key_t key) { return key < KEY_COUNT ? key_names[key] : "?"; }
@@ -93,7 +93,7 @@ static ctl_target_t key_target(ctl_key_t k)
 static bool is_num(ctl_key_t k) { return k >= KEY_NUM1 && k <= KEY_NUM8; }
 static bool is_target(ctl_key_t k) { return k >= KEY_ALL && k <= KEY_FINS; }
 
-// Number key n (1-8) on the current page, staged in Standby for the target.
+// Number key n (1-8) on the current page, cued in Standby for the target.
 static void stage(ctl_t *c, int n)
 {
     const int preset = n + c->page * CTL_PAGE_SIZE;
@@ -105,9 +105,35 @@ static void stage(ctl_t *c, int n)
     }
 }
 
+// The held number becomes Live for the target (LATCH tapped while it's held):
+// commands first, then the bumps let go, so nothing changes back on release.
+// What was Live drops into Standby, one TAKE away.
+static void latch_number(ctl_t *c, out_t *o)
+{
+    const ctl_scene_t old = c->live;
+    const int p = c->num_preset;
+    if ((c->target == TGT_ALL || c->target == TGT_BODY) && p != c->live.body) {
+        emit(o, ACT_PRESET, TGT_BODY, 0, p);
+        c->live.body = p;
+        if (old.body > 0) c->standby.body = old.body;
+    }
+    if ((c->target == TGT_ALL || c->target == TGT_EYES) && p != c->live.eyes) {
+        emit(o, ACT_PRESET, TGT_EYES, 0, p);
+        c->live.eyes = p;
+        if (old.eyes > 0) c->standby.eyes = old.eyes;
+    }
+    if (c->target == TGT_FINS && c->num_n <= 2 && (c->num_n == 1) != c->live.fins) {
+        emit(o, ACT_FINS, TGT_FINS, 0, c->num_n == 1);
+        c->live.fins = c->num_n == 1;
+        if (old.fins >= 0) c->standby.fins = old.fins;
+    }
+    bumps_off(c, o);
+    c->num_bump = KEY_NONE;   // its release changes nothing
+}
+
 static void take_press(ctl_t *c, out_t *o)
 {
-    // Show Standby straight away, as bumps; a short press then makes it Live.
+    // Show Standby as bumps while TAKE is held; LATCH meanwhile keeps it.
     const uint8_t diff = ctl_standby_diff(c);
     if (diff & SLOT_BIT(TGT_BODY)) bump_on(c, o, TGT_BODY, NL_BUMP_PRESET, c->standby.body);
     if (diff & SLOT_BIT(TGT_EYES)) bump_on(c, o, TGT_EYES, NL_BUMP_PRESET, c->standby.eyes);
@@ -180,18 +206,24 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             if (c->down[KEY_PAGE]) {                      // brightness in eighths
                 c->page_used = true;
                 emit(&o, ACT_BRIGHTNESS, TGT_BODY, 0, n * 255 / CTL_PAGE_SIZE);
-            } else if (c->down[KEY_SHIFT]) {              // bump that preset while held
+            } else if (c->down[KEY_LATCH]) {              // LATCH first: cue it in Standby, unseen
+                stage(c, n);
+            } else {                                      // show that preset while held
                 if (c->num_bump != KEY_NONE) bumps_off(c, &o);
                 c->num_bump = key;
-                bump_target(c, &o, c->target, NL_BUMP_PRESET, n + c->page * CTL_PAGE_SIZE);
-            } else {
-                stage(c, n);
+                c->num_n = n;
+                c->num_preset = n + c->page * CTL_PAGE_SIZE;
+                bump_target(c, &o, c->target, NL_BUMP_PRESET, c->num_preset);
             }
         } else if (c->num_bump == key) {
             c->num_bump = KEY_NONE;
             bumps_off(c, &o);
         }
     } else switch (key) {
+        case KEY_LATCH:
+            if (down && c->num_bump != KEY_NONE) latch_number(c, &o);
+            else if (down && c->take_preview) take_release(c, &o, true);
+            break;
         case KEY_PAGE:
             if (down) c->page_used = false;
             else if (!c->page_used) c->page ^= 1;
@@ -208,12 +240,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             }
             break;
         case KEY_TAKE:
-            if (down && c->down[KEY_SHIFT]) {             // SHIFT + TAKE: Standby = Live again
+            if (down && c->down[KEY_LATCH]) {             // LATCH + TAKE: Standby = Live again
                 c->standby = c->live;
             } else if (down) {
                 take_press(c, &o);
-            } else if (c->take_preview) {
-                take_release(c, &o, now_ms - c->down_ms[KEY_TAKE] < CTL_TAKE_HOLD_MS);
+            } else if (c->take_preview) {                 // let go without LATCH: back as it was
+                take_release(c, &o, false);
             }
             break;
         default:
@@ -297,7 +329,8 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
         rgb[k] = t == c->target ? target_color(t) : dim(target_color(t), 12);
     }
     rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : c->page ? 0x2040ff : C_IDLE;
-    rgb[KEY_SHIFT] = c->down[KEY_SHIFT] ? 0xffffff : C_IDLE;
+    // LATCH: lit while there's something held to keep (a number or TAKE).
+    rgb[KEY_LATCH] = c->down[KEY_LATCH] ? 0xffffff : (c->num_bump != KEY_NONE || c->take_preview) ? (blink ? 0xffd000 : 0x403400) : C_IDLE;
     rgb[KEY_BLACKOUT] = c->down[KEY_BLACKOUT] ? 0xff0000 : 0x300000;
     rgb[KEY_FLASH] = c->down[KEY_FLASH] ? 0xffffff : 0x303030;
     rgb[KEY_FIN_SENSOR] = c->live.fins == 1 ? 0x00c040 : c->live.fins == 0 ? 0x302000 : C_OFF;

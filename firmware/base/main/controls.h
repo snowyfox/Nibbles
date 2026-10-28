@@ -1,5 +1,6 @@
 // The keypad's logic: Live / Standby like a video switcher, targets, pages,
-// bumps and the keys' LED colours. Plain C with no ESP-IDF calls, so it runs
+// bumps and the keys' LED colours. Everything is a bump until it's latched:
+// hold a number (or TAKE) to show it, tap LATCH while holding to keep it. Plain C with no ESP-IDF calls, so it runs
 // in the host tests (test/host); main.c feeds it key events and telemetry and
 // carries out the actions it returns.
 #pragma once
@@ -13,10 +14,11 @@ typedef enum {
     KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8,
     KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS,  // target selectors
     KEY_PAGE,        // tap: presets 1-8 / 9-16; hold + number: brightness
-    KEY_SHIFT,       // hold + number: bump that preset while held; + TAKE: clear Standby
+    KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
+                     // held first, then a number: cue that preset in Standby; + TAKE: Standby = Live
     KEY_BLACKOUT,    // bump while held
     KEY_FIN_SENSOR,  // tap: fin LEDs follow the fins, or stay at the modelled angle (live)
-    KEY_TAKE,        // tap: swap Standby and Live; hold: show Standby while held
+    KEY_TAKE,        // held: show Standby while held; + a tap of LATCH: swap Standby and Live
     KEY_FLASH,       // bump while held
     KEY_UNLOCK,      // hold: lock or unlock the keypad
     KEY_COUNT
@@ -53,7 +55,6 @@ typedef struct {
 } ctl_action_t;
 
 #define CTL_MAX_ACTIONS      8
-#define CTL_TAKE_HOLD_MS     350     // TAKE held longer than this: a preview, not a swap
 #define CTL_LOCK_HOLD_MS     1000    // UNLOCK held this long locks or unlocks
 #define CTL_PAGE_SIZE        8
 
@@ -73,7 +74,8 @@ typedef struct {
     uint32_t last_key_ms;
     bool down[KEY_COUNT];
     uint32_t down_ms[KEY_COUNT];
-    ctl_key_t num_bump;              // number key bumping (SHIFT), or KEY_NONE
+    ctl_key_t num_bump;              // number key held (bumping its preset), or KEY_NONE
+    int num_n, num_preset;           // its number (1-8) and preset (with the page) when pressed
     bool take_preview;               // TAKE is down and the Standby bumps are on
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, 1 << TGT_EYES) with a bump on
 } ctl_t;

@@ -41,7 +41,7 @@ typedef struct {
     uint8_t target;           // ctl_target_t
     uint8_t page;
     uint8_t diff;             // ctl_standby_diff()
-    bool keys_locked, take_preview, shift;
+    bool keys_locked, take_preview, latch;
     uint8_t keypads_found, keypads_total;
 } display_status_t;
 
