@@ -6,3 +6,4 @@ sdkconfig.old
 .DS_Store
 wled/backup/
 __pycache__/
+.cache/
