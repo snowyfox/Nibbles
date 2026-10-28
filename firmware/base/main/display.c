@@ -586,7 +586,7 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
     sp->panel = make_panel(pagem, y, 132, color);
     sp->title = at(sp->panel, &lv_font_montserrat_16, color, 8, 5, 0);
     lv_label_set_text(sp->title, title);
-    sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 92, 7, 66);
+    sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 82, 7, 76);
     lv_obj_set_style_text_align(sp->note, LV_TEXT_ALIGN_RIGHT, 0);
     for (int i = 0; i < 4; i++) {
         sp->key[i] = at(sp->panel, &lv_font_montserrat_14, key_cols[i], 8, 30 + i * 25, 0);
