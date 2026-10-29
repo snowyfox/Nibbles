@@ -135,12 +135,23 @@ work in 2D (see above); to go back to 1D, follow
 `wled/backup/20260926-1850-pre-2d/REVERT.md` (delete `/ledmap.json`, reboot;
 tested on the bench).
 
-## Fin presets (2026-10-28; the usermod part not yet built or tested)
+## Fin presets (2026-10-28; tested on the bench as main board)
 
 The fins can run their own effect while the body keeps its preset. The map
 (`tools/sim/make_ledmap.py`) has a **fin panel**, 25 x 34 cells of 10 mm, to
 the right of the side view (columns 70-94). The body's segment stays on
 columns 0-69.
+
+- **The panel's first cell is mapped to a real LED** (LED 866, whose own
+  cell comes much later, so it always shows its own colour). WLED works out
+  what a segment can do from the LEDs under it: a segment over no LEDs at
+  all is on/off only, ignores palettes and draws most effects black (seen
+  2026-10-28: Plasma black, `"lc":0`, palette stuck at 0). With the
+  anchor, the fin segment shows `"lc":1` and keeps its palette.
+- **Body presets should use only segment 0.** Presets 3 and 5 are older
+  multi-segment presets from the 1D controller (segments 1-4 are stretches
+  of the strip); they barely light the fins, and "follow the body" (80,
+  which removes segment 1) takes part of their body away.
 
 - **Fin presets** are WLED presets **81-96** (fin preset 1-16 on the
   base's keypad; `NL_FIN_PRESET_BASE` in `shared/nibbles_link`). Each one

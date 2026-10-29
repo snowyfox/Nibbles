@@ -29,7 +29,12 @@ round((v1 - z + oy) / cell - 0.5)), as for the mapped LEDs; turning a fin to
 calibrated angle a is a turn of (modelled - a) degrees about the turn axis.
 
 Fin panel (the fins' own segment): a region to the right of the side view,
---fin-panel-mm cells, with no LEDs mapped in it. A preset that switches a
+--fin-panel-mm cells, with no LEDs of its own. Its first cell is mapped to the
+LED with the last cell of all (its own cell comes later, and WLED writes the
+cells to the LEDs in order, so that LED always shows its own cell): WLED
+works out what a segment can do (colours, palettes) from the LEDs under it,
+and a segment over no LEDs at all is an on/off one, whose effects draw in
+segment colour 1 or not at all. A preset that switches a
 segment on there gives the fins their own effect: the usermod places each fin
 LED in the panel by its hinge angle and shows the panel's colour there, in
 one of two projections (set per preset, {"nibbles":{"finproj":"side"|"top"}}):
@@ -196,6 +201,10 @@ def main():
             grid += [[-1] * (width + pw) for _ in range(ph - height)]
             height = ph
         width += pw
+        # The capability anchor (see the docstring): the LED whose own cell is last.
+        last = max((r * width + c, led) for r, row in enumerate(grid) for c, led in enumerate(row) if led >= 0)
+        assert last[0] > py * width + px
+        grid[py][px] = last[1]
 
     # Fin geometry for following the real fin angle (see the module docstring).
     num = lambda x: ("%.3f" % x).rstrip("0").rstrip(".")
