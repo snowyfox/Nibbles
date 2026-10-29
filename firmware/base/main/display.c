@@ -913,15 +913,15 @@ static void ui_update(const display_status_t *s)
     if (s->wled_fresh) {
         const nl_wled_telemetry_t *w = &s->wled;
         const nl_wled_stream_t *st = &s->stream;
+        // With a main board streaming to the display, telemetry comes from the
+        // main board (the display only reports the stream): show its preset.
         if (!w->on) lv_label_set_text(wled_card.big, "OFF");
-        else if (s->stream_fresh) lv_label_set_text(wled_card.big, "Streamed");  // its own preset is hidden behind the stream
         else if (w->preset && w->name[0]) lv_label_set_text_fmt(wled_card.big, "%.*s", NL_NAME_LEN, w->name);
         else if (w->preset) lv_label_set_text_fmt(wled_card.big, "Preset %d", w->preset);
         else lv_label_set_text(wled_card.big, "No preset");
-        if (s->stream_fresh) {
-            lv_label_set_text_fmt(wled_card.line1, "from %u.%u.%u.%u", st->source_ip[0], st->source_ip[1],
-                                  st->source_ip[2], st->source_ip[3]);
-            lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(COL_TEXT), 0);
+        if (s->stream_fresh) {   // the display's report on the stream from the main board
+            lv_label_set_text_fmt(wled_card.line1, "#%d  bri %d  streamed", w->preset, w->bri);
+            lv_obj_set_style_text_color(wled_card.line1, lv_color_hex(st->stalls ? COL_WARN : COL_TEXT), 0);
             lv_label_set_text_fmt(wled_card.line2, "%d fps  %u stalls/min  max %u ms", w->fps, st->stalls, st->max_gap_ms);
         } else {
             lv_label_set_text_fmt(wled_card.line1, "#%d  bri %d  fx %d  pal %d", w->preset, w->bri, w->fx, w->palette);

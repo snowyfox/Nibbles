@@ -168,8 +168,8 @@ columns 0-69.
   - runs fin bumps (`NL_TARGET_FINS`) beside body bumps;
   - puts the fins' preset back after a body bump;
   - queues its own preset applies (WLED keeps only one waiting).
-- **Where:** this runs where the effects are drawn: the main board in the
-  main board / display setup below. The display controller stays 1D.
+- **Where:** on the main board (see "Main board and display"); the display
+  stays 1D.
 
 ## Eye settings in presets (2026-10-28; the usermod part not yet built or tested)
 
@@ -205,27 +205,47 @@ When the eye settings apply:
   - bump presets, which the base bumps on the eyes separately;
   - fin presets.
 
-## Main board and display (tested 2026-10-23)
+## Main board and display (the plan since 2026-10-28; first tested 2026-10-23)
 The controller (a classic ESP32 without PSRAM) renders the 2D map at only
-~38 fps with ~70 KB free. Tested split: a faster **main** WLED renders
-everything and streams every LED (DDP, physical LED order) to the
-controller, which only displays it.
+~38 fps with ~70 KB free. So a faster **main board** renders everything and
+streams every LED (DDP, physical LED order) to the controller, which only
+displays them. **The main board is the brain**: everything Nibbles-specific
+runs there; the controller is a display.
 
-- **Main** (for the test, a second Waveshare 3.49: MAC 80:45:6b:35:d0:14,
-  `nibbles_dev_s3_349`): the shark's config, presets and 2D map; one network
-  LED output of 1064 LEDs (DDP) to the controller; its own mic (ES7210 above);
-  the Nibbles usermod **disabled** (else it is a second radio anchor and the
-  base sees two WLEDs, alternating between their presets). It still copies the
-  2D partners with the usermod disabled. Fin following needs its radio, so
-  the fins stay at the modelled angle.
-- **Display** (the real controller): no `/ledmap.json` (1D). WLED writes
-  incoming realtime pixels into its frame buffer by cell and then through its
-  own ledmap, so with a ledmap the stream comes out scrambled. Its usermod
-  still anchors the radio and talks to the eyes and base; its 2D copies and
-  fin following are idle. It shows the stream over its own effects and falls
-  back to them 2.5 s after the stream stops (WLED's realtime timeout).
-  The base's WLED preset and brightness commands still go to the display,
-  whose effects are hidden behind the stream.
+- **Main board** (for now the bench 3.49: MAC 80:45:6b:35:d0:14,
+  `nibbles_dev_s3_349`, at 4.3.2.2 on the controller's network):
+  - the shark's config and presets, the 2D map with the fin panel, fin
+    presets, and the presets' eye settings;
+  - one network LED output of 1064 LEDs (DDP) to 4.3.2.1;
+  - its own mic (ES7210 above);
+  - the Nibbles usermod **on**, in its normal role: it anchors the radio
+    and talks to the base, the eyes and the fin node; telemetry, commands,
+    bumps, fin following, fin presets, eye looks, and the simulator mirror.
+- **Display** (the real controller, 4.3.2.1, its own AP "Nibbles"):
+  - no `/ledmap.json` (1D). WLED writes incoming realtime pixels into its
+    frame buffer by cell and then through its own ledmap, so with a ledmap
+    the stream comes out scrambled.
+  - The usermod has **`display` on** (`{"um":{"Nibbles":{"display":true}}}`):
+    it only listens for the base's battery readings, so the battery-aware
+    current limit protects the LEDs it drives. It reports how steadily the
+    stream arrives (`NL_MSG_WLED_STREAM`, and its Info page). No anchoring,
+    telemetry, commands or bumps, so the base sees one WLED, the main board.
+  - It falls back to its own effects 2.5 s after the stream stops (WLED's
+    realtime timeout).
+- **Brightness:** the base and the eyes follow the main board's
+  brightness, which is applied before the stream. The display stays at its
+  own brightness, with the current limit on top.
+- **The base:** its WLED card shows the main board's preset. While the
+  display reports a stream, the card's second line shows its stalls per
+  minute and longest gap.
+- **The simulator:** mirror the main board (4.3.2.2), which has the whole
+  picture and the usermod's state.
+- **Tested 2026-10-28:** with the bench as main board and the controller as
+  display, the base's keys work end to end (fin presets, LATCH, ALL bumps,
+  FLASH) and the display streams with 0 stalls a minute.
+- **Back to the single board:** set `display` off on the controller, put its
+  ledmap back, and stop the main board's stream.
+  Backups: `wled/backup/20261028-pre-display-role/`.
 
 Measured: the main renders the controller's preset 33 at 124 fps uncapped
 (vs 38), with 194 KB free plus 8 MB PSRAM; the display shows 50-55 fps at a

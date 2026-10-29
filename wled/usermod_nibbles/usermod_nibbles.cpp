@@ -57,6 +57,14 @@
 //   I2C, once AudioReactive's I2S clocks run. Then AudioReactive reads it as
 //   "Generic I2S with MCLK" (see wled/README.md for the pins).
 //
+// Main board and display (two WLEDs, the main one streaming every LED to the
+// controller that drives them; wled/README.md): the main board runs all of the
+// above. The display sets "display" in this usermod's settings: it only
+// listens for the base's battery readings (its current limit protects the
+// LEDs it drives) and reports how steadily the stream arrives. No anchoring,
+// telemetry, commands or bumps, so the base, eyes and fin node only ever see
+// the main board.
+//
 // Messages come from shared/nibbles_link (the same protocol code as the eyes
 // and base). See docs/architecture.md in the Nibbles repo.
 #include "wled.h"
@@ -136,6 +144,7 @@ class NibblesUsermod : public Usermod {
   private:
     bool enabled = true;
     bool anchor = true;
+    bool display = false;   // the display of a main board / display pair: battery readings in, stream reports out
     bool audio = false;  // publish AudioReactive's analysis for the eyes
     unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0, lastAudio = 0, lastStream = 0;
     nl_stream_gaps_t streamGaps;
@@ -1079,6 +1088,7 @@ class NibblesUsermod : public Usermod {
       size_t len;
       if (!nl_radio_parse(it.data, it.len, &h, &pl, &len)) return;
       rxCount++;
+      if (display && h.type != NL_MSG_BATTERY) return;   // the main board answers everything else
       if (h.type == NL_MSG_EYE_TELEMETRY && len == sizeof(nl_eye_telemetry_t)) {
         memcpy(&eyes, pl, sizeof(eyes));
         eyesAt = millis();
@@ -1171,6 +1181,13 @@ class NibblesUsermod : public Usermod {
         if (!got) break;
         handle(it);
       }
+      if (display) {   // listening only (battery readings, in handle()); just the stream reports out
+        if (millis() - lastStream >= 1000) {
+          lastStream = millis();
+          sendStream();
+        }
+        return;
+      }
       bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
       finBumpEvent(nl_bump_rx_tick(&finBumps, millis()));
       eyeSendLoop(millis());
@@ -1237,6 +1254,10 @@ class NibblesUsermod : public Usermod {
       JsonArray radio = user.createNestedArray(F("Nibbles radio"));
       if (!radioUp()) {
         radio.add(F("off"));
+      } else if (display) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "display: ch %d, battery readings only (rx %lu)", WiFi.channel(), (unsigned long)rxCount);
+        radio.add(buf);
       } else {
         char buf[80];
         snprintf(buf, sizeof(buf), "ch %d%s, rx %lu, cmds %lu, bumps %lu, audio %s", WiFi.channel(),
@@ -1364,6 +1385,7 @@ class NibblesUsermod : public Usermod {
       JsonObject top = root.createNestedObject(FPSTR(_name));
       top[F("enabled")] = enabled;
       top[F("anchor")] = anchor;
+      top[F("display")] = display;                 // the display of a main board / display pair
       top[F("audio")] = audio;
       top[F("power")] = powerEnabled;            // battery-aware current limit
       top[F("power_max_ma")] = powerModel.max_ma;  // its ceiling (replaces WLED's own limit field)
@@ -1380,6 +1402,7 @@ class NibblesUsermod : public Usermod {
       bool complete = !top.isNull();
       complete &= getJsonValue(top[F("enabled")], enabled, true);
       complete &= getJsonValue(top[F("anchor")], anchor, true);
+      complete &= getJsonValue(top[F("display")], display, false);
       complete &= getJsonValue(top[F("audio")], audio, false);
       const nl_power_model_t def = NL_POWER_MODEL_DEFAULT;
       complete &= getJsonValue(top[F("power")], powerEnabled, true);
