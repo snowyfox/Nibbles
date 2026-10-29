@@ -533,7 +533,7 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *source, *pct, *batt, *batt_fill, *batt_bolt, *line1, *line2, *line_in, *line3, *line4;
+    lv_obj_t *power, *pct, *in_pct, *in_usb, *line1, *line2, *line_in, *line3, *line4;
     scene_panel_t live, stby;
     lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
 } m;
@@ -618,30 +618,59 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
     return o;
 }
 
-static void build_battery(lv_obj_t *parent, int x, int y)
+typedef struct {
+    lv_obj_t *outline, *nub, *fill, *bolt;
+} battery_t;
+
+static battery_t batt_pack, batt_in;   // the internal pack (right), the LEMO input's battery (left)
+
+static void build_battery(battery_t *b, lv_obj_t *parent, int x, int y)
 {
-    m.batt = box(parent, x, y, BATT_W, BATT_H, 4);
-    lv_obj_set_style_bg_opa(m.batt, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(m.batt, 1, 0);
-    lv_obj_set_style_border_color(m.batt, lv_color_hex(COL_TEXT), 0);
-    lv_obj_set_style_border_opa(m.batt, LV_OPA_40, 0);
-    lv_obj_t *nub = box(parent, x + BATT_W + 1, y + 4, 2, BATT_H - 8, 1);
-    lv_obj_set_style_bg_color(nub, lv_color_hex(COL_TEXT), 0);
-    lv_obj_set_style_bg_opa(nub, LV_OPA_40, 0);
-    m.batt_fill = box(m.batt, 1, 1, 0, BATT_H - 4, 2);   // positions start inside the 1 px border: 2 px from the edge
-    m.batt_bolt = label(m.batt, &lv_font_montserrat_12, COL_TEXT);
-    lv_label_set_text(m.batt_bolt, LV_SYMBOL_CHARGE);
-    lv_obj_center(m.batt_bolt);
+    b->outline = box(parent, x, y, BATT_W, BATT_H, 4);
+    lv_obj_set_style_bg_opa(b->outline, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(b->outline, 1, 0);
+    lv_obj_set_style_border_color(b->outline, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_border_opa(b->outline, LV_OPA_40, 0);
+    b->nub = box(parent, x + BATT_W + 1, y + 4, 2, BATT_H - 8, 1);
+    lv_obj_set_style_bg_color(b->nub, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_bg_opa(b->nub, LV_OPA_40, 0);
+    b->fill = box(b->outline, 1, 1, 0, BATT_H - 4, 2);   // positions start inside the 1 px border: 2 px from the edge
+    b->bolt = label(b->outline, &lv_font_montserrat_12, COL_TEXT);
+    lv_label_set_text(b->bolt, LV_SYMBOL_CHARGE);
+    lv_obj_center(b->bolt);
+}
+
+// pct < 0: no reading (an empty, dimmer outline).
+static void set_battery(battery_t *b, int pct, bool charging)
+{
+    lv_obj_set_style_border_opa(b->outline, pct < 0 ? LV_OPA_20 : LV_OPA_40, 0);
+    lv_obj_set_style_bg_opa(b->nub, pct < 0 ? LV_OPA_20 : LV_OPA_40, 0);
+    lv_obj_set_width(b->fill, pct > 0 ? 1 + (BATT_W - 5) * pct / 100 : 0);
+    lv_obj_set_style_bg_color(b->fill, lv_color_hex(charging ? COL_IOS_GREEN : pct <= 20 ? COL_IOS_RED : COL_TEXT), 0);
+    if (charging) lv_obj_remove_flag(b->bolt, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(b->bolt, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void show_battery(battery_t *b, bool on)
+{
+    lv_obj_t *parts[] = { b->outline, b->nub };
+    for (int i = 0; i < 2; i++) {
+        if (on) lv_obj_remove_flag(parts[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(parts[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void build_main_page(void)
 {
-    // The power status bar: source left, charge and battery right, small lines below.
+    // The power status bar: the LEMO input left (an external battery, or a
+    // USB-C supply), the internal pack right, small lines below.
     m.power = make_panel(pagem, 4, 103, 0);
-    m.source = at(m.power, &lv_font_montserrat_14, COL_TITLE, 8, 6, 70);
-    m.pct = at(m.power, &lv_font_montserrat_16, COL_TEXT, 70, 4, 50);
+    build_battery(&batt_in, m.power, 8, 7);
+    m.in_pct = at(m.power, &lv_font_montserrat_14, COL_TEXT, 42, 6, 44);
+    m.in_usb = at(m.power, &lv_font_montserrat_14, COL_TEXT, 8, 6, 78);
+    m.pct = at(m.power, &lv_font_montserrat_14, COL_TEXT, 82, 6, 38);
     lv_obj_set_style_text_align(m.pct, LV_TEXT_ALIGN_RIGHT, 0);
-    build_battery(m.power, 124, 7);
+    build_battery(&batt_pack, m.power, 124, 7);
     m.line1 = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 26, 148);
     m.line2 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 41, 148);
     m.line_in = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 56, 148);
@@ -708,24 +737,27 @@ static void main_update(const display_status_t *s)
 {
     const power_status_t *p = &s->power;
     char text[48], a[16];
-    // POWER: where it comes from, the charge and battery icon
+    // POWER: the LEMO input (left) and the internal pack (right)
     const bool board = p->have_charger || p->have_monitor || p->have_expander;
-    if (p->sim) { lv_label_set_text(m.source, "SIM"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_WLED), 0); }
-    else if (!board) { lv_label_set_text(m.source, "no board"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_DIM), 0); }
-    else if (p->docked) { lv_label_set_text(m.source, "DOCK"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_OK), 0); }
-    else { lv_label_set_text(m.source, "BATTERY"); lv_obj_set_style_text_color(m.source, lv_color_hex(COL_WARN), 0); }
     const chg_state_t cs = (chg_state_t)p->chg_state;
     const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
-    const int pct = p->pack_pct >= 0 ? p->pack_pct : 0;
-    const uint32_t level_col = charging ? COL_IOS_GREEN : pct <= 20 ? COL_IOS_RED : COL_TEXT;
+    set_battery(&batt_pack, p->pack_pct, charging);
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
     else lv_label_set_text(m.pct, "--");
     lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : COL_TEXT), 0);
-    lv_obj_set_width(m.batt_fill, pct ? 1 + (BATT_W - 5) * pct / 100 : 0);
-    lv_obj_set_style_bg_color(m.batt_fill, lv_color_hex(level_col), 0);
-    if (charging) lv_obj_remove_flag(m.batt_bolt, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(m.batt_bolt, LV_OBJ_FLAG_HIDDEN);
-    // Small lines: what the pack is doing
+    if (p->input == INPUT_SUPPLY) {   // a USB-C charger: its voltage, no charge to show
+        show_battery(&batt_in, false);
+        lv_label_set_text(m.in_pct, "");
+        lv_label_set_text_fmt(m.in_usb, LV_SYMBOL_USB " %d.%d V", p->vbus_mv / 1000, p->vbus_mv % 1000 / 100);
+    } else {
+        show_battery(&batt_in, true);
+        set_battery(&batt_in, p->input_pct, false);
+        lv_label_set_text(m.in_usb, "");
+        if (p->input_pct >= 0) lv_label_set_text_fmt(m.in_pct, "%d%%", p->input_pct);
+        else lv_label_set_text(m.in_pct, "--");
+        lv_obj_set_style_text_color(m.in_pct, lv_color_hex(p->input_pct < 0 ? COL_DIM : COL_TEXT), 0);
+    }
+    // Small lines: what the pack is doing ("SIM:" first for made-up readings)
     if (!board && !p->sim) {
         lv_label_set_text(m.line1, "Power board not found");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_DIM), 0);
@@ -747,6 +779,10 @@ static void main_update(const display_status_t *s)
     } else {
         lv_label_set_text(m.line1, "On the pack");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_TEXT), 0);
+    }
+    if (p->sim) {
+        snprintf(text, sizeof(text), "SIM: %s", lv_label_get_text(m.line1));
+        lv_label_set_text(m.line1, text);
     }
     // the pack's voltage and current
     if (p->pack_pct >= 0) {

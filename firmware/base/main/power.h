@@ -32,6 +32,8 @@ typedef struct {
     int pack_mv;              // best pack voltage reading (0 = none)
     int pack_pct;             // -1 = no reading
     int runtime_min;          // on the pack at the present load; -1 = not on the pack or no load
+    uint8_t input;            // input_kind_t: what feeds the LEMO input
+    int input_pct;            // an external battery's charge from its voltage; -1 = not a battery
 } power_status_t;
 
 esp_err_t power_start(void);

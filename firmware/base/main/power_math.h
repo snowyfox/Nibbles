@@ -14,6 +14,14 @@
 // sag at current_ma drawn from the pack (positive = discharging).
 int pack_percent(int pack_mv, int current_ma);
 
+// What feeds the LEMO input, from its voltage: an external battery (a 4S pack
+// like ours, at most 16.8 V) or a supply (a USB-C PD charger through a 20 V
+// trigger board), or nothing.
+#define INPUT_PRESENT_MV    5000    // below this: nothing connected
+#define INPUT_SUPPLY_MV     17500   // above a full 4S pack: a supply
+typedef enum { INPUT_NONE = 0, INPUT_BATTERY, INPUT_SUPPLY } input_kind_t;
+input_kind_t input_kind(int vbus_mv);
+
 // Minutes left at load_mw from pct, or -1 when the load is too small to say.
 int runtime_minutes(int pct, int load_mw);
 

@@ -281,22 +281,34 @@ function baseDraw() {
     el.querySelector('.led').style.boxShadow = c === '#000000' ? 'none' : `0 0 10px ${c}`;
   }
   // POWER (simulated: the pack slider, the dock box and the lights' frame)
-  const pct = +$('basepack').value, docked = $('basedock').checked;
+  const pct = +$('basepack').value, input = $('basein').value, docked = input !== 'none';
+  const inPct = +$('baseinpct').value;
   const lightsW = baseLightsMw / 1000;
-  $('bs_source').textContent = docked ? 'DOCK' : 'BATTERY';
-  $('bs_source').style.color = docked ? 'var(--ok)' : 'var(--warn)';
+  // the LEMO input, left: an external battery's charge, or a USB-C supply's voltage (as the firmware)
+  const setBatt = (pre, p, charging) => {
+    $(pre + 'bar').style.width = `${p > 0 ? 1 + Math.floor(22 * p / 100) : 0}px`;
+    $(pre + 'bar').style.background = charging ? '#34c759' : p <= 20 ? '#ff3b30' : '#fff';   // iOS green / red / white
+    $(pre + 'bolt').style.visibility = charging ? 'visible' : 'hidden';
+    $(pre + 'batt').style.borderColor = $(pre + 'nub').style.background = p < 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.4)';
+  };
+  const usb = input === 'usb';
+  $('bs_inbatt').style.display = $('bs_innub').style.display = usb ? 'none' : '';
+  setBatt('bs_in', input === 'battery' ? inPct : -1, false);
+  $('bs_inpct').textContent = usb ? '' : input === 'battery' ? `${inPct}%` : '--';
+  $('bs_inpct').style.color = input === 'battery' ? 'var(--text)' : 'var(--dim)';
+  $('bs_inusb').textContent = usb ? 'USB 20.1 V' : '';   // the firmware draws the USB symbol
+  $('baseinpctv').textContent = `${inPct}%`;
   // the battery icon: filled to the charge, a bolt while charging (as the firmware)
   const charging = docked && pct < 100;
   $('bs_pct').textContent = `${pct}%`;
-  $('bs_bar').style.width = `${pct ? 1 + Math.floor(22 * pct / 100) : 0}px`;
-  $('bs_bar').style.background = charging ? '#34c759' : pct <= 20 ? '#ff3b30' : '#fff';   // iOS green / red / white
-  $('bs_bolt').style.visibility = charging ? 'visible' : 'hidden';
+  setBatt('bs_', pct, charging);
   const cellMv = 3000 + pct * 12;
   const mins = Math.round(pct / 100 * 80 * 60 / Math.max(lightsW + 2, 0.5));
   $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : 'Charging 1.8 A') : `${Math.floor(mins / 60)} h ${String(mins % 60).padStart(2, '0')} min left`;
   $('bs_line1').style.color = docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
   $('bs_line2').textContent = `Pack ${(cellMv * 4 / 1000).toFixed(2)} V  ${docked ? '1.8 A' : `-${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`}`;
-  $('bs_linein').textContent = docked ? 'In 16.60 V  2.1 A' : 'In: nothing connected';   // the LEMO input
+  const inMv = usb ? 20100 : 12000 + inPct * 48;
+  $('bs_linein').textContent = docked ? `In ${(inMv / 1000).toFixed(2)} V  2.1 A` : 'In: nothing connected';   // the LEMO input
   $('bs_line3').textContent = `Lights ${Math.round(lightsW)} W  ${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`;
   if (!s) return;
   // LIVE and STANDBY
@@ -329,7 +341,7 @@ function baseDraw() {
 }
 setInterval(baseDraw, 250);
 
-for (const id of ['basepack', 'basedock']) $(id).addEventListener('input', () => { $('basepackv').textContent = `${$('basepack').value}%`; baseDraw(); });
+for (const id of ['basepack', 'basein', 'baseinpct']) $(id).addEventListener('input', () => { $('basepackv').textContent = `${$('basepack').value}%`; baseDraw(); });
 baseBuildKeypad();
 {   // the STANDBY panel is TAKE by touch, as on the base's screen
   const p = $('bs_stby');

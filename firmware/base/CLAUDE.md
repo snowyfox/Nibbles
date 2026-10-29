@@ -79,13 +79,22 @@ file. Until the hardware exists, all of it can be driven from USB serial.
     target bit), so the eyes and WLED can bump different presets at once.
     The pads, the bump button and serial bumps use the same slots.
 - **Main screen** (page 0, portrait): a power status bar at the top, like a
-  phone's (2026-10-28): DOCK / BATTERY / SIM on the left; the charge and an
-  iOS-style battery icon on the right (thin translucent outline, round cap,
-  the fill white, iOS green with a bolt while charging, iOS red at 20 % or
-  less); then 12 px lines: charging or time left, the pack's volts and
-  amps, the LEMO input (the external battery or the dock: the BQ25798's
-  VBUS and IBUS), the lights' watts and amps, and the cell and charger
-  temperatures, or the worst problem in red in their place. Then LIVE (red), STANDBY (green; rows that
+  phone's (2026-10-28), with two iOS-style batteries (thin translucent
+  outline, round cap; the fill white, iOS green with a bolt while charging,
+  iOS red at 20 % or less):
+  - left, the **LEMO input**, told apart by its voltage (`input_kind`,
+    host-tested): up to 17.5 V an external 4S battery (at most 16.8 V),
+    shown as a battery with its charge from the same 4S curve
+    (`pack_percent` on VBUS and IBUS); above it a USB-C PD charger through a
+    20 V trigger board, shown as the USB symbol and its voltage; nothing
+    connected, a dim empty outline and "--";
+  - right, the **internal pack**: its charge and battery.
+  Then 12 px lines: charging or time left ("SIM:" first for made-up
+  readings), the pack's volts and amps, the LEMO input's volts and amps, the
+  lights' watts and amps, and the cell and charger temperatures, or the
+  worst problem in red in their place. `sim on` alternates a minute on an
+  external battery (15.6 V) or a USB-C supply (20.1 V) and a minute on the
+  pack. Then LIVE (red), STANDBY (green; rows that
   differ bright; tap it = TAKE), and the target box (tap = next target),
   page, LATCH, lock, links, keypads found, the event line. Page 1 is the
   preset grid, page 2 the old cards and bump pads.

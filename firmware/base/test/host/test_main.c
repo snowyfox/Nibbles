@@ -304,6 +304,13 @@ static void test_power_math(void)
     const int mid = pack_percent(15200, 0);    // 3.8 V per cell
     CHECK(mid == 55);
     CHECK(pack_percent(15200, 4000) > mid);     // sagging under load reads higher once corrected
+    // the LEMO input: nothing, an external 4S battery (<= 16.8 V), a 20 V USB-C supply
+    CHECK(input_kind(0) == INPUT_NONE);
+    CHECK(input_kind(3000) == INPUT_NONE);
+    CHECK(input_kind(12000) == INPUT_BATTERY);
+    CHECK(input_kind(16800) == INPUT_BATTERY);
+    CHECK(input_kind(20100) == INPUT_SUPPLY);
+    CHECK(input_kind(19000) == INPUT_SUPPLY);
     CHECK(runtime_minutes(50, 40000) == 60);    // 40 Wh at 40 W
     CHECK(runtime_minutes(50, 100) == -1);
     CHECK(ina226_calibration() == 2560);

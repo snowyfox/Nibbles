@@ -26,6 +26,12 @@ int pack_percent(int pack_mv, int current_ma)
     return 100;
 }
 
+input_kind_t input_kind(int vbus_mv)
+{
+    if (vbus_mv < INPUT_PRESENT_MV) return INPUT_NONE;
+    return vbus_mv > INPUT_SUPPLY_MV ? INPUT_SUPPLY : INPUT_BATTERY;
+}
+
 int runtime_minutes(int pct, int load_mw)
 {
     if (load_mw < 500) return -1;
