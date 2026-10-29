@@ -392,6 +392,8 @@ class RealBase:
         self.shot = None          # base64 lines while a screenshot comes in
         self.shot_size = None
         self.shot_asked = 0.0     # when the last one was asked for
+        self.shot_rle = False
+        self.shot_soon = False    # a key changed something: the next one sooner
         self.on = set()           # pages driving the real base
 
     def open(self):
@@ -442,11 +444,14 @@ class RealBase:
             elif line.startswith("SHOT ") and line != "SHOT END":
                 parts = line.split()
                 self.shot, self.shot_size = [], (int(parts[1]), int(parts[2]))
+                self.shot_rle = len(parts) > 3 and parts[3] == "rle565le"
             elif line == "SHOT END" and self.shot is not None:
                 w, h = self.shot_size
                 data = "".join(self.shot)
-                if len(data) == (w * h * 2 + 2) // 3 * 4:   # whole: a line lost to a log line would shift the picture
-                    asyncio.ensure_future(self.send({"shot": data, "w": w, "h": h}))
+                # whole (a line lost to a log line would shift the picture): the
+                # page checks a run-length one by its pixel count
+                if self.shot_rle or len(data) == (w * h * 2 + 2) // 3 * 4:
+                    asyncio.ensure_future(self.send({"shot": data, "w": w, "h": h, "rle": self.shot_rle}))
                 self.shot = None
             elif self.shot is not None and re.fullmatch(r"[A-Za-z0-9+/=]+", line):
                 self.shot.append(line)    # log lines can land in between: only base64 is kept
@@ -468,19 +473,25 @@ class RealBase:
             await send_to(writer, json.dumps({"realbase": {"connected": self.fd is not None and writer in self.on}}).encode(), 0x1)
         elif "key" in m and writer in self.on and re.fullmatch(r"[a-z0-9]+", str(m["key"])):
             self.write(f"key {m['key']} {'down' if m.get('down') else 'up'}")
+            self.shot_soon = True
 
     async def run(self):
-        """A screenshot about once a second while a page is driving the base;
-        one that never finishes (cut short, or lost) is given up after 4 s."""
+        """A screenshot (run-length encoded, so small) every second while a page
+        is driving the base, and soon after each key; one that never finishes
+        (cut short, or lost) is given up after 4 s."""
         while True:
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.15)
             if self.fd is None or not self.on:
                 continue
-            if self.shot is not None and time.monotonic() - self.shot_asked < 4:
+            since = time.monotonic() - self.shot_asked
+            if self.shot is not None and since < 4:
+                continue
+            if since < (0.15 if self.shot_soon else 1.0):
                 continue
             self.shot = None
+            self.shot_soon = False
             self.shot_asked = time.monotonic()
-            self.write("shot")
+            self.write("shot rle")
 
 
 realbase = None
@@ -491,6 +502,8 @@ async def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--wled", default="10.7.200.154", help="simulator WLED address (also gets audio directly)")
     ap.add_argument("--shark", default="10.7.200.253", help="the shark's WLED controller, offered to the page for mirroring")
+    ap.add_argument("--source", choices=["sim", "shark"], default="sim",
+                    help="start mirroring the shark (--shark) instead of the bench WLED; the page can change it")
     ap.add_argument("--base", default=None, help="the real base's USB serial port (default: found by its serial number)")
     args = ap.parse_args()
 
@@ -500,6 +513,8 @@ async def main():
     await loop.create_datagram_endpoint(lambda: DDPReceiver("sim"), local_addr=("0.0.0.0", DDP_PORT))
     await loop.create_datagram_endpoint(lambda: DDPReceiver("shark"), local_addr=("0.0.0.0", MIRROR_PORT))
     await loop.create_datagram_endpoint(MirrorState, local_addr=("0.0.0.0", MIRROR_PORT + 1))
+    if args.source == "shark":
+        mode["source"], mode["ip"] = "shark", args.shark
     asyncio.ensure_future(keep_mirroring())
     base.build()
     asyncio.ensure_future(base.run())

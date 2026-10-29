@@ -135,7 +135,10 @@ Earlier features, still there (`main/main.c`):
   eyes' telemetry flags, but not for 1.5 s after being touched. The sliders
   don't start a page swipe (they don't chain scrolling to the tileview).
 - `shot` over USB serial (or `python tools/base_shot.py PORT out.png`) prints the next frame as base64 RGB565 (`SHOT 640 172
-  rgb565le` … `SHOT END`) to check the layout from a computer.
+  rgb565le` … `SHOT END`) to check the layout from a computer. `shot rle`
+  sends it run-length encoded (`rle565le`: runs of count - 1, then the
+  pixel, little-endian; a few percent of the size), as the simulator uses.
+  Both print from their own task, so the console keeps reading keys.
 - Logs the eyes' and WLED's telemetry every 2 s.
 - When WLED shows a stream from a main board (`NL_MSG_WLED_STREAM`), the WLED
   card shows "Streamed", the source address, and the stalls per minute and

@@ -859,6 +859,7 @@ class NibblesUsermod : public Usermod {
       }
       if (id > 0) {
         queuePreset(id, cmdNoEyes);
+        bodyPreset = id;   // also when it's already showing (see bumpEnd)
       } else {
         bri = -id;
         stateUpdated(CALL_MODE_DIRECT_CHANGE);
@@ -917,6 +918,10 @@ class NibblesUsermod : public Usermod {
       if (pendingPreset) {
         refin = true;                // the body's new preset leaves the fin segment as the bump left it
         queuePreset(pendingPreset, pendingNoEyes);  // a preset command came in during the bump
+        // Record it now: a preset bump may already show this preset (LATCH
+        // while holding its number), and re-applying it doesn't change
+        // currentPreset for trackPresets.
+        bodyPreset = pendingPreset;
       } else {
         // Put everything back instantly.
         String json = savedState;

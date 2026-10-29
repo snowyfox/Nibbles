@@ -74,7 +74,7 @@ esp_err_t display_start(display_action_cb_t on_action);
 void display_show_page(int page);
 // Print the next frame over the console as base64 RGB565 ("SHOT w h" ...
 // "SHOT END"), for checking the layout from a computer.
-void display_screenshot(void);
+void display_screenshot(bool rle);   // rle: run-length encoded ("SHOT w h rle565le")
 void display_update(const display_status_t *s);
 // A one-line message for the event strip (the last command's result, etc.).
 void display_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

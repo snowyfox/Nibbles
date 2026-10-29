@@ -241,9 +241,19 @@ function realBaseMessage(m) {
     const bin = atob(m.shot), c = $('basereal'), g = c.getContext('2d');
     c.width = m.w; c.height = m.h;
     const img = g.createImageData(m.w, m.h);
-    for (let i = 0, p = 0; i + 1 < bin.length && p < img.data.length; i += 2, p += 4) {
-      const v = bin.charCodeAt(i) | bin.charCodeAt(i + 1) << 8;   // RGB565, little-endian
+    let p = 0;
+    const put = (v) => {   // one RGB565 pixel
       img.data[p] = (v >> 11 & 31) * 255 / 31; img.data[p + 1] = (v >> 5 & 63) * 255 / 63; img.data[p + 2] = (v & 31) * 255 / 31; img.data[p + 3] = 255;
+      p += 4;
+    };
+    if (m.rle) {   // runs: count - 1, then the pixel, little-endian
+      for (let i = 0; i + 2 < bin.length && p < img.data.length; i += 3) {
+        const v = bin.charCodeAt(i + 1) | bin.charCodeAt(i + 2) << 8;
+        for (let r = bin.charCodeAt(i); r >= 0 && p < img.data.length; r--) put(v);
+      }
+      if (p !== img.data.length) return;   // cut short: keep the last whole one
+    } else {
+      for (let i = 0; i + 1 < bin.length && p < img.data.length; i += 2) put(bin.charCodeAt(i) | bin.charCodeAt(i + 1) << 8);   // RGB565, little-endian
     }
     g.putImageData(img, 0, 0);
     c.hidden = false;

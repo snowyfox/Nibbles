@@ -402,6 +402,15 @@ static void log_power(void)
 // can light its keys like the real ones while it drives this base.
 static volatile bool leds_echo;
 
+// Screenshots print from their own task (~20 KB to 300 KB of text), so the
+// console keeps reading keys meanwhile. Notified with 1 (raw) or 2 (rle).
+static TaskHandle_t shot_task_handle;
+
+static void shot_task(void *arg)
+{
+    for (;;) display_screenshot(ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 2);
+}
+
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -421,7 +430,10 @@ static void console_task(void *arg)
         if (!strcmp(line, "next")) send_preset(NL_OP_PRESET_NEXT);
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
-        else if (!strcmp(line, "shot")) display_screenshot();
+        else if (!strcmp(line, "shot") || !strcmp(line, "shot rle")) {
+            if (!shot_task_handle) xTaskCreate(shot_task, "shot", 4096, NULL, 2, &shot_task_handle);
+            if (shot_task_handle) xTaskNotify(shot_task_handle, line[4] ? 2 : 1, eSetValueWithOverwrite);
+        }
         else if (!strncmp(line, "page ", 5)) display_show_page(atoi(line + 5));
         else if (!strncmp(line, "key ", 4)) console_key(line + 4);
         else if (!strcmp(line, "keys")) {

@@ -1019,7 +1019,27 @@ esp_err_t display_start(display_action_cb_t on_action)
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-void display_screenshot(void)
+// Base64 in 76-character lines.
+static void shot_print_b64(const uint8_t *d, size_t n)
+{
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char line[80];
+    size_t k = 0;
+    for (size_t i = 0; i < n; i += 3) {
+        const uint32_t v = d[i] << 16 | (i + 1 < n ? d[i + 1] << 8 : 0) | (i + 2 < n ? d[i + 2] : 0);
+        line[k++] = b64[(v >> 18) & 63];
+        line[k++] = b64[(v >> 12) & 63];
+        line[k++] = i + 1 < n ? b64[(v >> 6) & 63] : '=';
+        line[k++] = i + 2 < n ? b64[v & 63] : '=';
+        if (k >= 76 || i + 3 >= n) {
+            line[k] = 0;
+            printf("%s\n", line);
+            k = 0;
+        }
+    }
+}
+
+void display_screenshot(bool rle)
 {
     if (!shot_ready) shot_ready = xSemaphoreCreateBinary();
     if (!shot_buf) shot_buf = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
@@ -1031,23 +1051,32 @@ void display_screenshot(void)
         printf("SHOT failed\n");
         return;
     }
-    // Little-endian RGB565, row by row, base64 in 76-character lines.
-    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     const size_t n = (size_t)shot_w * shot_h * 2;
-    printf("SHOT %d %d rgb565le\n", shot_w, shot_h);
-    char line[80];
-    size_t k = 0;
-    for (size_t i = 0; i < n; i += 3) {
-        const uint32_t v = shot_buf[i] << 16 | (i + 1 < n ? shot_buf[i + 1] << 8 : 0) | (i + 2 < n ? shot_buf[i + 2] : 0);
-        line[k++] = b64[(v >> 18) & 63];
-        line[k++] = b64[(v >> 12) & 63];
-        line[k++] = i + 1 < n ? b64[(v >> 6) & 63] : '=';
-        line[k++] = i + 2 < n ? b64[v & 63] : '=';
-        if (k >= 76 || i + 3 >= n) {
-            line[k] = 0;
-            printf("%s\n", line);
-            k = 0;
+    if (rle) {
+        // Runs of one pixel value (the screen is mostly flat colours): a
+        // count (1-256, stored as count - 1) and the pixel, little-endian,
+        // 3 bytes a run. Typically a few percent of the raw frame.
+        static uint8_t *runs;
+        if (!runs) runs = heap_caps_malloc(FRAME_BYTES / 2 * 3, MALLOC_CAP_SPIRAM);
+        if (!runs) {
+            printf("SHOT failed\n");
+            return;
         }
+        size_t m = 0;
+        for (size_t i = 0; i < n;) {
+            const uint8_t lo = shot_buf[i], hi = shot_buf[i + 1];
+            size_t len = 1;
+            while (len < 256 && i + len * 2 < n && shot_buf[i + len * 2] == lo && shot_buf[i + len * 2 + 1] == hi) len++;
+            runs[m++] = (uint8_t)(len - 1);
+            runs[m++] = lo;
+            runs[m++] = hi;
+            i += len * 2;
+        }
+        printf("SHOT %d %d rle565le\n", shot_w, shot_h);
+        shot_print_b64(runs, m);
+    } else {
+        printf("SHOT %d %d rgb565le\n", shot_w, shot_h);
+        shot_print_b64(shot_buf, n);
     }
     printf("SHOT END\n");
 }

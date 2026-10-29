@@ -95,9 +95,12 @@ USB instead of the simulated one:
   give it with `server.py --base /dev/cu.usbmodemNNN`.
 - Opening the port can restart the base: give it ~15 s to find the radio
   channel again.
+- The card shows the base's screen as run-length encoded screenshots
+  (`shot rle`, a few KB each): one a second and one just after each key.
+  The base prints them from their own task, so keys never wait behind them.
 - With the main board as the brain, start the server with
-  `--shark 4.3.2.2` and mirror that address to watch the lights the base is
-  changing.
+  `--source shark --shark 4.3.2.2 --wled 4.3.2.2`: it mirrors the brain from
+  the start (the page's choice of source is lost when the server restarts).
 
 ## Fin presets and eye settings
 - **Fin preset** (WLED card) lists the WLED's fin presets (80 = follow the
