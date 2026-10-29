@@ -87,6 +87,11 @@ function baseBuildKeypad() {
 
 function baseKey(name, down) {
   if (!ws || ws.readyState !== 1) return;
+  if (down && name !== 'unlock' && !realMode && baseState && baseState.locked) {   // a press the lock swallows: say so
+    const b = $('baselock');
+    b.style.background = '#c0501a';
+    setTimeout(() => { b.style.background = '#5a2a10'; }, 250);
+  }
   if (realMode) ws.send(JSON.stringify({ realbase: { key: name, down } }));   // the real base, on USB
   else ws.send(JSON.stringify({ base: { key: name, down } }));
 }
@@ -302,6 +307,7 @@ function baseDraw() {
   $('bs_page').textContent = s.page ? '9-16' : '1-8';
   $('bs_shift').textContent = s.latch ? 'LATCH' : '';
   $('bs_lock').textContent = s.locked ? 'LOCKED: hold UNLOCK' : '';
+  $('baselock').hidden = !s.locked || realMode;
   $('bs_links').textContent = `Eyes sim  WLED ${lightsFrom === 'shark' ? 'shark' : 'bench'}`;
   const bumping = baseBumping || (s.preview ? 3 : 0);
   $('bs_event').textContent = bumping ? `BUMP  ${BUMP_NAMES[bumping]}` : baseEvent;
