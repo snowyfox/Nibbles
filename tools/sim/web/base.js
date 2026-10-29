@@ -288,15 +288,15 @@ function baseDraw() {
   // the battery icon: filled to the charge, a bolt while charging (as the firmware)
   const charging = docked && pct < 100;
   $('bs_pct').textContent = `${pct}%`;
-  $('bs_pct').style.color = charging || pct > 15 ? 'var(--text)' : '#ff4d4d';
-  $('bs_bar').style.width = `${Math.round(20 * pct / 100)}px`;
-  $('bs_bar').style.background = charging || pct > 40 ? 'var(--ok)' : pct > 15 ? 'var(--warn)' : '#ff4d4d';
+  $('bs_bar').style.width = `${pct ? 1 + Math.floor(22 * pct / 100) : 0}px`;
+  $('bs_bar').style.background = charging ? '#34c759' : pct <= 20 ? '#ff3b30' : '#fff';   // iOS green / red / white
   $('bs_bolt').style.visibility = charging ? 'visible' : 'hidden';
   const cellMv = 3000 + pct * 12;
   const mins = Math.round(pct / 100 * 80 * 60 / Math.max(lightsW + 2, 0.5));
   $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : 'Charging 1.8 A') : `${Math.floor(mins / 60)} h ${String(mins % 60).padStart(2, '0')} min left`;
   $('bs_line1').style.color = docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
   $('bs_line2').textContent = `Pack ${(cellMv * 4 / 1000).toFixed(2)} V  ${docked ? '1.8 A' : `-${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`}`;
+  $('bs_linein').textContent = docked ? 'In 16.60 V  2.1 A' : 'In: nothing connected';   // the LEMO input
   $('bs_line3').textContent = `Lights ${Math.round(lightsW)} W  ${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`;
   if (!s) return;
   // LIVE and STANDBY

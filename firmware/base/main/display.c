@@ -533,7 +533,7 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *source, *pct, *batt, *batt_fill, *batt_bolt, *line1, *line2, *line3, *line4;
+    lv_obj_t *power, *source, *pct, *batt, *batt_fill, *batt_bolt, *line1, *line2, *line_in, *line3, *line4;
     scene_panel_t live, stby;
     lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
 } m;
@@ -597,9 +597,13 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
     }
 }
 
-// A phone-style battery: an outline with a nub, filled to the charge, a bolt while charging.
-#define BATT_W 28
-#define BATT_H 14
+// An iOS-style battery: a thin translucent outline with round corners and a
+// small cap, the fill inset inside it: white, green while charging (with a
+// bolt), red at 20 % or less.
+#define BATT_W 27
+#define BATT_H 13
+#define COL_IOS_GREEN 0x34c759
+#define COL_IOS_RED   0xff3b30
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
 {
@@ -616,13 +620,15 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
 
 static void build_battery(lv_obj_t *parent, int x, int y)
 {
-    m.batt = box(parent, x, y, BATT_W, BATT_H, 3);
+    m.batt = box(parent, x, y, BATT_W, BATT_H, 4);
     lv_obj_set_style_bg_opa(m.batt, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(m.batt, 2, 0);
-    lv_obj_set_style_border_color(m.batt, lv_color_hex(COL_TITLE), 0);
-    lv_obj_t *nub = box(parent, x + BATT_W, y + 4, 3, BATT_H - 8, 1);
-    lv_obj_set_style_bg_color(nub, lv_color_hex(COL_TITLE), 0);
-    m.batt_fill = box(m.batt, 2, 2, 0, BATT_H - 8, 1);
+    lv_obj_set_style_border_width(m.batt, 1, 0);
+    lv_obj_set_style_border_color(m.batt, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_border_opa(m.batt, LV_OPA_40, 0);
+    lv_obj_t *nub = box(parent, x + BATT_W + 1, y + 4, 2, BATT_H - 8, 1);
+    lv_obj_set_style_bg_color(nub, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_bg_opa(nub, LV_OPA_40, 0);
+    m.batt_fill = box(m.batt, 1, 1, 0, BATT_H - 4, 2);   // positions start inside the 1 px border: 2 px from the edge
     m.batt_bolt = label(m.batt, &lv_font_montserrat_12, COL_TEXT);
     lv_label_set_text(m.batt_bolt, LV_SYMBOL_CHARGE);
     lv_obj_center(m.batt_bolt);
@@ -631,21 +637,22 @@ static void build_battery(lv_obj_t *parent, int x, int y)
 static void build_main_page(void)
 {
     // The power status bar: source left, charge and battery right, small lines below.
-    m.power = make_panel(pagem, 4, 88, 0);
+    m.power = make_panel(pagem, 4, 103, 0);
     m.source = at(m.power, &lv_font_montserrat_14, COL_TITLE, 8, 6, 70);
-    m.pct = at(m.power, &lv_font_montserrat_16, COL_TEXT, 72, 4, 48);
+    m.pct = at(m.power, &lv_font_montserrat_16, COL_TEXT, 70, 4, 50);
     lv_obj_set_style_text_align(m.pct, LV_TEXT_ALIGN_RIGHT, 0);
-    build_battery(m.power, 125, 7);
+    build_battery(m.power, 124, 7);
     m.line1 = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 26, 148);
     m.line2 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 41, 148);
-    m.line3 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 56, 148);
-    m.line4 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 71, 148);
+    m.line_in = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 56, 148);
+    m.line3 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 71, 148);
+    m.line4 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 86, 148);
 
-    scene_panel(&m.live, 96, "LIVE", COL_LIVE);
-    scene_panel(&m.stby, 234, "STANDBY", COL_STANDBY);
+    scene_panel(&m.live, 111, "LIVE", COL_LIVE);
+    scene_panel(&m.stby, 249, "STANDBY", COL_STANDBY);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 372, 50, 0);
+    m.target = make_panel(pagem, 387, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -653,13 +660,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 428, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 450, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 468, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 443, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 465, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 483, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 490);
+    lv_obj_set_pos(event_labels[2], 8, 505);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -710,11 +717,11 @@ static void main_update(const display_status_t *s)
     const chg_state_t cs = (chg_state_t)p->chg_state;
     const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
     const int pct = p->pack_pct >= 0 ? p->pack_pct : 0;
-    const uint32_t level_col = charging || pct > 40 ? COL_OK : pct > 15 ? COL_WARN : COL_BAD;
+    const uint32_t level_col = charging ? COL_IOS_GREEN : pct <= 20 ? COL_IOS_RED : COL_TEXT;
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
     else lv_label_set_text(m.pct, "--");
-    lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : charging || pct > 15 ? COL_TEXT : COL_BAD), 0);
-    lv_obj_set_width(m.batt_fill, (BATT_W - 8) * pct / 100);
+    lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : COL_TEXT), 0);
+    lv_obj_set_width(m.batt_fill, pct ? 1 + (BATT_W - 5) * pct / 100 : 0);
     lv_obj_set_style_bg_color(m.batt_fill, lv_color_hex(level_col), 0);
     if (charging) lv_obj_remove_flag(m.batt_bolt, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(m.batt_bolt, LV_OBJ_FLAG_HIDDEN);
@@ -747,6 +754,12 @@ static void main_update(const display_status_t *s)
         else a[0] = 0;
         lv_label_set_text_fmt(m.line2, "Pack %d.%02d V  %s", p->pack_mv / 1000, p->pack_mv % 1000 / 10, a);
     } else lv_label_set_text(m.line2, "Pack: no reading");
+    // the LEMO input (the external battery, or the dock), as the charger measures it
+    if (!p->have_charger) lv_label_set_text(m.line_in, "In: no reading");
+    else if (p->vbus_mv > 0) {
+        fmt_ma(a, sizeof(a), p->ibus_ma);
+        lv_label_set_text_fmt(m.line_in, "In %d.%02d V  %s", p->vbus_mv / 1000, p->vbus_mv % 1000 / 10, a);
+    } else lv_label_set_text(m.line_in, "In: nothing connected");
     if (p->have_monitor) {
         fmt_ma(a, sizeof(a), p->light_ma);
         lv_label_set_text_fmt(m.line3, "Lights %d W  %s", (p->light_mw + 500) / 1000, a);
