@@ -533,7 +533,8 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *pct, *in_pct, *in_usb, *line1, *line2, *line_in, *line3, *line4;
+    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *line1, *line2, *line4;
+    bool flow_pulsing;
     scene_panel_t live, stby;
     lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
 } m;
@@ -604,6 +605,8 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
 #define BATT_H 13
 #define COL_IOS_GREEN 0x34c759
 #define COL_IOS_RED   0xff3b30
+#define COL_IOS_BLUE  0x0a84ff
+#define FLOW_W        148       // the flow line under the batteries
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
 {
@@ -616,6 +619,35 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
     lv_obj_set_style_radius(o, radius, 0);
     lv_obj_set_style_border_width(o, 0, 0);
     return o;
+}
+
+// Montserrat 12 with tabular figures, for readings that change: every digit
+// as wide as the widest, centred in it, and U+2007 (figure space, "\xe2\x80\x87")
+// a blank of that width for padding, so numbers don't shift as they update.
+// The glyphs are Montserrat's own (the copy shares its data).
+#define FIG_SPACE "\xe2\x80\x87"
+static lv_font_t font_tab12;
+static uint16_t tab_digit_w;
+
+static bool tab_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *dsc, uint32_t letter, uint32_t next)
+{
+    const bool digit = letter >= '0' && letter <= '9', fig = letter == 0x2007;
+    (void)next;   // no kerning: it would shift a character by the digit after it
+    if (!lv_font_montserrat_12.get_glyph_dsc(font, dsc, fig ? ' ' : letter, 0)) return false;
+    if (digit || fig) {
+        dsc->ofs_x += (tab_digit_w - dsc->adv_w) / 2;
+        dsc->adv_w = tab_digit_w;
+    }
+    return true;
+}
+
+static void tab_font_init(void)
+{
+    font_tab12 = lv_font_montserrat_12;
+    font_tab12.get_glyph_dsc = tab_glyph_dsc;
+    lv_font_glyph_dsc_t g;
+    for (uint32_t c = '0'; c <= '9'; c++)
+        if (lv_font_montserrat_12.get_glyph_dsc(&lv_font_montserrat_12, &g, c, 0) && g.adv_w > tab_digit_w) tab_digit_w = g.adv_w;
 }
 
 typedef struct {
@@ -660,28 +692,75 @@ static void show_battery(battery_t *b, bool on)
     }
 }
 
+static void flow_pulse_cb(void *obj, int32_t v)
+{
+    lv_obj_set_style_bg_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
+}
+
+// The flow line: green (to the pack) for split_permille of it, blue (to the
+// lights) for the rest; starved: all grey and pulsing; nothing in: dim grey.
+static void set_flow(int split_permille, bool starved)
+{
+    const bool pulse = starved && split_permille >= 0;
+    if (pulse != m.flow_pulsing) {
+        m.flow_pulsing = pulse;
+        lv_anim_delete(m.flow_in, flow_pulse_cb);
+        lv_obj_set_style_bg_opa(m.flow_in, LV_OPA_COVER, 0);
+        if (pulse) {
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, m.flow_in);
+            lv_anim_set_exec_cb(&a, flow_pulse_cb);
+            lv_anim_set_values(&a, LV_OPA_20, LV_OPA_COVER);
+            lv_anim_set_duration(&a, 600);
+            lv_anim_set_playback_duration(&a, 600);
+            lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_start(&a);
+        }
+    }
+    if (split_permille < 0 || pulse) {   // one grey line
+        lv_obj_set_width(m.flow_in, FLOW_W);
+        lv_obj_set_style_bg_color(m.flow_in, lv_color_hex(pulse ? COL_TITLE : COL_DIM), 0);
+        lv_obj_add_flag(m.flow_out, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const int w = FLOW_W * split_permille / 1000;
+    lv_obj_set_width(m.flow_in, w);
+    lv_obj_set_style_bg_color(m.flow_in, lv_color_hex(COL_IOS_GREEN), 0);
+    lv_obj_remove_flag(m.flow_out, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(m.flow_out, 8 + w);
+    lv_obj_set_width(m.flow_out, FLOW_W - w);
+    lv_obj_set_style_bg_color(m.flow_out, lv_color_hex(COL_IOS_BLUE), 0);
+}
+
 static void build_main_page(void)
 {
     // The power status bar: the LEMO input left (an external battery, or a
-    // USB-C supply), the internal pack right, small lines below.
-    m.power = make_panel(pagem, 4, 103, 0);
+    // USB-C supply), the internal pack right; the flow line (the LEMO's current:
+    // green to the pack, blue to the lights); the LEMO's volts and amps left,
+    // the lights' watts and amps right; small lines below.
+    m.power = make_panel(pagem, 4, 94, 0);
+    tab_font_init();   // every number in the bar: Montserrat 12 with fixed-width digits
     build_battery(&batt_in, m.power, 8, 7);
-    m.in_pct = at(m.power, &lv_font_montserrat_12, COL_TEXT, 42, 7, 44);   // the same small font as the lines below
-    m.in_usb = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 7, 78);
-    m.pct = at(m.power, &lv_font_montserrat_12, COL_TEXT, 82, 7, 38);
+    m.in_pct = at(m.power, &font_tab12, COL_TEXT, 42, 7, 44);   // the same small font as the lines below
+    m.in_usb = at(m.power, &font_tab12, COL_TEXT, 8, 7, 78);
+    m.pct = at(m.power, &font_tab12, COL_TEXT, 82, 7, 38);
     lv_obj_set_style_text_align(m.pct, LV_TEXT_ALIGN_RIGHT, 0);
     build_battery(&batt_pack, m.power, 124, 7);
-    m.line1 = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 26, 148);
-    m.line2 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 41, 148);
-    m.line_in = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 56, 148);
-    m.line3 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 71, 148);
-    m.line4 = at(m.power, &lv_font_montserrat_12, COL_TITLE, 8, 86, 148);
+    m.flow_in = box(m.power, 8, 24, 0, 2, 0);
+    m.flow_out = box(m.power, 8, 24, FLOW_W, 2, 0);
+    m.in_va = at(m.power, &font_tab12, COL_TEXT, 8, 29, 80);
+    m.out_wa = at(m.power, &font_tab12, COL_TEXT, 86, 29, 70);
+    lv_obj_set_style_text_align(m.out_wa, LV_TEXT_ALIGN_RIGHT, 0);
+    m.line1 = at(m.power, &font_tab12, COL_TEXT, 8, 46, 148);
+    m.line2 = at(m.power, &font_tab12, COL_TITLE, 8, 61, 148);
+    m.line4 = at(m.power, &font_tab12, COL_TITLE, 8, 76, 148);
 
-    scene_panel(&m.live, 111, "LIVE", COL_LIVE);
-    scene_panel(&m.stby, 249, "STANDBY", COL_STANDBY);
+    scene_panel(&m.live, 102, "LIVE", COL_LIVE);
+    scene_panel(&m.stby, 240, "STANDBY", COL_STANDBY);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 387, 50, 0);
+    m.target = make_panel(pagem, 378, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -689,13 +768,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 443, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 465, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 483, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 434, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 456, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 474, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 505);
+    lv_obj_set_pos(event_labels[2], 8, 496);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -757,6 +836,26 @@ static void main_update(const display_status_t *s)
         else lv_label_set_text(m.in_pct, "--");
         lv_obj_set_style_text_color(m.in_pct, lv_color_hex(p->input_pct < 0 ? COL_DIM : COL_TEXT), 0);
     }
+    // The flow line, then the LEMO's volts and amps (left) and the lights' watts and amps (right)
+    set_flow(p->have_charger ? p->in_split : -1, p->starved);
+    if (p->have_charger) {
+        const int mv = p->input != INPUT_NONE ? p->vbus_mv : 0, ma = p->in_ma;
+        const int v10 = (mv + 50) / 100, a10 = (ma + 50) / 100;   // tenths
+        lv_label_set_text_fmt(m.in_va, "%s%d.%dV %d.%dA", v10 < 100 ? FIG_SPACE : "", v10 / 10, v10 % 10, a10 / 10, a10 % 10);
+        lv_obj_set_style_text_color(m.in_va, lv_color_hex(mv ? COL_TEXT : COL_DIM), 0);
+    } else {
+        lv_label_set_text(m.in_va, "--.-V -.-A");
+        lv_obj_set_style_text_color(m.in_va, lv_color_hex(COL_DIM), 0);
+    }
+    if (p->have_monitor) {
+        const int ma = p->light_ma > 0 ? p->light_ma : 0, a10 = (ma + 50) / 100, w = (p->light_mw + 500) / 1000;
+        // amps: one digit before the point (100 W at the light bus's 12 V or more is under 10 A)
+        lv_label_set_text_fmt(m.out_wa, "%s%s%dW %d.%dA", w < 100 ? FIG_SPACE : "", w < 10 ? FIG_SPACE : "", w, a10 / 10, a10 % 10);
+        lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_TEXT), 0);
+    } else {
+        lv_label_set_text(m.out_wa, "--W -.-A");
+        lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_DIM), 0);
+    }
     // Small lines: what the pack is doing ("SIM:" first for made-up readings)
     if (!board && !p->sim) {
         lv_label_set_text(m.line1, "Power board not found");
@@ -767,9 +866,10 @@ static void main_update(const display_status_t *s)
     } else if (p->docked && p->have_charger) {
         if (cs == CHG_DONE) snprintf(text, sizeof(text), "Dock: pack full");
         else if (cs == CHG_NOT_CHARGING) snprintf(text, sizeof(text), "Dock: not charging");
-        else { fmt_ma(a, sizeof(a), p->ibat_ma); snprintf(text, sizeof(text), "Charging %s", a); }
+        else if (p->starved) snprintf(text, sizeof(text), "Pack starved");
+        else { fmt_ma(a, sizeof(a), p->pack_ma); snprintf(text, sizeof(text), "Charging %s", a); }
         lv_label_set_text(m.line1, text);
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(p->starved ? COL_WARN : COL_OK), 0);
     } else if (p->docked) {
         lv_label_set_text(m.line1, "On the dock");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
@@ -787,20 +887,10 @@ static void main_update(const display_status_t *s)
     }
     // the pack's voltage and current
     if (p->pack_pct >= 0) {
-        if (p->have_charger) fmt_ma(a, sizeof(a), p->ibat_ma);
+        if (p->have_charger || p->have_monitor) fmt_ma(a, sizeof(a), p->pack_ma);   // worked out: the charger's and the light bus's
         else a[0] = 0;
         lv_label_set_text_fmt(m.line2, "Pack %d.%02d V  %s", p->pack_mv / 1000, p->pack_mv % 1000 / 10, a);
     } else lv_label_set_text(m.line2, "Pack: no reading");
-    // the LEMO input (the external battery, or the dock), as the charger measures it
-    if (!p->have_charger) lv_label_set_text(m.line_in, "In: no reading");
-    else if (p->vbus_mv > 0) {
-        fmt_ma(a, sizeof(a), p->ibus_ma);
-        lv_label_set_text_fmt(m.line_in, "In %d.%02d V  %s", p->vbus_mv / 1000, p->vbus_mv % 1000 / 10, a);
-    } else lv_label_set_text(m.line_in, "In: nothing connected");
-    if (p->have_monitor) {
-        fmt_ma(a, sizeof(a), p->light_ma);
-        lv_label_set_text_fmt(m.line3, "Lights %d W  %s", (p->light_mw + 500) / 1000, a);
-    } else lv_label_set_text(m.line3, "Lights: no reading");
     // Problems, worst first, in place of the temperatures
     lv_obj_set_style_text_color(m.line4, lv_color_hex(COL_BAD), 0);
     if (p->lights_off) lv_label_set_text(m.line4, "LIGHTS SWITCHED OFF");

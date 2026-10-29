@@ -299,17 +299,36 @@ function baseDraw() {
   $('bs_inusb').textContent = usb ? 'USB 20.1 V' : '';   // the firmware draws the USB symbol
   $('baseinpctv').textContent = `${inPct}%`;
   // the battery icon: filled to the charge, a bolt while charging (as the firmware)
-  const charging = docked && pct < 100;
+  const charging = docked && pct < 100 && !(input === 'battery' && inPct < 15);
   $('bs_pct').textContent = `${pct}%`;
   setBatt('bs_', pct, charging);
-  const cellMv = 3000 + pct * 12;
+  const cellMv = 3000 + pct * 12, packV = cellMv * 4 / 1000;
   const mins = Math.round(pct / 100 * 80 * 60 / Math.max(lightsW + 2, 0.5));
-  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : 'Charging 1.8 A') : `${String(Math.floor(Math.min(mins, 5999) / 60)).padStart(2, '0')}H${String(Math.min(mins, 5999) % 60).padStart(2, '0')}M`;
-  $('bs_line1').style.color = docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
-  $('bs_line2').textContent = `Pack ${(cellMv * 4 / 1000).toFixed(2)} V  ${docked ? '1.8 A' : `-${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`}`;
-  const inMv = usb ? 20100 : 12000 + inPct * 48;
-  $('bs_linein').textContent = docked ? `In ${(inMv / 1000).toFixed(2)} V  2.1 A` : 'In: nothing connected';   // the LEMO input
-  $('bs_line3').textContent = `Lights ${Math.round(lightsW)} W  ${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`;
+  // the LEMO's current: the charger's share (to the pack) and the light bus's (lights + base), as power_flow()
+  const inMv = !docked ? 0 : usb ? 20100 : 12000 + inPct * 48;
+  const lightsA = lightsW / (docked ? inMv / 1000 : packV), baseA = 2 / (docked ? inMv / 1000 : packV);
+  const starved = input === 'battery' && inPct < 15 && pct < 100;   // a flat external battery: the pack gets nothing
+  const toPack = !docked || pct >= 100 || starved ? 0 : 2.0;
+  const inA = docked ? toPack + lightsA + baseA : 0;
+  const packA = !docked ? -(lightsA + baseA) : starved ? -(lightsA + baseA) : toPack * 0.92;
+  const fig = (n, width) => String(n).padStart(width, '\u2007');   // figure spaces, as the firmware
+  const tenths = (x, width) => `${fig(Math.floor(Math.round(x * 10) / 10), width)}.${Math.round(x * 10) % 10}`;
+  $('bs_inva').textContent = `${tenths(inMv / 1000, 2)}V ${tenths(inA, 1)}A`;
+  $('bs_inva').style.color = docked ? 'var(--text)' : 'var(--dim)';
+  $('bs_outwa').textContent = `${fig(Math.round(lightsW), 3)}W ${tenths(lightsA, 1)}A`;
+  const split = docked ? toPack / inA : -1, W = 148;
+  const fi = $('bs_flowin'), fo = $('bs_flowout');
+  if (split < 0 || starved) {   // one grey line: nothing in (dim), or starved (pulsing)
+    fi.style.width = `${W}px`; fi.style.background = starved ? 'var(--dim)' : '#4a505a'; fo.style.display = 'none';
+    fi.style.animation = starved ? 'bspulse .6s ease-in-out infinite alternate' : '';
+  } else {
+    const w = Math.round(W * split);
+    fi.style.width = `${w}px`; fi.style.background = '#34c759'; fi.style.animation = '';
+    fo.style.display = ''; fo.style.left = `${8 + w}px`; fo.style.width = `${W - w}px`; fo.style.background = '#0a84ff';
+  }
+  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : starved ? 'Pack starved' : `Charging ${packA.toFixed(1)} A`) : `${String(Math.floor(Math.min(mins, 5999) / 60)).padStart(2, '0')}H${String(Math.min(mins, 5999) % 60).padStart(2, '0')}M`;
+  $('bs_line1').style.color = starved ? 'var(--warn)' : docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
+  $('bs_line2').textContent = `Pack ${packV.toFixed(2)} V  ${packA.toFixed(1)} A`;
   if (!s) return;
   // LIVE and STANDBY
   const rows = (pre, sc, bri, diff) => {

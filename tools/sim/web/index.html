@@ -43,6 +43,8 @@
   #basescreen { position: relative; width: 172px; height: 640px; background: #000; border-radius: 6px; flex: 0 0 auto; overflow: hidden; font-family: Montserrat, -apple-system, sans-serif; }
   #basescreen .p { position: absolute; left: 4px; width: 164px; background: var(--card); border-radius: 10px; }
   #basescreen .t { position: absolute; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bs_power .t { font-variant-numeric: tabular-nums; white-space: pre; }   /* fixed-width digits, as the firmware */
+  @keyframes bspulse { from { opacity: .2; } to { opacity: 1; } }
   .bsrow { position: absolute; left: 8px; right: 6px; height: 22px; display: flex; gap: 6px; align-items: baseline; }
   .bsrow b { width: 40px; font-size: 14px; font-weight: 400; flex: 0 0 auto; }
   .bsrow span { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -147,7 +149,7 @@
       <div class="base">
         <div id="basescreen">
           <canvas id="basereal" width="172" height="640" hidden style="position:absolute;inset:0;z-index:2;width:172px;height:640px"></canvas>
-          <div class="p" style="top:4px;height:103px">
+          <div class="p" id="bs_power" style="top:4px;height:94px">
             <div id="bs_inbatt" style="position:absolute;left:8px;top:7px;width:25px;height:11px;border:1px solid rgba(255,255,255,.4);border-radius:4px">
               <div id="bs_inbar" style="position:absolute;left:1px;top:1px;height:9px;border-radius:2px"></div>
               <span id="bs_inbolt" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:#fff;visibility:hidden">⚡︎</span>
@@ -161,20 +163,22 @@
               <span id="bs_bolt" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:#fff;visibility:hidden">⚡︎</span>
             </div>
             <div id="bs_nub" style="position:absolute;left:152px;top:11px;width:2px;height:5px;background:rgba(255,255,255,.4);border-radius:0 1px 1px 0"></div>
-            <span class="t" id="bs_line1" style="left:8px;top:26px;font-size:12px;width:148px"></span>
-            <span class="t" id="bs_line2" style="left:8px;top:41px;font-size:12px;color:var(--dim);width:148px"></span>
-            <span class="t" id="bs_linein" style="left:8px;top:56px;font-size:12px;color:var(--dim);width:148px"></span>
-            <span class="t" id="bs_line3" style="left:8px;top:71px;font-size:12px;color:var(--dim);width:148px"></span>
-            <span class="t" style="left:8px;top:86px;font-size:12px;color:var(--dim)">Cells 29°C  chg 41°C</span>
+            <div id="bs_flowin" style="position:absolute;left:8px;top:24px;height:2px"></div>
+            <div id="bs_flowout" style="position:absolute;top:24px;height:2px"></div>
+            <span class="t" id="bs_inva" style="left:8px;top:28px;font-size:12px"></span>
+            <span class="t" id="bs_outwa" style="right:8px;top:28px;font-size:12px"></span>
+            <span class="t" id="bs_line1" style="left:8px;top:45px;font-size:12px;width:148px"></span>
+            <span class="t" id="bs_line2" style="left:8px;top:60px;font-size:12px;color:var(--dim);width:148px"></span>
+            <span class="t" style="left:8px;top:75px;font-size:12px;color:var(--dim)">Cells 29°C  chg 41°C</span>
           </div>
-          <div class="p" style="top:111px;height:132px;border:2px solid #ff3030">
+          <div class="p" style="top:102px;height:132px;border:2px solid #ff3030">
             <span class="t" style="left:8px;top:5px;font-size:16px;color:#ff3030">LIVE</span>
             <div class="bsrow" style="top:28px"><b style="color:#ff7ad9">BODY</b><span id="bs_l0"></span></div>
             <div class="bsrow" style="top:53px"><b style="color:#36c8ff">EYES</b><span id="bs_l1"></span></div>
             <div class="bsrow" style="top:78px"><b style="color:#ff8000">FINS</b><span id="bs_l2"></span></div>
             <div class="bsrow" style="top:103px"><b style="color:var(--dim)">BRI</b><span id="bs_l3"></span></div>
           </div>
-          <div class="p" id="bs_stby" style="top:249px;height:132px;border:2px solid #30e060;cursor:pointer" title="TAKE (touch)">
+          <div class="p" id="bs_stby" style="top:240px;height:132px;border:2px solid #30e060;cursor:pointer" title="TAKE (touch)">
             <span class="t" style="left:8px;top:5px;font-size:16px;color:#30e060">STANDBY</span>
             <span class="t" id="bs_preview" style="right:8px;top:7px;font-size:14px;color:#30e060"></span>
             <div class="bsrow" style="top:28px"><b style="color:#ff7ad9">BODY</b><span id="bs_s0"></span></div>
@@ -182,15 +186,15 @@
             <div class="bsrow" style="top:78px"><b style="color:#ff8000">FINS</b><span id="bs_s2"></span></div>
             <div class="bsrow" style="top:103px"><b style="color:var(--dim)">BRI</b><span id="bs_s3"></span></div>
           </div>
-          <div class="p" id="bs_target" style="top:387px;height:50px">
+          <div class="p" id="bs_target" style="top:378px;height:50px">
             <span class="t" id="bs_tname" style="left:8px;top:8px;font-size:28px;color:#000"></span>
             <span class="t" id="bs_page" style="right:8px;top:6px;font-size:14px;color:#000"></span>
             <span class="t" id="bs_shift" style="right:8px;top:26px;font-size:14px;color:#000"></span>
           </div>
-          <span class="t" id="bs_lock" style="left:8px;top:443px;font-size:16px;color:#ff4d4d"></span>
-          <span class="t" id="bs_links" style="left:8px;top:465px;font-size:14px;color:var(--dim)"></span>
-          <span class="t" style="left:8px;top:483px;font-size:14px;color:var(--dim)">Keypad: simulated</span>
-          <span class="t" id="bs_event" style="left:8px;top:505px;font-size:14px;width:156px"></span>
+          <span class="t" id="bs_lock" style="left:8px;top:434px;font-size:16px;color:#ff4d4d"></span>
+          <span class="t" id="bs_links" style="left:8px;top:456px;font-size:14px;color:var(--dim)"></span>
+          <span class="t" style="left:8px;top:474px;font-size:14px;color:var(--dim)">Keypad: simulated</span>
+          <span class="t" id="bs_event" style="left:8px;top:496px;font-size:14px;width:156px"></span>
         </div>
         <div id="baselock" hidden style="margin:0 0 6px;padding:6px 8px;border-radius:6px;background:#5a2a10;color:#ffd0a0;font-weight:600;font-size:12px;transition:background .15s">Keypad LOCKED: hold UNLOCK (U) for 1 s</div>
         <div id="basekeys"></div>

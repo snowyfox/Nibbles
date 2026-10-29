@@ -22,6 +22,23 @@ int pack_percent(int pack_mv, int current_ma);
 typedef enum { INPUT_NONE = 0, INPUT_BATTERY, INPUT_SUPPLY } input_kind_t;
 input_kind_t input_kind(int vbus_mv);
 
+// How the LEMO input's current divides. The LEMO feeds the charger (its IBUS)
+// and, through its own ideal diode, the light bus (the lights, measured by the
+// INA226, and the base's own small draw); the pack joins the light bus through
+// its ideal diode too, so neither the LEMO's nor the pack's total current is
+// measured directly. The LEMO's diode is preferred; the pack's still conducts
+// through its FET's body diode once the LEMO is about that far below the pack.
+#define BODY_DIODE_MV       700
+#define STARVED_MA          100     // charging slower than this while plugged in: starved
+typedef struct {
+    int in_ma;          // the LEMO's whole current (0 when nothing comes in)
+    int split_permille; // the charger's share of it (to the pack); -1: nothing comes in
+    int pack_ma;        // the pack's whole current, + charging, - discharging
+    bool starved;       // plugged in and not full, but the pack gets (almost) nothing
+} power_flow_t;
+power_flow_t power_flow(input_kind_t input, int vbus_mv, int ibus_ma, int pack_mv, int ibat_ma,
+                        int lights_ma, int base_mw, bool charge_done);
+
 // Minutes left at load_mw from pct, or -1 when the load is too small to say.
 int runtime_minutes(int pct, int load_mw);
 

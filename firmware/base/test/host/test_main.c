@@ -311,6 +311,22 @@ static void test_power_math(void)
     CHECK(input_kind(16800) == INPUT_BATTERY);
     CHECK(input_kind(20100) == INPUT_SUPPLY);
     CHECK(input_kind(19000) == INPUT_SUPPLY);
+    // the LEMO's current split: 3 A to the charger and 2 A to the lights = 5 A in, 3/5 green
+    power_flow_t f = power_flow(INPUT_SUPPLY, 20000, 3000, 15000, 3500, 2000, 0, false);
+    CHECK(f.in_ma == 5000 && f.split_permille == 600 && !f.starved && f.pack_ma == 3500);
+    // the base's own draw counts with the lights: 2 W at 20 V is 100 mA
+    f = power_flow(INPUT_SUPPLY, 20000, 3000, 15000, 3500, 2000, 2000, false);
+    CHECK(f.in_ma == 5100);
+    // plugged in but the pack gets almost nothing: starved; full: not starved
+    f = power_flow(INPUT_BATTERY, 15800, 50, 15000, 20, 4000, 0, false);
+    CHECK(f.starved && f.split_permille < 20);
+    CHECK(!power_flow(INPUT_BATTERY, 16700, 0, 16700, 0, 4000, 0, true).starved);
+    // an external battery well below the pack: the pack feeds the lights (body diode)
+    f = power_flow(INPUT_BATTERY, 13500, 500, 15500, 400, 3000, 0, false);
+    CHECK(f.starved && f.in_ma == 500 && f.pack_ma == 400 - 3000);
+    // nothing plugged in: the pack feeds the lights and the base
+    f = power_flow(INPUT_NONE, 0, 0, 15000, 0, 3000, 1500, false);
+    CHECK(f.in_ma == 0 && f.split_permille == -1 && !f.starved && f.pack_ma == -3100);
     CHECK(runtime_minutes(50, 40000) == 60);    // 40 Wh at 40 W
     CHECK(runtime_minutes(50, 100) == -1);
     CHECK(ina226_calibration() == 2560);

@@ -32,6 +32,22 @@ input_kind_t input_kind(int vbus_mv)
     return vbus_mv > INPUT_SUPPLY_MV ? INPUT_SUPPLY : INPUT_BATTERY;
 }
 
+power_flow_t power_flow(input_kind_t input, int vbus_mv, int ibus_ma, int pack_mv, int ibat_ma,
+                        int lights_ma, int base_mw, bool charge_done)
+{
+    power_flow_t f = { 0, -1, ibat_ma, false };
+    const int bus_mv = input != INPUT_NONE ? vbus_mv : pack_mv;
+    const int load_ma = (lights_ma > 0 ? lights_ma : 0) + (bus_mv > 0 ? base_mw * 1000 / bus_mv : 0);
+    const bool lights_from_input = input != INPUT_NONE && vbus_mv > pack_mv - BODY_DIODE_MV;
+    if (input == INPUT_NONE || !lights_from_input) f.pack_ma -= load_ma;   // the pack feeds the light bus
+    if (input == INPUT_NONE) return f;
+    const int to_charger = ibus_ma > 0 ? ibus_ma : 0;
+    f.in_ma = to_charger + (lights_from_input ? load_ma : 0);
+    f.split_permille = f.in_ma > 0 ? to_charger * 1000 / f.in_ma : 0;
+    f.starved = !charge_done && (ibat_ma < STARVED_MA || !lights_from_input);
+    return f;
+}
+
 int runtime_minutes(int pct, int load_mw)
 {
     if (load_mw < 500) return -1;

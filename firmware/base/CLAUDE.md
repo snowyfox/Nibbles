@@ -89,12 +89,24 @@ file. Until the hardware exists, all of it can be driven from USB serial.
     20 V trigger board, shown as the USB symbol and its voltage; nothing
     connected, a dim empty outline and "--";
   - right, the **internal pack**: its charge and battery.
-  Then 12 px lines: charging, or the time left as hhHmmM (00H00M .. 99H59M; "SIM:" first for made-up
-  readings), the pack's volts and amps, the LEMO input's volts and amps, the
-  lights' watts and amps, and the cell and charger temperatures, or the
-  worst problem in red in their place. `sim on` alternates a minute on an
-  external battery (15.6 V) or a USB-C supply (20.1 V) and a minute on the
-  pack. Then LIVE (red), STANDBY (green; rows that
+  Under them the **flow line** (2 px): the LEMO's current, green for the
+  charger's share (to the pack), blue for the light bus's (the lights and
+  the base); all grey and pulsing when the pack is **starved** (plugged in,
+  not full, charging under 100 mA, or the LEMO so far below the pack that
+  the pack feeds the lights through its ideal diode's body diode); dim grey
+  with nothing plugged in. Then row 2: the LEMO's `##.#V #.#A` left, the
+  lights' `##W #.#A` right. Neither the LEMO's nor the pack's whole current
+  is measured (the light bus bypasses the charger): `power_flow`
+  (power_math.c, host-tested) works them out from IBUS, IBAT and the
+  INA226, plus `BASE_LOAD_MW` for the base. Then 12 px lines: charging (or
+  "Pack starved", amber), or the time left as hhHmmM (00H00M .. 99H59M;
+  "SIM:" first for made-up readings), the pack's volts and whole current,
+  and the cell and charger temperatures, or the worst problem in red in
+  their place. Every number in the bar uses `font_tab12`: Montserrat 12
+  with fixed-width digits and a digit-wide figure space for padding (no
+  kerning), so values don't shift as they change. `sim on` alternates a minute on an
+  external battery (15.6 V; starved for half a minute) or a USB-C supply
+  (20.1 V) and a minute on the pack. Then LIVE (red), STANDBY (green; rows that
   differ bright; tap it = TAKE), and the target box (tap = next target),
   page, LATCH, lock, links, keypads found, the event line. Page 1 is the
   preset grid, page 2 the old cards and bump pads.

@@ -170,8 +170,9 @@ static void simulate(power_status_t *s, int64_t now_us)
     s->charger_ok = true;
     s->vbat_mv = 15000 + (int)(400 * sin(t / 30));
     s->vbus_mv = !s->docked ? 0 : fmod(t, 240) < 120 ? 15600 : 20100;   // an external battery, then a USB-C supply
-    s->ibat_ma = s->docked ? 1850 : -(2500 + (int)(1500 * sin(t * 1.3)));
-    s->ibus_ma = s->docked ? 2000 : 0;
+    const bool starved = s->docked && fmod(t, 240) >= 30 && fmod(t, 240) < 60;   // half a minute of a starved pack
+    s->ibat_ma = starved ? 30 : s->docked ? 1850 : 0;   // the charger's current only (the lights bypass it)
+    s->ibus_ma = starved ? 60 : s->docked ? 2000 : 0;
     s->vsys_mv = s->vbat_mv + 200;
     s->chg_state = s->docked ? CHG_FAST : CHG_NOT_CHARGING;
     s->die_c10 = 412;
@@ -237,13 +238,25 @@ static void power_task(void *arg)
         // The pack: the charger's battery reading if it's there; otherwise the
         // lights' input when not docked (then it is the pack, less the diode).
         s.pack_mv = s.have_charger ? s.vbat_mv : (!s.docked && s.have_monitor) ? s.light_mv : 0;
-        const int pack_ma = s.have_charger ? -s.ibat_ma : s.light_ma;   // drawn from the pack
-        s.pack_pct = s.pack_mv ? pack_percent(s.pack_mv, pack_ma) : -1;
-        s.runtime_min = (!s.docked && s.pack_pct >= 0 && s.have_monitor) ? runtime_minutes(s.pack_pct, s.light_mw + BASE_LOAD_MW) : -1;
-        // The LEMO input: an external battery's charge from its voltage (the same
-        // 4S curve, corrected for the current it gives; its cable adds some sag).
+        // The LEMO input and how the currents divide (power_math.h, power_flow).
         s.input = s.have_charger ? input_kind(s.vbus_mv) : INPUT_NONE;
         s.input_pct = s.input == INPUT_BATTERY ? pack_percent(s.vbus_mv, s.ibus_ma) : -1;
+        if (s.have_charger) {
+            const power_flow_t f = power_flow((input_kind_t)s.input, s.vbus_mv, s.ibus_ma, s.pack_mv, s.ibat_ma,
+                                              s.have_monitor ? s.light_ma : 0, BASE_LOAD_MW, s.chg_state == CHG_DONE);
+            s.in_ma = f.in_ma;
+            s.in_split = f.split_permille;
+            s.pack_ma = f.pack_ma;
+            s.starved = f.starved;
+        } else {
+            s.in_ma = 0;
+            s.in_split = -1;
+            s.pack_ma = s.have_monitor && !s.docked ? -s.light_ma : 0;
+            s.starved = false;
+        }
+        s.pack_pct = s.pack_mv ? pack_percent(s.pack_mv, -s.pack_ma) : -1;
+        s.runtime_min = (!s.docked && s.pack_pct >= 0 && s.have_monitor) ? runtime_minutes(s.pack_pct, s.light_mw + BASE_LOAD_MW) : -1;
+
         taskENTER_CRITICAL(&lock);
         st = s;
         taskEXIT_CRITICAL(&lock);

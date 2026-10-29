@@ -34,6 +34,10 @@ typedef struct {
     int runtime_min;          // on the pack at the present load; -1 = not on the pack or no load
     uint8_t input;            // input_kind_t: what feeds the LEMO input
     int input_pct;            // an external battery's charge from its voltage; -1 = not a battery
+    int in_ma;                // the LEMO's whole current (charger + light bus), worked out
+    int in_split;             // per mille of it going to the charger; -1 = nothing comes in
+    int pack_ma;              // the pack's whole current, + charging, - discharging, worked out
+    bool starved;             // plugged in, not full, and the pack gets (almost) nothing
 } power_status_t;
 
 esp_err_t power_start(void);
