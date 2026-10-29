@@ -391,6 +391,7 @@ class RealBase:
         self.buf = b""
         self.shot = None          # base64 lines while a screenshot comes in
         self.shot_size = None
+        self.shot_asked = 0.0     # when the last one was asked for
         self.on = set()           # pages driving the real base
 
     def open(self):
@@ -436,12 +437,16 @@ class RealBase:
             line = raw.decode(errors="replace").strip()
             if line.startswith("LEDS "):
                 asyncio.ensure_future(self.send({"leds": line[5:].split(",")}))
-            elif line.startswith("SHOT ") and line != "SHOT END" and line != "SHOT failed":
+            elif line == "SHOT failed":
+                self.shot = None
+            elif line.startswith("SHOT ") and line != "SHOT END":
                 parts = line.split()
                 self.shot, self.shot_size = [], (int(parts[1]), int(parts[2]))
             elif line == "SHOT END" and self.shot is not None:
                 w, h = self.shot_size
-                asyncio.ensure_future(self.send({"shot": "".join(self.shot), "w": w, "h": h}))
+                data = "".join(self.shot)
+                if len(data) == (w * h * 2 + 2) // 3 * 4:   # whole: a line lost to a log line would shift the picture
+                    asyncio.ensure_future(self.send({"shot": data, "w": w, "h": h}))
                 self.shot = None
             elif self.shot is not None and re.fullmatch(r"[A-Za-z0-9+/=]+", line):
                 self.shot.append(line)    # log lines can land in between: only base64 is kept
@@ -465,11 +470,17 @@ class RealBase:
             self.write(f"key {m['key']} {'down' if m.get('down') else 'up'}")
 
     async def run(self):
-        """A screenshot about once a second while a page is driving the base."""
+        """A screenshot about once a second while a page is driving the base;
+        one that never finishes (cut short, or lost) is given up after 4 s."""
         while True:
             await asyncio.sleep(1.2)
-            if self.fd is not None and self.on and self.shot is None:
-                self.write("shot")
+            if self.fd is None or not self.on:
+                continue
+            if self.shot is not None and time.monotonic() - self.shot_asked < 4:
+                continue
+            self.shot = None
+            self.shot_asked = time.monotonic()
+            self.write("shot")
 
 
 realbase = None
