@@ -28,7 +28,7 @@ const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET' };
 const FIN_BASE = 80, FIN_COUNT = 16;
 const isFinPreset = (id) => id >= FIN_BASE && id <= FIN_BASE + FIN_COUNT;
 let baseState = null, baseEvent = 'Nibbles base', wledPs = 0, wledPresetNames = {}, finFollow = true, finPreset = 0;
-let baseLightsMw = 0, baseBumping = 0;
+let baseLightsMw = 0, baseBumping = 0, finProj = '';
 const baseKeyEls = {};
 
 // ------------------------------------------------------------------ keypad
@@ -97,6 +97,7 @@ function baseWledState(state) {
 function baseFromShark(m) {
   if (m.wled && 'ps' in m.wled && !bumpSaved.on) wledPs = m.wled.ps;   // the usermod reports body and fins apart
   if (m.wled && 'finps' in m.wled && !finBumpSaved) finPreset = m.wled.finps;
+  if (m.wled && 'finproj' in m.wled) finProj = m.wled.finproj ? 'top' : 'side';
   if ('finfollow' in m) finFollow = !!m.finfollow;
 }
 function baseWledPresets(presets) {
@@ -151,6 +152,9 @@ function baseActions(list) {
     } else if (type === ACT.PRESET && target === TGT.BODY) {
       wledPost({ ps: value }).catch(() => {});
       wledPs = value;
+      // ALL (bump = 1): the preset's eye settings too, a moment later, as they come by radio after the eyes' own command
+      const e = bump && wledPresets[value] && wledPresets[value].nibbles && wledPresets[value].nibbles.eyes;
+      if (e && lightsFrom !== 'shark') setTimeout(() => eyesApplySettings(e, value), 150);
       if (bumpSaved.on) bumpSaved.ps = value;   // a TAKE under its preview bump: the release keeps the new preset
       baseEvent = `wled set preset ${value}`;
     } else if (type === ACT.PRESET) {
@@ -191,6 +195,11 @@ function preset(n, name) { return n <= 0 ? '--' : name ? `${n} ${name}` : `Prese
 
 function baseDraw() {
   const s = baseState;
+  // the WLED card's fin preset picker follows the fins
+  if (document.activeElement !== $('finpreset')) $('finpreset').value = String(FIN_BASE + finPreset);
+  const pr = wledPresets[FIN_BASE + finPreset];
+  const proj = finProj || (finPreset && pr && pr.nibbles && pr.nibbles.finproj) || (finPreset ? 'side' : '');
+  $('finprojv').textContent = finPreset ? `(${proj} view)` : '';
   // keys' LEDs
   if (s) for (const [name, el] of Object.entries(baseKeyEls)) {
     const c = s.leds[name] || '#000000';

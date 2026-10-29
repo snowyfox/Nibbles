@@ -140,3 +140,32 @@ for (const [id, action] of [['eyeflash', NL.FLASH], ['eyeblack', NL.BLACKOUT]]) 
   b.addEventListener('pointerup', up);
   b.addEventListener('pointercancel', up);
 }
+
+// A WLED preset's eye settings ("nibbles":{"eyes":{...}}), as the usermod
+// sends them to the real eyes: a whole look, or the eyes' own preset, plus
+// reactivity and auto-cycling. Not while the eyes follow the live shark
+// (there its usermod sends them to the real eyes). Looks need a sim.wasm
+// built with eyes_look (./build.sh); older builds skip them.
+const LOOK_FLOATS = ['hue_spread', 'sat', 'palette_step', 'palette_music', 'ring_width', 'halo_sigma', 'halo_amp', 'fill',
+  'flow', 'wobble_px', 'pupil_scale', 'rim_amp', 'rim_white', 'ripple_pos', 'ripple_white', 'spiral_twist', 'spin', 'spin_per_beat'];
+function eyesLook(l, id) {
+  if (!eyesReady || !sim._eyes_look) return false;
+  const p = sim._eyes_look_buffer(), n = sim._eyes_look_size();   // nl_eye_look_t, packed
+  const v = new DataView(sim.HEAPU8.buffer, p, n);
+  for (let i = 0; i < n; i++) v.setUint8(i, 0);
+  v.setUint8(0, id & 255);
+  v.setUint8(1, (l.peak_beats ? 1 : 0) | (l.rainbow ? 2 : 0) | (l.bands ? 4 : 0));
+  new TextEncoder().encode(String(l.name || 'Look')).slice(0, 19).forEach((c, i) => v.setUint8(2 + i, c));
+  (l.palette || []).slice(0, 4).forEach((c, i) => c.slice(0, 3).forEach((x, j) => v.setUint8(22 + i * 3 + j, Math.max(0, Math.min(255, x | 0)))));
+  v.setUint8(34, l.rings | 0);
+  v.setUint8(35, l.spiral_arms | 0);
+  LOOK_FLOATS.forEach((k, i) => v.setFloat32(36 + i * 4, k in l ? +l[k] : (k === 'pupil_scale' || k === 'rim_amp' ? 1 : 0), true));
+  return sim._eyes_look() >= 0;
+}
+function eyesApplySettings(e, id) {
+  if (!e || !eyesReady || $('eyesrc').value === '2') return;
+  if (e.look) eyesLook(e.look, id);
+  else if (e.preset) sim._eyes_command(NL.PRESET_SET, (e.preset | 0) - 1);
+  if (e.react) { const r = { preset: 0, beats: 1, peaks: 2 }[e.react] ?? 0; sim._eyes_command(NL.REACT, r); $('eyereact').value = r; }
+  if ('auto' in e) sim._eyes_command(NL.AUTO, e.auto ? 1 : 0);
+}

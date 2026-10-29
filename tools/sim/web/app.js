@@ -205,9 +205,15 @@ async function loadWled() {
       fetch(`${wled()}/presets.json`).then((r) => r.json()),
       fetch(`${wled()}/json/state`).then((r) => r.json()),
     ]);
+    wledPresets = presets;
+    const fins = $('finpreset');
+    fins.innerHTML = '';
+    Object.entries(presets).filter(([id, p]) => isFinPreset(+id) && p.n).sort((a, b) => a[0] - b[0])
+      .forEach(([id, p]) => fins.add(new Option(`${+id === FIN_BASE ? 'follow the body' : `${id - FIN_BASE}. ${p.n}`} (${id})`, id)));
+    if (!fins.options.length) fins.add(new Option(`no fin presets (${FIN_BASE}-${FIN_BASE + FIN_COUNT}) on this WLED`, ''));
     const sel = $('preset');
     sel.innerHTML = '<option value="">–</option>';
-    Object.entries(presets).filter(([id, p]) => +id > 0 && p.n)
+    Object.entries(presets).filter(([id, p]) => +id > 0 && p.n && !isFinPreset(+id))
       .sort((a, b) => a[1].n.localeCompare(b[1].n))
       .forEach(([id, p]) => sel.add(new Option(`${p.n} (${id})`, id)));
     sel.value = state.ps > 0 ? String(state.ps) : '';
@@ -218,7 +224,16 @@ async function loadWled() {
   }
 }
 
-$('preset').onchange = () => { if ($('preset').value) wledPost({ ps: +$('preset').value }); };
+// A preset picked here is applied as from WLED's own UI: its eye settings go to the eyes too.
+let wledPresets = {};
+$('preset').onchange = () => {
+  const id = +$('preset').value;
+  if (!id) return;
+  wledPost({ ps: id });
+  const e = wledPresets[id] && wledPresets[id].nibbles && wledPresets[id].nibbles.eyes;
+  if (e && lightsFrom !== 'shark') eyesApplySettings(e, id);
+};
+$('finpreset').onchange = () => { if ($('finpreset').value) wledPost({ ps: +$('finpreset').value }); };
 $('bri').oninput = () => {
   $('briv').textContent = $('bri').value;
   wledOn = true;  // WLED turns on when given a brightness

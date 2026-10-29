@@ -96,8 +96,9 @@ EMSCRIPTEN_KEEPALIVE void eyes_command(int op, int arg)
 {
     if (op == NL_OP_AUTO_CYCLE) { auto_cycle = arg != 0; swap_in_s = PRESET_CYCLE_S; return; }
     if (op == NL_OP_REACTIVITY) { react = (nl_react_t)arg; return; }
-    const int base = lead.swap_pending ? next_preset : preset_index;
-    if (op == NL_OP_PRESET_SET) next_preset = ((arg % preset_count) + preset_count) % preset_count;
+    int base = lead.swap_pending ? next_preset : preset_index;
+    if (base >= preset_count) base = 0;  // stepping from a look: back to the built-in ones
+    if (op == NL_OP_PRESET_SET) next_preset = preset_valid(arg) ? arg : ((arg % preset_count) + preset_count) % preset_count;
     else if (op == NL_OP_PRESET_NEXT) next_preset = (base + 1) % preset_count;
     else if (op == NL_OP_PRESET_PREV) next_preset = (base + preset_count - 1) % preset_count;
     else return;
@@ -110,7 +111,23 @@ EMSCRIPTEN_KEEPALIVE void eyes_command(int op, int arg)
 EMSCRIPTEN_KEEPALIVE void eyes_bump(int action, int arg)
 {
     eye_set_bump(&lead, (uint8_t)action);
-    bump_preset = action == NL_BUMP_PRESET && arg >= 1 && arg <= preset_count ? arg - 1 : -1;
+    bump_preset = action == NL_BUMP_PRESET && arg >= 1 && preset_valid(arg - 1) ? arg - 1 : -1;
+}
+
+// A look from a WLED preset (NL_MSG_EYE_LOOK, as the usermod sends it): the
+// page packs it into eyes_look_buffer(), then eyes_look() shows it the way
+// the leader eye does (the look slot not on screen, behind a swap blink).
+static nl_eye_look_t look_buf;
+EMSCRIPTEN_KEEPALIVE nl_eye_look_t *eyes_look_buffer(void) { return &look_buf; }
+EMSCRIPTEN_KEEPALIVE int eyes_look_size(void) { return sizeof(nl_eye_look_t); }
+EMSCRIPTEN_KEEPALIVE int eyes_look(void)
+{
+    const int idx = preset_set_look(&look_buf, rendered);
+    if (idx < 0) return -1;  // the newest look again
+    next_preset = idx;
+    eye_request_swap(&lead);
+    auto_cycle = false;
+    return idx;
 }
 
 static void from_nl(const nl_audio_t *r, audio_features_t *out)
@@ -147,7 +164,7 @@ EMSCRIPTEN_KEEPALIVE void eyes_frame(float dt)
     now_s += dt;
     if (auto_cycle && (swap_in_s -= dt) <= 0) {
         swap_in_s += PRESET_CYCLE_S;
-        next_preset = (preset_index + 1) % preset_count;
+        next_preset = preset_index >= preset_count ? 0 : (preset_index + 1) % preset_count;
         eye_request_swap(&lead);
     }
     audio_features_t mic = ears.out, a;
@@ -168,7 +185,7 @@ EMSCRIPTEN_KEEPALIVE void eyes_frame(float dt)
             render_core_set_preset(rendered);
         }
     }
-    const bool peaks = react == NL_REACT_PRESET ? presets[rendered].peak_beats : react == NL_REACT_PEAKS;
+    const bool peaks = react == NL_REACT_PRESET ? preset_get(rendered)->peak_beats : react == NL_REACT_PEAKS;
     eye_set_peak_beats(&lead, peaks);
     nl_eye_state_t shared;
     eye_export_shared(&lead, rendered, NL_SIDE_STARBOARD, &shared);
@@ -199,5 +216,5 @@ EMSCRIPTEN_KEEPALIVE uint32_t *eyes_image(int i) { return rgba[i & 1]; }
 EMSCRIPTEN_KEEPALIVE int eyes_size(void) { return DISP_W; }
 EMSCRIPTEN_KEEPALIVE eyes_status_t *eyes_status(void) { return &status; }
 EMSCRIPTEN_KEEPALIVE int eyes_preset_count(void) { return preset_count; }
-EMSCRIPTEN_KEEPALIVE const char *eyes_preset_name(int i) { return presets[i % preset_count].name; }
+EMSCRIPTEN_KEEPALIVE const char *eyes_preset_name(int i) { return preset_get(i)->name; }   // look slots too
 EMSCRIPTEN_KEEPALIVE const char *eyes_state_name(int s) { return eye_state_name((eye_state_t)s); }

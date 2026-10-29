@@ -82,6 +82,22 @@ tap LATCH while holding one to keep it. The STANDBY panel works as TAKE by touch
 POWER is simulated: the pack slider, "On the dock", and the lights' power
 estimated from the LED frames (17 mA per LED at full white, a 90% converter).
 
+## Fin presets and eye settings
+- **Fin preset** (WLED card) lists the WLED's fin presets (80 = follow the
+  body, 81-96; see `wled/README.md`, "Fin presets") and applies one. The
+  label says which projection is in use (side or top view), from the
+  usermod's mirror on a live WLED, else from the preset. The fins only show
+  their own effect on a WLED with the new map and the usermod running.
+- **Eye settings in presets:** a body preset picked on the WLED card, or
+  applied from the base card with ALL + number, sends its
+  `"nibbles":{"eyes":{...}}` to the simulated eyes, as the usermod does on
+  the shark. That covers the eyes' own preset, reactivity and auto-cycling.
+  Not while the eyes follow the live shark: its usermod sends them to the
+  real eyes.
+- **Whole looks** need `sim.wasm` rebuilt (`./build.sh`, Emscripten):
+  `src/eyes_wasm.c` has `eyes_look()`, but the committed build predates it.
+  Until then the page skips looks.
+
 ## The live shark
 **Lights: the shark, live** (WLED card) shows exactly what the shark's own
 controller shows, instead of the bench simulator. `server.py` asks the
