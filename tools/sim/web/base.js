@@ -55,6 +55,10 @@ function baseBuildKeypad() {
     }
     pad.appendChild(c);
   }
+  // Only a field you type into keeps the keys; a slider, checkbox or menu that
+  // was just used still has focus, but the keys go to the base.
+  const typingIn = (el) => el && (el.tagName === 'TEXTAREA' || el.isContentEditable ||
+    (el.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes(el.type)));
   // Physical key -> the base key its press started: the release ends that one,
   // even if Shift changed the character in between.
   const held = new Map();
@@ -62,7 +66,7 @@ function baseBuildKeypad() {
   window.addEventListener('keydown', (e) => {
     if (e.repeat || held.has(e.code) || e.metaKey || e.ctrlKey || e.altKey) return;
     const name = keyFor(e);
-    if (!name || !$('basekb').checked || (e.target.closest && e.target.closest('input, select, textarea'))) return;
+    if (!name || !$('basekb').checked || typingIn(e.target)) return;
     e.preventDefault();
     held.set(e.code, name);
     baseKeyEls[name].classList.add('down');
