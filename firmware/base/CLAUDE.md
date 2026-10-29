@@ -78,9 +78,12 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   - Bumps now have a slot per receiver (eyes, WLED; each filters on its
     target bit), so the eyes and WLED can bump different presets at once.
     The pads, the bump button and serial bumps use the same slots.
-- **Main screen** (page 0, portrait): POWER (pack %, bar, volts and amps,
-  dock / battery / simulated, charging or time left, lights' watts, cell and
-  charger temperatures, faults), LIVE (red), STANDBY (green; rows that
+- **Main screen** (page 0, portrait): a power status bar at the top, like a
+  phone's (2026-10-28): DOCK / BATTERY / SIM on the left; the charge and a
+  battery icon on the right (filled to the charge, green / amber / red, a
+  bolt while charging); then 12 px lines: charging or time left, the pack's
+  volts and amps, the lights' watts and amps, and the cell and charger
+  temperatures, or the worst problem in red in their place. Then LIVE (red), STANDBY (green; rows that
   differ bright; tap it = TAKE), and the target box (tap = next target),
   page, LATCH, lock, links, keypads found, the event line. Page 1 is the
   preset grid, page 2 the old cards and bump pads.
