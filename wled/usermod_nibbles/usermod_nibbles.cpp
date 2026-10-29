@@ -197,6 +197,7 @@ class NibblesUsermod : public Usermod {
     uint8_t eyeCmdCount = 0, eyeCmdSends = 0;
     uint16_t eyeCmdId = 0x8000;   // apart from the base's ids
     unsigned long eyeSendNext = 0;
+    char eyeNote[64] = "";        // the last preset's eye settings, for the Info page
     static bool isFinPreset(int id) { return id >= NL_FIN_PRESET_BASE && id <= NL_FIN_PRESET_BASE + NL_FIN_PRESET_COUNT; }
     uint8_t savedPreset = 0;
     int pendingPreset = 0, pendingBri = -1;  // commands received during a bump
@@ -1010,9 +1011,12 @@ class NibblesUsermod : public Usermod {
 
     // "eyes" settings in a preset (see the header comment).
     void readEyeSettings(JsonObject eyesJ) {
+      if (!eyesJ.isNull() && eyesMuted) {
+        snprintf(eyeNote, sizeof(eyeNote), "preset %d: skipped (body only)", presetWaiting);
 #ifdef NIBBLES_DEBUG
-      if (!eyesJ.isNull() && eyesMuted) Serial.printf("nibbles: preset %d eye settings skipped (body only)\n", presetWaiting);
+        Serial.printf("nibbles: %s\n", eyeNote);
 #endif
+      }
       if (eyesJ.isNull() || eyesMuted) return;
       eyeCmdCount = 0;
       JsonObject lk = eyesJ[F("look")];
@@ -1045,9 +1049,11 @@ class NibblesUsermod : public Usermod {
       if (react) eyeCommand(NL_OP_REACTIVITY, !strcmp(react, "beats") ? NL_REACT_BEATS : !strcmp(react, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
       if (!eyesJ[F("auto")].isNull()) eyeCommand(NL_OP_AUTO_CYCLE, (eyesJ[F("auto")] | false) ? 1 : 0);
       eyeSendNext = 0;
+      snprintf(eyeNote, sizeof(eyeNote), "preset %d: %s%s%s%d command(s)%s", currentPreset, eyeLookSends ? "look \"" : "",
+               eyeLookSends ? eyeLook.name : "", eyeLookSends ? "\", " : "", eyeCmdCount,
+               haveEyesMac || !eyeCmdCount ? "" : " (eyes not heard)");
 #ifdef NIBBLES_DEBUG
-      Serial.printf("nibbles: preset %d eye settings: %s%s, %d command(s)%s\n", currentPreset, eyeLookSends ? "look " : "",
-                    eyeLookSends ? eyeLook.name : "", eyeCmdCount, haveEyesMac || !eyeCmdCount ? "" : " (eyes not heard: not sent)");
+      Serial.printf("nibbles: eye settings: %s\n", eyeNote);
 #endif
     }
 
@@ -1227,6 +1233,7 @@ class NibblesUsermod : public Usermod {
     void addToJsonInfo(JsonObject &root) override {
       JsonObject user = root["u"];
       if (user.isNull()) user = root.createNestedObject("u");
+      if (eyeNote[0]) user.createNestedArray(F("Nibbles eye settings")).add(eyeNote);
       JsonArray radio = user.createNestedArray(F("Nibbles radio"));
       if (!radioUp()) {
         radio.add(F("off"));
