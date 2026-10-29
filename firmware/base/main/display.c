@@ -666,9 +666,9 @@ static void build_main_page(void)
     // USB-C supply), the internal pack right, small lines below.
     m.power = make_panel(pagem, 4, 103, 0);
     build_battery(&batt_in, m.power, 8, 7);
-    m.in_pct = at(m.power, &lv_font_montserrat_14, COL_TEXT, 42, 6, 44);
-    m.in_usb = at(m.power, &lv_font_montserrat_14, COL_TEXT, 8, 6, 78);
-    m.pct = at(m.power, &lv_font_montserrat_14, COL_TEXT, 82, 6, 38);
+    m.in_pct = at(m.power, &lv_font_montserrat_12, COL_TEXT, 42, 7, 44);   // the same small font as the lines below
+    m.in_usb = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 7, 78);
+    m.pct = at(m.power, &lv_font_montserrat_12, COL_TEXT, 82, 7, 38);
     lv_obj_set_style_text_align(m.pct, LV_TEXT_ALIGN_RIGHT, 0);
     build_battery(&batt_pack, m.power, 124, 7);
     m.line1 = at(m.power, &lv_font_montserrat_12, COL_TEXT, 8, 26, 148);
@@ -774,7 +774,8 @@ static void main_update(const display_status_t *s)
         lv_label_set_text(m.line1, "On the dock");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
     } else if (p->runtime_min >= 0) {
-        lv_label_set_text_fmt(m.line1, "%d h %02d min left", p->runtime_min / 60, p->runtime_min % 60);
+        const int mins = p->runtime_min < 99 * 60 + 59 ? p->runtime_min : 99 * 60 + 59;   // hhHmmM, at most 99H59M
+        lv_label_set_text_fmt(m.line1, "%02dH%02dM", mins / 60, mins % 60);
         lv_obj_set_style_text_color(m.line1, lv_color_hex(p->runtime_min > 45 ? COL_TEXT : COL_WARN), 0);
     } else {
         lv_label_set_text(m.line1, "On the pack");

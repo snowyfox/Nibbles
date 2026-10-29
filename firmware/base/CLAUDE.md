@@ -89,7 +89,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
     20 V trigger board, shown as the USB symbol and its voltage; nothing
     connected, a dim empty outline and "--";
   - right, the **internal pack**: its charge and battery.
-  Then 12 px lines: charging or time left ("SIM:" first for made-up
+  Then 12 px lines: charging, or the time left as hhHmmM (00H00M .. 99H59M; "SIM:" first for made-up
   readings), the pack's volts and amps, the LEMO input's volts and amps, the
   lights' watts and amps, and the cell and charger temperatures, or the
   worst problem in red in their place. `sim on` alternates a minute on an

@@ -304,7 +304,7 @@ function baseDraw() {
   setBatt('bs_', pct, charging);
   const cellMv = 3000 + pct * 12;
   const mins = Math.round(pct / 100 * 80 * 60 / Math.max(lightsW + 2, 0.5));
-  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : 'Charging 1.8 A') : `${Math.floor(mins / 60)} h ${String(mins % 60).padStart(2, '0')} min left`;
+  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : 'Charging 1.8 A') : `${String(Math.floor(Math.min(mins, 5999) / 60)).padStart(2, '0')}H${String(Math.min(mins, 5999) % 60).padStart(2, '0')}M`;
   $('bs_line1').style.color = docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
   $('bs_line2').textContent = `Pack ${(cellMv * 4 / 1000).toFixed(2)} V  ${docked ? '1.8 A' : `-${(lightsW / (cellMv * 4 / 1000)).toFixed(1)} A`}`;
   const inMv = usb ? 20100 : 12000 + inPct * 48;
