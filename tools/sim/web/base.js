@@ -11,12 +11,16 @@ const BASE_COLS = [
                                ['latch', 'LATCH'], ['blackout', 'BLACK OUT'], ['finsensor', 'FIN SENSOR']] },
   { title: 'Pole (upper)', keys: [['take', 'TAKE'], ['flash', 'FLASH'], ['unlock', 'UNLOCK']] },
 ];
-// Computer keyboard: hold like the real keys.
-const BASE_KEYBOARD = { Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6', Digit7: '7', Digit8: '8',
-  KeyA: 'all', KeyB: 'body', KeyE: 'eyes', KeyF: 'fins', KeyP: 'page', ShiftLeft: 'latch', ShiftRight: 'latch', KeyL: 'latch',
-  KeyZ: 'blackout', KeyS: 'finsensor', Space: 'take', KeyX: 'flash', KeyU: 'unlock',
-  // The number pad (physical keys, so Num Lock doesn't matter): 1-8 the numbers, 0 TAKE, Enter LATCH
-  // (both big keys, easy to hold and tap together), / * - = the targets, + PAGE, . FLASH, 9 BLACKOUT.
+// Computer keyboard: hold like the real keys. Letters, digits, Space and Shift
+// by the character they type (so Dvorak and other layouts get the letter on
+// the key cap)...
+const BASE_KEYS_TYPED = { '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8',
+  a: 'all', b: 'body', e: 'eyes', f: 'fins', p: 'page', shift: 'latch', l: 'latch',
+  z: 'blackout', s: 'finsensor', ' ': 'take', x: 'flash', u: 'unlock' };
+// ...and the number pad by physical key, which is the same in every layout (and
+// Num Lock doesn't matter): 1-8 the numbers, 0 TAKE, Enter LATCH (both big keys,
+// easy to hold and tap together), / * - = the targets, + PAGE, . FLASH, 9 BLACKOUT.
+const BASE_NUMPAD = {
   Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4', Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8',
   Numpad0: 'take', NumpadEnter: 'latch', NumpadDivide: 'body', NumpadMultiply: 'eyes', NumpadSubtract: 'all',
   NumpadEqual: 'fins', NumLock: 'fins', NumpadAdd: 'page', NumpadDecimal: 'flash', Numpad9: 'blackout' };
@@ -51,20 +55,29 @@ function baseBuildKeypad() {
     }
     pad.appendChild(c);
   }
-  const held = new Set();
+  // Physical key -> the base key its press started: the release ends that one,
+  // even if Shift changed the character in between.
+  const held = new Map();
+  const keyFor = (e) => BASE_NUMPAD[e.code] || BASE_KEYS_TYPED[e.key.toLowerCase()];
   window.addEventListener('keydown', (e) => {
-    const name = BASE_KEYBOARD[e.code];
-    if (!name || e.repeat || !$('basekb').checked || (e.target.closest && e.target.closest('input, select, textarea'))) return;
+    if (e.repeat || held.has(e.code) || e.metaKey || e.ctrlKey || e.altKey) return;
+    const name = keyFor(e);
+    if (!name || !$('basekb').checked || (e.target.closest && e.target.closest('input, select, textarea'))) return;
     e.preventDefault();
-    held.add(e.code);
+    held.set(e.code, name);
     baseKeyEls[name].classList.add('down');
     baseKey(name, true);
   });
   window.addEventListener('keyup', (e) => {
-    const name = BASE_KEYBOARD[e.code];
-    if (!name || !held.delete(e.code)) return;
+    const name = held.get(e.code);
+    if (!name) return;
+    held.delete(e.code);
     baseKeyEls[name].classList.remove('down');
     baseKey(name, false);
+  });
+  window.addEventListener('blur', () => {   // switching away mid-press: let everything go
+    for (const name of held.values()) { baseKeyEls[name].classList.remove('down'); baseKey(name, false); }
+    held.clear();
   });
 }
 

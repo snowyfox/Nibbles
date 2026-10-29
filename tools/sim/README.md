@@ -73,7 +73,8 @@ the base's main page (`display.c`) and carries out what the logic asks:
   blackout: off; preset: that preset; then back), since on the shark they
   go by radio.
 
-Click (and hold) the keys, or use the computer's keyboard: 1-8, A all,
+Click (and hold) the keys, or use the computer's keyboard (letters by the
+character they type, so Dvorak and other layouts work): 1-8, A all,
 B body, E eyes, F fins, P page, Shift or L for LATCH, Space TAKE, X flash,
 Z blackout, S fin sensor, U unlock (hold 1 s). Or the number pad: 1-8 the
 numbers, 0 TAKE, Enter LATCH, / body, * eyes, - all, = (or Clear) fins,
