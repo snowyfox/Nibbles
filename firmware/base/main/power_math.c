@@ -48,6 +48,19 @@ power_flow_t power_flow(input_kind_t input, int vbus_mv, int ibus_ma, int pack_m
     return f;
 }
 
+temp_level_t cell_temp_level(int c10)
+{
+    if (c10 == INT16_MIN) return TEMP_OK;
+    if (c10 >= CELL_HOT_C10 || c10 <= CELL_COLD_C10) return TEMP_BAD;
+    if (c10 >= CELL_WARM_C10 || c10 < CELL_COOL_C10) return TEMP_WARN;
+    return TEMP_OK;
+}
+
+temp_level_t die_temp_level(int c10)
+{
+    return c10 >= DIE_HOT_C10 ? TEMP_BAD : c10 >= DIE_WARM_C10 ? TEMP_WARN : TEMP_OK;
+}
+
 int runtime_minutes(int pct, int load_mw)
 {
     if (load_mw < 500) return -1;

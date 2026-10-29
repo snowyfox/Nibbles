@@ -94,19 +94,25 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   the base); all grey and pulsing when the pack is **starved** (plugged in,
   not full, charging under 100 mA, or the LEMO so far below the pack that
   the pack feeds the lights through its ideal diode's body diode); dim grey
-  with nothing plugged in. Then row 2: the LEMO's `##.#V #.#A` left, the
-  lights' `##W #.#A` right. Neither the LEMO's nor the pack's whole current
-  is measured (the light bus bypasses the charger): `power_flow`
-  (power_math.c, host-tested) works them out from IBUS, IBAT and the
-  INA226, plus `BASE_LOAD_MW` for the base. Then 12 px lines: charging (or
-  "Pack starved", amber), or the time left as hhHmmM (00H00M .. 99H59M;
-  "SIM:" first for made-up readings), the pack's volts and whole current,
-  and the cell and charger temperatures, or the worst problem in red in
-  their place. Every number in the bar uses `font_tab12`: Montserrat 12
+  with nothing plugged in. Then row 2: left, the LEMO's `##.#V #.#A`, or
+  with nothing plugged in the time left on the pack as hhHmmM (00H00M ..
+  99H59M); right, the lights' `#.#A ##W`. Row 3: `##°C / ##°C` (cells /
+  charger die) left, the pack's `##.##V` right. Temperatures are grey,
+  orange near their limit and bold red past it (`cell_temp_level`,
+  `die_temp_level`, host-tested; cells orange from 45 °C and below 5 °C, red
+  from 55 °C and at 0 °C or below; die orange from 85 °C, red from 105 °C;
+  bold is the label drawn twice, 1 px apart). Neither the LEMO's nor the
+  pack's whole current is measured (the light bus bypasses the charger):
+  `power_flow` (power_math.c, host-tested) works them out from IBUS, IBAT
+  and the INA226, plus `BASE_LOAD_MW` for the base. Then a status line
+  (charging, "Pack starved" in amber, "Pack full", or on the pack what it
+  gives; "SIM:" first for made-up readings) and a red line for problems
+  only. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
   kerning), so values don't shift as they change. `sim on` alternates a minute on an
   external battery (15.6 V; starved for half a minute) or a USB-C supply
-  (20.1 V) and a minute on the pack. Then LIVE (red), STANDBY (green; rows that
+  (20.1 V) and a minute on the pack, and sweeps both temperatures through
+  their levels. Then LIVE (red), STANDBY (green; rows that
   differ bright; tap it = TAKE), and the target box (tap = next target),
   page, LATCH, lock, links, keypads found, the event line. Page 1 is the
   preset grid, page 2 the old cards and bump pads.

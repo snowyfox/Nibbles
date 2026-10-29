@@ -533,7 +533,8 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *line1, *line2, *line4;
+    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *line1, *line4;
+    lv_obj_t *t_cell[2], *t_slash, *t_die[2], *pack_v;   // row 3; [1]: the copy 1 px right that makes bold
     bool flow_pulsing;
     scene_panel_t live, stby;
     lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
@@ -733,6 +734,24 @@ static void set_flow(int split_permille, bool starved)
     lv_obj_set_style_bg_color(m.flow_out, lv_color_hex(COL_IOS_BLUE), 0);
 }
 
+// One temperature in row 3: grey, orange near its limit, bold red past it.
+static void set_temp(lv_obj_t *l[2], int c10, temp_level_t level)
+{
+    char text[24];
+    if (c10 == INT16_MIN) snprintf(text, sizeof(text), "--\xc2\xb0" "C");
+    else {
+        const int c = (c10 + (c10 < 0 ? -5 : 5)) / 10;
+        snprintf(text, sizeof(text), "%s%d\xc2\xb0" "C", c >= 0 && c < 10 ? FIG_SPACE : "", c);
+    }
+    const uint32_t col = level == TEMP_BAD ? COL_IOS_RED : level == TEMP_WARN ? COL_WARN : COL_TITLE;
+    for (int i = 0; i < 2; i++) {
+        lv_label_set_text(l[i], text);
+        lv_obj_set_style_text_color(l[i], lv_color_hex(col), 0);
+    }
+    if (level == TEMP_BAD) lv_obj_remove_flag(l[1], LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(l[1], LV_OBJ_FLAG_HIDDEN);
+}
+
 static void build_main_page(void)
 {
     // The power status bar: the LEMO input left (an external battery, or a
@@ -752,9 +771,17 @@ static void build_main_page(void)
     m.in_va = at(m.power, &font_tab12, COL_TEXT, 8, 29, 80);
     m.out_wa = at(m.power, &font_tab12, COL_TEXT, 86, 29, 70);
     lv_obj_set_style_text_align(m.out_wa, LV_TEXT_ALIGN_RIGHT, 0);
-    m.line1 = at(m.power, &font_tab12, COL_TEXT, 8, 46, 148);
-    m.line2 = at(m.power, &font_tab12, COL_TITLE, 8, 61, 148);
-    m.line4 = at(m.power, &font_tab12, COL_TITLE, 8, 76, 148);
+    // row 3: the cells' and the charger's temperatures left, the pack's voltage right
+    for (int i = 0; i < 2; i++) {
+        m.t_cell[i] = at(m.power, &font_tab12, COL_TITLE, 8 + i, 44, 0);
+        m.t_die[i] = at(m.power, &font_tab12, COL_TITLE, 56 + i, 44, 0);
+    }
+    m.t_slash = at(m.power, &font_tab12, COL_TITLE, 44, 44, 0);
+    lv_label_set_text(m.t_slash, "/");
+    m.pack_v = at(m.power, &font_tab12, COL_TITLE, 96, 44, 60);
+    lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
+    m.line1 = at(m.power, &font_tab12, COL_TEXT, 8, 61, 148);
+    m.line4 = at(m.power, &font_tab12, COL_BAD, 8, 76, 148);
 
     scene_panel(&m.live, 102, "LIVE", COL_LIVE);
     scene_panel(&m.stby, 240, "STANDBY", COL_STANDBY);
@@ -836,27 +863,41 @@ static void main_update(const display_status_t *s)
         else lv_label_set_text(m.in_pct, "--");
         lv_obj_set_style_text_color(m.in_pct, lv_color_hex(p->input_pct < 0 ? COL_DIM : COL_TEXT), 0);
     }
-    // The flow line, then the LEMO's volts and amps (left) and the lights' watts and amps (right)
+    // The flow line; row 2: the LEMO's volts and amps, or with nothing plugged
+    // in the time left on the pack (left), and the lights' amps and watts (right)
     set_flow(p->have_charger ? p->in_split : -1, p->starved);
-    if (p->have_charger) {
-        const int mv = p->input != INPUT_NONE ? p->vbus_mv : 0, ma = p->in_ma;
-        const int v10 = (mv + 50) / 100, a10 = (ma + 50) / 100;   // tenths
+    if (p->have_charger && p->input != INPUT_NONE) {
+        const int v10 = (p->vbus_mv + 50) / 100, a10 = (p->in_ma + 50) / 100;   // tenths
         lv_label_set_text_fmt(m.in_va, "%s%d.%dV %d.%dA", v10 < 100 ? FIG_SPACE : "", v10 / 10, v10 % 10, a10 / 10, a10 % 10);
-        lv_obj_set_style_text_color(m.in_va, lv_color_hex(mv ? COL_TEXT : COL_DIM), 0);
+        lv_obj_set_style_text_color(m.in_va, lv_color_hex(COL_TEXT), 0);
+    } else if (p->runtime_min >= 0) {
+        const int mins = p->runtime_min < 99 * 60 + 59 ? p->runtime_min : 99 * 60 + 59;   // hhHmmM, at most 99H59M
+        lv_label_set_text_fmt(m.in_va, "%02dH%02dM", mins / 60, mins % 60);
+        lv_obj_set_style_text_color(m.in_va, lv_color_hex(p->runtime_min > 45 ? COL_TEXT : COL_WARN), 0);
     } else {
-        lv_label_set_text(m.in_va, "--.-V -.-A");
+        lv_label_set_text(m.in_va, "--H--M");
         lv_obj_set_style_text_color(m.in_va, lv_color_hex(COL_DIM), 0);
     }
     if (p->have_monitor) {
         const int ma = p->light_ma > 0 ? p->light_ma : 0, a10 = (ma + 50) / 100, w = (p->light_mw + 500) / 1000;
         // amps: one digit before the point (100 W at the light bus's 12 V or more is under 10 A)
-        lv_label_set_text_fmt(m.out_wa, "%s%s%dW %d.%dA", w < 100 ? FIG_SPACE : "", w < 10 ? FIG_SPACE : "", w, a10 / 10, a10 % 10);
+        lv_label_set_text_fmt(m.out_wa, "%d.%dA %s%s%dW", a10 / 10, a10 % 10, w < 100 ? FIG_SPACE : "", w < 10 ? FIG_SPACE : "", w);
         lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_TEXT), 0);
     } else {
-        lv_label_set_text(m.out_wa, "--W -.-A");
+        lv_label_set_text(m.out_wa, "-.-A --W");
         lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_DIM), 0);
     }
-    // Small lines: what the pack is doing ("SIM:" first for made-up readings)
+    // row 3: the temperatures (cells / charger) and the pack's voltage
+    if (p->have_charger) {
+        set_temp(m.t_cell, p->cell_c10, cell_temp_level(p->cell_c10));
+        set_temp(m.t_die, p->die_c10, die_temp_level(p->die_c10));
+    } else {
+        set_temp(m.t_cell, INT16_MIN, TEMP_OK);
+        set_temp(m.t_die, INT16_MIN, TEMP_OK);
+    }
+    if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pack_v, "%s%d.%02dV", p->pack_mv < 10000 ? FIG_SPACE : "", p->pack_mv / 1000, p->pack_mv % 1000 / 10);
+    else lv_label_set_text(m.pack_v, "--.--V");
+    // What the pack is doing ("SIM:" first for made-up readings)
     if (!board && !p->sim) {
         lv_label_set_text(m.line1, "Power board not found");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_DIM), 0);
@@ -864,45 +905,31 @@ static void main_update(const display_status_t *s)
         lv_label_set_text(m.line1, "Charger NOT set up");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_BAD), 0);
     } else if (p->docked && p->have_charger) {
-        if (cs == CHG_DONE) snprintf(text, sizeof(text), "Dock: pack full");
-        else if (cs == CHG_NOT_CHARGING) snprintf(text, sizeof(text), "Dock: not charging");
+        if (cs == CHG_DONE) snprintf(text, sizeof(text), "Pack full");
+        else if (cs == CHG_NOT_CHARGING) snprintf(text, sizeof(text), "Not charging");
         else if (p->starved) snprintf(text, sizeof(text), "Pack starved");
         else { fmt_ma(a, sizeof(a), p->pack_ma); snprintf(text, sizeof(text), "Charging %s", a); }
         lv_label_set_text(m.line1, text);
         lv_obj_set_style_text_color(m.line1, lv_color_hex(p->starved ? COL_WARN : COL_OK), 0);
     } else if (p->docked) {
-        lv_label_set_text(m.line1, "On the dock");
+        lv_label_set_text(m.line1, "Plugged in");
         lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
-    } else if (p->runtime_min >= 0) {
-        const int mins = p->runtime_min < 99 * 60 + 59 ? p->runtime_min : 99 * 60 + 59;   // hhHmmM, at most 99H59M
-        lv_label_set_text_fmt(m.line1, "%02dH%02dM", mins / 60, mins % 60);
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(p->runtime_min > 45 ? COL_TEXT : COL_WARN), 0);
-    } else {
-        lv_label_set_text(m.line1, "On the pack");
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_TEXT), 0);
+    } else {   // on the pack: what it gives (the time left is in row 2)
+        fmt_ma(a, sizeof(a), -p->pack_ma);
+        snprintf(text, sizeof(text), "On the pack %s", a);
+        lv_label_set_text(m.line1, text);
+        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_TITLE), 0);
     }
     if (p->sim) {
         snprintf(text, sizeof(text), "SIM: %s", lv_label_get_text(m.line1));
         lv_label_set_text(m.line1, text);
     }
-    // the pack's voltage and current
-    if (p->pack_pct >= 0) {
-        if (p->have_charger || p->have_monitor) fmt_ma(a, sizeof(a), p->pack_ma);   // worked out: the charger's and the light bus's
-        else a[0] = 0;
-        lv_label_set_text_fmt(m.line2, "Pack %d.%02d V  %s", p->pack_mv / 1000, p->pack_mv % 1000 / 10, a);
-    } else lv_label_set_text(m.line2, "Pack: no reading");
-    // Problems, worst first, in place of the temperatures
-    lv_obj_set_style_text_color(m.line4, lv_color_hex(COL_BAD), 0);
+    // Problems, worst first (temperatures show in their colours)
     if (p->lights_off) lv_label_set_text(m.line4, "LIGHTS SWITCHED OFF");
     else if (p->have_expander && !p->efuse_pg) lv_label_set_text(m.line4, "eFuse tripped / off");
     else if (p->fault0 || p->fault1) lv_label_set_text_fmt(m.line4, "Charger fault %02x %02x", p->fault0, p->fault1);
     else if (p->ts_flags & 0x09) lv_label_set_text(m.line4, (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge");
-    else if (p->have_charger) {
-        char cell[16] = "--";
-        if (p->cell_c10 != INT16_MIN) snprintf(cell, sizeof(cell), "%d\xc2\xb0" "C", (p->cell_c10 + 5) / 10);
-        lv_label_set_text_fmt(m.line4, "Cells %s  chg %d\xc2\xb0" "C", cell, (p->die_c10 + 5) / 10);
-        lv_obj_set_style_text_color(m.line4, lv_color_hex(COL_TITLE), 0);
-    } else lv_label_set_text(m.line4, "");
+    else lv_label_set_text(m.line4, "");
 
     // LIVE and STANDBY
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);

@@ -39,6 +39,18 @@ typedef struct {
 power_flow_t power_flow(input_kind_t input, int vbus_mv, int ibus_ma, int pack_mv, int ibat_ma,
                         int lights_ma, int base_mw, bool charge_done);
 
+// Temperature levels for the screen (x10 C): the cells (21700 Li-ion: charge
+// 0-45 C, discharge to 60 C) and the charger's die (it throttles at 120 C).
+#define CELL_WARM_C10       450     // orange from here: past the charge limit
+#define CELL_HOT_C10        550     // red: near the 60 C discharge limit
+#define CELL_COOL_C10       50      // orange below this
+#define CELL_COLD_C10       0       // red at or below: no charging below freezing
+#define DIE_WARM_C10        850
+#define DIE_HOT_C10         1050
+typedef enum { TEMP_OK = 0, TEMP_WARN, TEMP_BAD } temp_level_t;
+temp_level_t cell_temp_level(int c10);   // INT16_MIN (no reading): TEMP_OK
+temp_level_t die_temp_level(int c10);
+
 // Minutes left at load_mw from pct, or -1 when the load is too small to say.
 int runtime_minutes(int pct, int load_mw);
 

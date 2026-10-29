@@ -175,8 +175,8 @@ static void simulate(power_status_t *s, int64_t now_us)
     s->ibus_ma = starved ? 60 : s->docked ? 2000 : 0;
     s->vsys_mv = s->vbat_mv + 200;
     s->chg_state = s->docked ? CHG_FAST : CHG_NOT_CHARGING;
-    s->die_c10 = 412;
-    s->cell_c10 = 287;
+    s->die_c10 = 750 + (int)(350 * sin(t / 25));   // sweeps through the screen's warn and bad levels
+    s->cell_c10 = 400 + (int)(180 * sin(t / 20));
     s->light_mv = s->docked ? 16400 : s->vbat_mv - 150;
     s->light_ma = 2500 + (int)(1500 * sin(t * 1.3));
     s->light_mw = s->light_mv * s->light_ma / 1000;

@@ -313,9 +313,15 @@ function baseDraw() {
   const packA = !docked ? -(lightsA + baseA) : starved ? -(lightsA + baseA) : toPack * 0.92;
   const fig = (n, width) => String(n).padStart(width, '\u2007');   // figure spaces, as the firmware
   const tenths = (x, width) => `${fig(Math.floor(Math.round(x * 10) / 10), width)}.${Math.round(x * 10) % 10}`;
-  $('bs_inva').textContent = `${tenths(inMv / 1000, 2)}V ${tenths(inA, 1)}A`;
-  $('bs_inva').style.color = docked ? 'var(--text)' : 'var(--dim)';
-  $('bs_outwa').textContent = `${fig(Math.round(lightsW), 3)}W ${tenths(lightsA, 1)}A`;
+  // row 2: the LEMO's volts and amps, or with nothing plugged in the time left; the lights' amps and watts
+  const hhmm = `${String(Math.floor(Math.min(mins, 5999) / 60)).padStart(2, '0')}H${String(Math.min(mins, 5999) % 60).padStart(2, '0')}M`;
+  $('bs_inva').textContent = docked ? `${tenths(inMv / 1000, 2)}V ${tenths(inA, 1)}A` : hhmm;
+  $('bs_inva').style.color = docked || mins > 45 ? 'var(--text)' : 'var(--warn)';
+  $('bs_outwa').textContent = `${tenths(lightsA, 1)}A ${fig(Math.round(lightsW), 3)}W`;
+  // row 3: cells / charger temperatures (simulated: steady), the pack's voltage
+  const tempHtml = (c, warn, bad) => `<span style="color:${c >= bad ? '#ff3b30;font-weight:700' : c >= warn ? 'var(--warn)' : 'var(--dim)'}">${fig(c, 2)}°C</span>`;
+  $('bs_temps').innerHTML = `${tempHtml(29, 45, 55)} / ${tempHtml(41, 85, 105)}`;
+  $('bs_packv').textContent = `${packV.toFixed(2)}V`;
   const split = docked ? toPack / inA : -1, W = 148;
   const fi = $('bs_flowin'), fo = $('bs_flowout');
   if (split < 0 || starved) {   // one grey line: nothing in (dim), or starved (pulsing)
@@ -326,9 +332,8 @@ function baseDraw() {
     fi.style.width = `${w}px`; fi.style.background = '#34c759'; fi.style.animation = '';
     fo.style.display = ''; fo.style.left = `${8 + w}px`; fo.style.width = `${W - w}px`; fo.style.background = '#0a84ff';
   }
-  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Dock: pack full' : starved ? 'Pack starved' : `Charging ${packA.toFixed(1)} A`) : `${String(Math.floor(Math.min(mins, 5999) / 60)).padStart(2, '0')}H${String(Math.min(mins, 5999) % 60).padStart(2, '0')}M`;
-  $('bs_line1').style.color = starved ? 'var(--warn)' : docked ? 'var(--ok)' : mins > 45 ? 'var(--text)' : 'var(--warn)';
-  $('bs_line2').textContent = `Pack ${packV.toFixed(2)} V  ${packA.toFixed(1)} A`;
+  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Pack full' : starved ? 'Pack starved' : `Charging ${packA.toFixed(1)} A`) : `On the pack ${(-packA).toFixed(1)} A`;
+  $('bs_line1').style.color = starved ? 'var(--warn)' : docked ? 'var(--ok)' : 'var(--dim)';
   if (!s) return;
   // LIVE and STANDBY
   const rows = (pre, sc, bri, diff) => {

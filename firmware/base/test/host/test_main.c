@@ -311,6 +311,10 @@ static void test_power_math(void)
     CHECK(input_kind(16800) == INPUT_BATTERY);
     CHECK(input_kind(20100) == INPUT_SUPPLY);
     CHECK(input_kind(19000) == INPUT_SUPPLY);
+    // temperature levels
+    CHECK(cell_temp_level(290) == TEMP_OK && cell_temp_level(450) == TEMP_WARN && cell_temp_level(550) == TEMP_BAD);
+    CHECK(cell_temp_level(40) == TEMP_WARN && cell_temp_level(0) == TEMP_BAD && cell_temp_level(INT16_MIN) == TEMP_OK);
+    CHECK(die_temp_level(410) == TEMP_OK && die_temp_level(850) == TEMP_WARN && die_temp_level(1050) == TEMP_BAD);
     // the LEMO's current split: 3 A to the charger and 2 A to the lights = 5 A in, 3/5 green
     power_flow_t f = power_flow(INPUT_SUPPLY, 20000, 3000, 15000, 3500, 2000, 0, false);
     CHECK(f.in_ma == 5000 && f.split_permille == 600 && !f.starved && f.pack_ma == 3500);
