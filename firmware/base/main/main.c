@@ -363,6 +363,7 @@ static void buttons_task(void *arg)
 // prefix it goes to both; preset numbers are 1-based on both),
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 grid, 2 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
+// "leds on|off" (print the key LED colours when they change),
 // "sim on|off" (made-up power readings), "lights on|off", "power" (log the power board).
 static void console_key(const char *args)
 {
@@ -396,6 +397,11 @@ static void log_power(void)
              p.cell_c10 / 10, abs(p.cell_c10 % 10), p.die_c10 / 10, abs(p.die_c10 % 10), p.fault0, p.fault1, p.ts_flags);
 }
 
+// "leds on": print the key LED colours whenever they change, as one line,
+// "LEDS rrggbb,rrggbb,..." in ctl_key_t order from KEY_NUM1, so the simulator
+// can light its keys like the real ones while it drives this base.
+static volatile bool leds_echo;
+
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -425,6 +431,7 @@ static void console_task(void *arg)
         else if (!strcmp(line, "sim on") || !strcmp(line, "sim off")) power_sim(line[5] == 'n');
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
         else if (!strcmp(line, "power")) log_power();
+        else if (!strcmp(line, "leds on") || !strcmp(line, "leds off")) leds_echo = line[6] == 'n';
         else if (!strncmp(line, "react ", 6))
             send_cmd_to(NL_TARGET_EYES, NL_OP_REACTIVITY,
                         !strcmp(line + 6, "beats") ? NL_REACT_BEATS : !strcmp(line + 6, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
@@ -447,7 +454,7 @@ static void console_task(void *arg)
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, key NAME [down|up], keys, sim on|off, lights on|off, power");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
     }
 }
 
@@ -529,6 +536,16 @@ void app_main(void)
         xSemaphoreGive(ctl_mutex);
         run_ctl_actions(acts, nacts);
         keypad_set_leds(rgb);
+        static uint32_t echoed[KEY_COUNT];
+        static bool echo_was;
+        if (leds_echo && (!echo_was || memcmp(echoed, rgb, sizeof(echoed)))) {
+            char text[8 * KEY_COUNT + 8];
+            int len = snprintf(text, sizeof(text), "LEDS ");
+            for (int k = 1; k < KEY_COUNT; k++) len += snprintf(text + len, sizeof(text) - len, "%s%06lx", k > 1 ? "," : "", (unsigned long)rgb[k]);
+            printf("%s\n", text);
+            memcpy(echoed, rgb, sizeof(echoed));
+        }
+        echo_was = leds_echo;
 
         power_status_t pw;
         power_get(&pw);

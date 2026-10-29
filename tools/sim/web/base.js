@@ -82,7 +82,9 @@ function baseBuildKeypad() {
 }
 
 function baseKey(name, down) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ base: { key: name, down } }));
+  if (!ws || ws.readyState !== 1) return;
+  if (realMode) ws.send(JSON.stringify({ realbase: { key: name, down } }));   // the real base, on USB
+  else ws.send(JSON.stringify({ base: { key: name, down } }));
 }
 
 function baseHello() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ base: { hello: 1 } })); }
@@ -206,6 +208,46 @@ function baseMessage(m) {
 // ------------------------------------------------------------------ screen (display.c's main page)
 function preset(n, name) { return n <= 0 ? '--' : name ? `${n} ${name}` : `Preset ${n}`; }
 
+// ------------------------------------------------------------------ the real base, on USB
+// The keys go to the real base's serial console (server.py), so it sends real
+// commands over the radio; its screen (a screenshot about once a second) and
+// key LEDs show here.
+let realMode = false;
+const KEY_ORDER = ['1', '2', '3', '4', '5', '6', '7', '8', 'all', 'body', 'eyes', 'fins', 'page', 'latch', 'blackout',
+  'finsensor', 'take', 'flash', 'unlock'];   // ctl_key_t order, as the base prints its LEDs
+function setKeyLed(name, hex) {
+  const el = baseKeyEls[name];
+  if (!el) return;
+  const c = '#' + hex;
+  el.querySelector('.led').style.background = c;
+  el.querySelector('.led').style.boxShadow = hex === '000000' ? 'none' : `0 0 10px ${c}`;
+}
+function realBaseMessage(m) {
+  if ('connected' in m) {
+    $('basedrivev').textContent = realMode ? (m.connected ? '(connected)' : '(not found on USB)') : '';
+    if (realMode && !m.connected) { realMode = false; $('basedrive').value = 'sim'; $('basereal').hidden = true; }
+  }
+  if (m.leds && realMode) m.leds.forEach((hex, i) => setKeyLed(KEY_ORDER[i], hex));
+  if (m.shot && realMode) {
+    const bin = atob(m.shot), c = $('basereal'), g = c.getContext('2d');
+    c.width = m.w; c.height = m.h;
+    const img = g.createImageData(m.w, m.h);
+    for (let i = 0, p = 0; i + 1 < bin.length && p < img.data.length; i += 2, p += 4) {
+      const v = bin.charCodeAt(i) | bin.charCodeAt(i + 1) << 8;   // RGB565, little-endian
+      img.data[p] = (v >> 11 & 31) * 255 / 31; img.data[p + 1] = (v >> 5 & 63) * 255 / 63; img.data[p + 2] = (v & 31) * 255 / 31; img.data[p + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    c.hidden = false;
+  }
+}
+$('basedrive').addEventListener('change', () => {
+  realMode = $('basedrive').value === 'real';
+  $('basereal').hidden = true;
+  $('basedrivev').textContent = realMode ? '(connecting…)' : '';
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ realbase: { on: realMode } }));
+  baseDraw();
+});
+
 function baseDraw() {
   const s = baseState;
   // the WLED card's fin preset picker follows the fins
@@ -213,8 +255,8 @@ function baseDraw() {
   const pr = wledPresets[FIN_BASE + finPreset];
   const proj = finProj || (finPreset && pr && pr.nibbles && pr.nibbles.finproj) || (finPreset ? 'side' : '');
   $('finprojv').textContent = finPreset ? `(${proj} view)` : '';
-  // keys' LEDs
-  if (s) for (const [name, el] of Object.entries(baseKeyEls)) {
+  // keys' LEDs (the real base's come in realBaseMessage)
+  if (s && !realMode) for (const [name, el] of Object.entries(baseKeyEls)) {
     const c = s.leds[name] || '#000000';
     el.querySelector('.led').style.background = c;
     el.querySelector('.led').style.boxShadow = c === '#000000' ? 'none' : `0 0 10px ${c}`;

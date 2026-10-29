@@ -63,6 +63,7 @@ function connect() {
       const m = JSON.parse(e.data);
       if ('source' in m) showSource(m);
       else if ('base' in m) baseMessage(m.base);
+      else if ('realbase' in m) realBaseMessage(m.realbase);
       else { eyesFromShark(m); finsFromShark(m); baseFromShark(m); }
       return;
     }
@@ -72,7 +73,7 @@ function connect() {
     frames++;
     if (view === '3d' && window.nibbles3d) window.nibbles3d.update(leds);
   };
-  ws.onopen = () => baseHello();
+  ws.onopen = () => { baseHello(); if (realMode) ws.send(JSON.stringify({ realbase: { on: true } })); };
   ws.onclose = () => { status('lost the simulator server; retrying…'); setTimeout(connect, 1000); };
 }
 

@@ -83,6 +83,22 @@ tap LATCH while holding one to keep it. The STANDBY panel works as TAKE by touch
 POWER is simulated: the pack slider, "On the dock", and the lights' power
 estimated from the LED frames (17 mA per LED at full white, a 90% converter).
 
+## Driving the real base
+**Keys drive: the real base, on USB** (base card) sends the page's keys
+(clicks, the computer keyboard, the number pad) to the base prototype on
+USB instead of the simulated one:
+- `server.py` writes `key NAME down|up` to its serial console, so the real
+  base runs the keys and sends real commands and bumps over the radio.
+- The card shows the base's own screen (a screenshot about once a second)
+  and its key LED colours (`leds on`).
+- The port is found by the base's USB serial number (`BASE_SERIAL`), or
+  give it with `server.py --base /dev/cu.usbmodemNNN`.
+- Opening the port can restart the base: give it ~15 s to find the radio
+  channel again.
+- With the main board as the brain, start the server with
+  `--shark 4.3.2.2` and mirror that address to watch the lights the base is
+  changing.
+
 ## Fin presets and eye settings
 - **Fin preset** (WLED card) lists the WLED's fin presets (80 = follow the
   body, 81-96; see `wled/README.md`, "Fin presets") and applies one. The

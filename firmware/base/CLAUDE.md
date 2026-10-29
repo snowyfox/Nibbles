@@ -87,7 +87,9 @@ file. Until the hardware exists, all of it can be driven from USB serial.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
   finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`,
-  `power` (logs the power board), `page 0|1|2`.
+  `power` (logs the power board), `page 0|1|2`, `leds on|off` (prints
+  `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
+  uses it to drive this base from the computer's keyboard).
 - Host tests: `make -C firmware/base/test/host`.
 
 Earlier features, still there (`main/main.c`):

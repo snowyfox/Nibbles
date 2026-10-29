@@ -21,9 +21,17 @@
   (firmware/base/main/controls.c, built here with the computer's C compiler
   and called through ctypes); the page gets its state, key LED colours and
   the actions to carry out (preset and brightness changes, bumps).
+- Or the real base, on USB ({"realbase": {"on": true}}): the page's keys go
+  to its serial console ("key NAME down|up"), so it sends real commands and
+  bumps over the radio; the page gets its key LED colours ("leds on") and a
+  screenshot of its screen about once a second ("shot"). The port is found by
+  the base's serial number (BASE_SERIAL), or --base PORT.
 """
 import argparse
 import asyncio
+import re
+import termios
+import tty
 import ctypes
 import subprocess
 import time
@@ -155,6 +163,8 @@ async def handle(reader, writer, audio_sock, wled_ip):
                         await set_mode(req["source"], req.get("ip"))
                     elif "base" in req and base.lib:
                         await base.message(writer, req["base"])
+                    elif "realbase" in req:
+                        await realbase.message(writer, req["realbase"])
                 elif opcode == 0x2 and len(data) == 44 and mode["source"] == "sim":  # audio sync packet
                     audio_sock.sendto(data, AUDIO_SYNC_GROUP)
                     if wled_ip:
@@ -349,11 +359,128 @@ class Base:
 base = Base()
 
 
+# ------------------------------------------------------------------ the real base, on USB
+
+BASE_SERIAL = "28:84:85:91:27:08"   # the base prototype's USB serial number (its MAC)
+
+
+def find_base_port():
+    """The base's /dev/cu.usbmodem port, from its USB serial number and location
+    (macOS names the port after the location: 0x00400000 -> usbmodem401)."""
+    try:
+        out = subprocess.run(["system_profiler", "SPUSBDataType"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    i = out.find("Serial Number: " + BASE_SERIAL)
+    if i < 0:
+        return None
+    m = re.search(r"Location ID: 0x([0-9a-f]+)", out[i:i + 400])
+    if not m:
+        return None
+    port = "/dev/cu.usbmodem%x01" % (int(m.group(1), 16) >> 20)
+    return port if os.path.exists(port) else None
+
+
+class RealBase:
+    """The base prototype's USB serial console. Opening the port may restart
+    the base (the USB-JTAG reset); it is opened once, when a page first asks."""
+
+    def __init__(self, port):
+        self.port = port
+        self.fd = None
+        self.buf = b""
+        self.shot = None          # base64 lines while a screenshot comes in
+        self.shot_size = None
+        self.on = set()           # pages driving the real base
+
+    def open(self):
+        if self.fd is not None:
+            return True
+        port = self.port or find_base_port()
+        if not port:
+            print("real base: not found on USB")
+            return False
+        try:
+            fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            tty.setraw(fd)
+            attrs = termios.tcgetattr(fd)
+            attrs[2] &= ~termios.HUPCL          # don't drop the lines on close
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        except OSError as e:
+            print(f"real base: can't open {port}: {e}")
+            return False
+        self.fd = fd
+        asyncio.get_running_loop().add_reader(fd, self.readable)
+        print(f"real base: {port}")
+        return True
+
+    def write(self, line):
+        if self.fd is not None:
+            try:
+                os.write(self.fd, (line + "\n").encode())
+            except OSError:
+                pass
+
+    def readable(self):
+        try:
+            self.buf += os.read(self.fd, 65536)
+        except BlockingIOError:
+            return
+        except OSError:
+            asyncio.get_running_loop().remove_reader(self.fd)
+            os.close(self.fd)
+            self.fd = None
+            return
+        *lines, self.buf = self.buf.split(b"\n")
+        for raw in lines:
+            line = raw.decode(errors="replace").strip()
+            if line.startswith("LEDS "):
+                asyncio.ensure_future(self.send({"leds": line[5:].split(",")}))
+            elif line.startswith("SHOT ") and line != "SHOT END" and line != "SHOT failed":
+                parts = line.split()
+                self.shot, self.shot_size = [], (int(parts[1]), int(parts[2]))
+            elif line == "SHOT END" and self.shot is not None:
+                w, h = self.shot_size
+                asyncio.ensure_future(self.send({"shot": "".join(self.shot), "w": w, "h": h}))
+                self.shot = None
+            elif self.shot is not None and re.fullmatch(r"[A-Za-z0-9+/=]+", line):
+                self.shot.append(line)    # log lines can land in between: only base64 is kept
+
+    async def send(self, msg):
+        for w in list(self.on):
+            if w in clients:
+                await send_to(w, json.dumps({"realbase": msg}).encode(), 0x1)
+            else:
+                self.on.discard(w)
+
+    async def message(self, writer, m):
+        if "on" in m:
+            if m["on"] and self.open():
+                self.on.add(writer)
+                self.write("leds on")
+            else:
+                self.on.discard(writer)
+            await send_to(writer, json.dumps({"realbase": {"connected": self.fd is not None and writer in self.on}}).encode(), 0x1)
+        elif "key" in m and writer in self.on and re.fullmatch(r"[a-z0-9]+", str(m["key"])):
+            self.write(f"key {m['key']} {'down' if m.get('down') else 'up'}")
+
+    async def run(self):
+        """A screenshot about once a second while a page is driving the base."""
+        while True:
+            await asyncio.sleep(1.2)
+            if self.fd is not None and self.on and self.shot is None:
+                self.write("shot")
+
+
+realbase = None
+
+
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--wled", default="10.7.200.154", help="simulator WLED address (also gets audio directly)")
     ap.add_argument("--shark", default="10.7.200.253", help="the shark's WLED controller, offered to the page for mirroring")
+    ap.add_argument("--base", default=None, help="the real base's USB serial port (default: found by its serial number)")
     args = ap.parse_args()
 
     audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -365,6 +492,9 @@ async def main():
     asyncio.ensure_future(keep_mirroring())
     base.build()
     asyncio.ensure_future(base.run())
+    global realbase
+    realbase = RealBase(args.base)
+    asyncio.ensure_future(realbase.run())
     WEB_CONFIG["shark"] = args.shark
     server = await asyncio.start_server(lambda r, w: handle(r, w, audio_sock, args.wled), "0.0.0.0", args.port)
     print(f"Nibbles simulator: http://localhost:{args.port}/  (bench WLED {args.wled}, DDP on UDP {DDP_PORT}; "
