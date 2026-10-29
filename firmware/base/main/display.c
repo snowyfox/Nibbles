@@ -533,7 +533,7 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *line1, *line4;
+    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *problem;
     lv_obj_t *t_cell[2], *t_slash, *t_die[2], *pack_v;   // row 3; [1]: the copy 1 px right that makes bold
     bool flow_pulsing;
     scene_panel_t live, stby;
@@ -758,7 +758,7 @@ static void build_main_page(void)
     // USB-C supply), the internal pack right; the flow line (the LEMO's current:
     // green to the pack, blue to the lights); the LEMO's volts and amps left,
     // the lights' watts and amps right; small lines below.
-    m.power = make_panel(pagem, 4, 94, 0);
+    m.power = make_panel(pagem, 4, 62, 0);
     tab_font_init();   // every number in the bar: Montserrat 12 with fixed-width digits
     build_battery(&batt_in, m.power, 8, 7);
     m.in_pct = at(m.power, &font_tab12, COL_TEXT, 42, 7, 44);   // the same small font as the lines below
@@ -780,14 +780,13 @@ static void build_main_page(void)
     lv_label_set_text(m.t_slash, "/");
     m.pack_v = at(m.power, &font_tab12, COL_TITLE, 96, 44, 60);
     lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
-    m.line1 = at(m.power, &font_tab12, COL_TEXT, 8, 61, 148);
-    m.line4 = at(m.power, &font_tab12, COL_BAD, 8, 76, 148);
+    m.problem = at(m.power, &font_tab12, COL_BAD, 8, 44, 148);   // in place of row 3 when there is one
 
-    scene_panel(&m.live, 102, "LIVE", COL_LIVE);
-    scene_panel(&m.stby, 240, "STANDBY", COL_STANDBY);
+    scene_panel(&m.live, 72, "LIVE", COL_LIVE);
+    scene_panel(&m.stby, 210, "STANDBY", COL_STANDBY);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 378, 50, 0);
+    m.target = make_panel(pagem, 348, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -795,13 +794,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 434, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 456, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 474, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 404, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 426, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 444, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 496);
+    lv_obj_set_pos(event_labels[2], 8, 466);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -860,7 +859,7 @@ static void main_update(const display_status_t *s)
         set_battery(&batt_in, p->input_pct, false);
         lv_label_set_text(m.in_usb, "");
         if (p->input_pct >= 0) lv_label_set_text_fmt(m.in_pct, "%d%%", p->input_pct);
-        else lv_label_set_text(m.in_pct, "--");
+        else lv_label_set_text(m.in_pct, "");   // nothing plugged in: just the dim battery
         lv_obj_set_style_text_color(m.in_pct, lv_color_hex(p->input_pct < 0 ? COL_DIM : COL_TEXT), 0);
     }
     // The flow line; row 2: the LEMO's volts and amps, or with nothing plugged
@@ -897,39 +896,28 @@ static void main_update(const display_status_t *s)
     }
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pack_v, "%s%d.%02dV", p->pack_mv < 10000 ? FIG_SPACE : "", p->pack_mv / 1000, p->pack_mv % 1000 / 10);
     else lv_label_set_text(m.pack_v, "--.--V");
-    // What the pack is doing ("SIM:" first for made-up readings)
-    if (!board && !p->sim) {
-        lv_label_set_text(m.line1, "Power board not found");
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_DIM), 0);
-    } else if (p->have_charger && !p->charger_ok) {
-        lv_label_set_text(m.line1, "Charger NOT set up");
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_BAD), 0);
-    } else if (p->docked && p->have_charger) {
-        if (cs == CHG_DONE) snprintf(text, sizeof(text), "Pack full");
-        else if (cs == CHG_NOT_CHARGING) snprintf(text, sizeof(text), "Not charging");
-        else if (p->starved) snprintf(text, sizeof(text), "Pack starved");
-        else { fmt_ma(a, sizeof(a), p->pack_ma); snprintf(text, sizeof(text), "Charging %s", a); }
-        lv_label_set_text(m.line1, text);
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(p->starved ? COL_WARN : COL_OK), 0);
-    } else if (p->docked) {
-        lv_label_set_text(m.line1, "Plugged in");
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_OK), 0);
-    } else {   // on the pack: what it gives (the time left is in row 2)
-        fmt_ma(a, sizeof(a), -p->pack_ma);
-        snprintf(text, sizeof(text), "On the pack %s", a);
-        lv_label_set_text(m.line1, text);
-        lv_obj_set_style_text_color(m.line1, lv_color_hex(COL_TITLE), 0);
+    // A problem, worst first, takes row 3's place in red, with a red border;
+    // made-up readings ("sim on") give the card a thin magenta border.
+    const char *problem = NULL;
+    if (!board && !p->sim) problem = "Power board not found";
+    else if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
+    else if (p->lights_off) problem = "LIGHTS SWITCHED OFF";
+    else if (p->have_expander && !p->efuse_pg) problem = "eFuse tripped / off";
+    else if (p->fault0 || p->fault1) {
+        snprintf(text, sizeof(text), "Charger fault %02x %02x", p->fault0, p->fault1);
+        problem = text;
+    } else if (p->ts_flags & 0x09) problem = (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge";
+    lv_obj_t *row3[] = { m.t_cell[0], m.t_cell[1], m.t_slash, m.t_die[0], m.t_die[1], m.pack_v };
+    for (int i = 0; i < 6; i++) {
+        if (problem) lv_obj_add_flag(row3[i], LV_OBJ_FLAG_HIDDEN);
+        else if (row3[i] != m.t_cell[1] && row3[i] != m.t_die[1]) lv_obj_remove_flag(row3[i], LV_OBJ_FLAG_HIDDEN);   // bold copies: set_temp
     }
-    if (p->sim) {
-        snprintf(text, sizeof(text), "SIM: %s", lv_label_get_text(m.line1));
-        lv_label_set_text(m.line1, text);
-    }
-    // Problems, worst first (temperatures show in their colours)
-    if (p->lights_off) lv_label_set_text(m.line4, "LIGHTS SWITCHED OFF");
-    else if (p->have_expander && !p->efuse_pg) lv_label_set_text(m.line4, "eFuse tripped / off");
-    else if (p->fault0 || p->fault1) lv_label_set_text_fmt(m.line4, "Charger fault %02x %02x", p->fault0, p->fault1);
-    else if (p->ts_flags & 0x09) lv_label_set_text(m.line4, (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge");
-    else lv_label_set_text(m.line4, "");
+    if (problem) {
+        lv_label_set_text(m.problem, problem);
+        lv_obj_remove_flag(m.problem, LV_OBJ_FLAG_HIDDEN);
+    } else lv_obj_add_flag(m.problem, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_border_width(m.power, problem ? 2 : p->sim ? 1 : 0, 0);
+    lv_obj_set_style_border_color(m.power, lv_color_hex(problem ? COL_BAD : COL_WLED), 0);
 
     // LIVE and STANDBY
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);

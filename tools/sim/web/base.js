@@ -294,7 +294,7 @@ function baseDraw() {
   const usb = input === 'usb';
   $('bs_inbatt').style.display = $('bs_innub').style.display = usb ? 'none' : '';
   setBatt('bs_in', input === 'battery' ? inPct : -1, false);
-  $('bs_inpct').textContent = usb ? '' : input === 'battery' ? `${inPct}%` : '--';
+  $('bs_inpct').textContent = input === 'battery' ? `${inPct}%` : '';   // nothing plugged in: just the dim battery
   $('bs_inpct').style.color = input === 'battery' ? 'var(--text)' : 'var(--dim)';
   $('bs_inusb').textContent = usb ? 'USB 20.1 V' : '';   // the firmware draws the USB symbol
   $('baseinpctv').textContent = `${inPct}%`;
@@ -332,8 +332,6 @@ function baseDraw() {
     fi.style.width = `${w}px`; fi.style.background = '#34c759'; fi.style.animation = '';
     fo.style.display = ''; fo.style.left = `${8 + w}px`; fo.style.width = `${W - w}px`; fo.style.background = '#0a84ff';
   }
-  $('bs_line1').textContent = docked ? (pct >= 100 ? 'Pack full' : starved ? 'Pack starved' : `Charging ${packA.toFixed(1)} A`) : `On the pack ${(-packA).toFixed(1)} A`;
-  $('bs_line1').style.color = starved ? 'var(--warn)' : docked ? 'var(--ok)' : 'var(--dim)';
   if (!s) return;
   // LIVE and STANDBY
   const rows = (pre, sc, bri, diff) => {

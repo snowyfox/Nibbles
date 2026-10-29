@@ -104,10 +104,13 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   bold is the label drawn twice, 1 px apart). Neither the LEMO's nor the
   pack's whole current is measured (the light bus bypasses the charger):
   `power_flow` (power_math.c, host-tested) works them out from IBUS, IBAT
-  and the INA226, plus `BASE_LOAD_MW` for the base. Then a status line
-  (charging, "Pack starved" in amber, "Pack full", or on the pack what it
-  gives; "SIM:" first for made-up readings) and a red line for problems
-  only. Every number in the bar uses `font_tab12`: Montserrat 12
+  and the INA226, plus `BASE_LOAD_MW` for the base. The card is just those
+  three rows (62 px). A problem (power board not found, charger not set
+  up, lights switched off, eFuse tripped, a charger fault, cells too hot or
+  cold to charge) replaces row 3 with its message in red and gives the card
+  a red border; made-up readings (`sim on`) give it a thin magenta border.
+  With nothing plugged in, the LEMO battery is a dim outline with no
+  number. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
   kerning), so values don't shift as they change. `sim on` alternates a minute on an
   external battery (15.6 V; starved for half a minute) or a USB-C supply
