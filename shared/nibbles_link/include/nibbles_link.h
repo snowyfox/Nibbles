@@ -333,7 +333,7 @@ typedef enum {
 // switches the fin segment off, so the fins show the body's colours again.
 // Preset commands and bumps for the fins use those ids (bumps with
 // NL_TARGET_FINS, so a fin bump and a body bump can be held together).
-#define NL_FIN_PRESET_BASE  100
+#define NL_FIN_PRESET_BASE  80
 #define NL_FIN_PRESET_COUNT 16
 
 typedef enum {

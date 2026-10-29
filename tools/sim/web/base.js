@@ -25,7 +25,7 @@ const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
 const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET' };
 
 // Fin presets: WLED preset FIN_BASE + n (FIN_BASE itself: the fins follow the body); see nibbles_link.h.
-const FIN_BASE = 100, FIN_COUNT = 16;
+const FIN_BASE = 80, FIN_COUNT = 16;
 const isFinPreset = (id) => id >= FIN_BASE && id <= FIN_BASE + FIN_COUNT;
 let baseState = null, baseEvent = 'Nibbles base', wledPs = 0, wledPresetNames = {}, finFollow = true, finPreset = 0;
 let baseLightsMw = 0, baseBumping = 0;

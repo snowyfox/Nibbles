@@ -833,6 +833,9 @@ class NibblesUsermod : public Usermod {
 
     void applyCommand(int id) {
       if (id > 0 && isFinPreset(id)) {   // the fins: their own bump, else at once
+        // Record it now: under a fin bump the same preset may already be on
+        // screen, and re-applying it doesn't change currentPreset for trackPresets.
+        finPreset = id - NL_FIN_PRESET_BASE;
         if (finBumpOn) finBumpRestore = id;
         else queuePreset(id);
         return;
@@ -937,8 +940,16 @@ class NibblesUsermod : public Usermod {
 
     // Fin bumps: show a fin preset while held, then go back to the fins' own.
     void finBumpEvent(nl_bump_event_t ev) {
+#ifdef NIBBLES_DEBUG
+      if (ev != NL_BUMP_EV_NONE)
+        Serial.printf("nibbles: fin bump %s (preset %d, restore %d, fins %d)\n", ev == NL_BUMP_EV_END ? "end" : ev == NL_BUMP_EV_BEGIN ? "begin" : "replace",
+                      finBumps.bump.arg, finBumpRestore, finPreset);
+#endif
       if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
-        if (finBumpOn) queuePreset(finBumpRestore);
+        if (finBumpOn) {
+          finPreset = finBumpRestore - NL_FIN_PRESET_BASE;   // what the fins go back to is theirs
+          queuePreset(finBumpRestore);
+        }
         finBumpOn = false;
       }
       if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
@@ -974,6 +985,9 @@ class NibblesUsermod : public Usermod {
       memmove(presetQueue, presetQueue + 1, --presetQueueLen * sizeof(presetQueue[0]));
       presetIssuedAt = now;
       applyPreset(presetWaiting, CALL_MODE_DIRECT_CHANGE);
+#ifdef NIBBLES_DEBUG
+      Serial.printf("nibbles: applying preset %d%s (queue %d left)\n", presetWaiting, eyesMuted ? " without eyes" : "", presetQueueLen);
+#endif
     }
 
     // A preset's eye settings, sent from loop(): the look broadcast three
@@ -996,6 +1010,9 @@ class NibblesUsermod : public Usermod {
 
     // "eyes" settings in a preset (see the header comment).
     void readEyeSettings(JsonObject eyesJ) {
+#ifdef NIBBLES_DEBUG
+      if (!eyesJ.isNull() && eyesMuted) Serial.printf("nibbles: preset %d eye settings skipped (body only)\n", presetWaiting);
+#endif
       if (eyesJ.isNull() || eyesMuted) return;
       eyeCmdCount = 0;
       JsonObject lk = eyesJ[F("look")];
@@ -1028,6 +1045,10 @@ class NibblesUsermod : public Usermod {
       if (react) eyeCommand(NL_OP_REACTIVITY, !strcmp(react, "beats") ? NL_REACT_BEATS : !strcmp(react, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
       if (!eyesJ[F("auto")].isNull()) eyeCommand(NL_OP_AUTO_CYCLE, (eyesJ[F("auto")] | false) ? 1 : 0);
       eyeSendNext = 0;
+#ifdef NIBBLES_DEBUG
+      Serial.printf("nibbles: preset %d eye settings: %s%s, %d command(s)%s\n", currentPreset, eyeLookSends ? "look " : "",
+                    eyeLookSends ? eyeLook.name : "", eyeCmdCount, haveEyesMac || !eyeCmdCount ? "" : " (eyes not heard: not sent)");
+#endif
     }
 
     // Which preset is the body's and which the fins', as presets land.

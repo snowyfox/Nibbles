@@ -142,13 +142,13 @@ The fins can run their own effect while the body keeps its preset. The map
 the right of the side view (columns 70-94). The body's segment stays on
 columns 0-69.
 
-- **Fin presets** are WLED presets **101-116** (fin preset 1-16 on the
+- **Fin presets** are WLED presets **81-96** (fin preset 1-16 on the
   base's keypad; `NL_FIN_PRESET_BASE` in `shared/nibbles_link`). Each one
   is a segment on the fin panel, saved with **only that segment checked**
   ("Checked segments only" in WLED's save dialog, segment bounds on,
   brightness off), so it leaves the body alone. Bounds:
   `{"id":1,"start":70,"stop":95,"startY":0,"stopY":34}`.
-- **Preset 100** = the fins follow the body: a preset that only switches
+- **Preset 80** = the fins follow the body: a preset that only switches
   that segment off (`{"seg":[{"id":1,"stop":0}]}`).
 - **Body presets** saved the normal way (all segments) switch the fin
   segment off, so they put the fins back to following the body; save them

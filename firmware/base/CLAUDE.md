@@ -54,11 +54,11 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   telemetry); Standby is staged.
   - Targets ALL / BODY (WLED) / EYES / FINS: tap to select, hold for just
     the keys pressed meanwhile. **FINS** works like the others with fin
-    presets (WLED presets 101-116, the fins' own segment; see
+    presets (WLED presets 81-96, the fins' own segment; see
     `wled/README.md`, "Fin presets"): numbers bump them, LATCH keeps them.
     **ALL** is the whole shark: body and eyes on that preset and the fins
     following the body (fin preset 0; while a number is held, a fins bump
-    to preset 100 shows that). Fins get their own bump slot.
+    to preset 80 shows that). Fins get their own bump slot.
   - **Everything is a bump until it's latched** (the user's design,
     2026-10-28): holding a number key shows that preset on the target
     (page 2: 9-16) and it goes back on release. Tap **LATCH** while holding
