@@ -117,3 +117,55 @@ to 45, enough for the 42 fps cap.
 compete for the same cell, so some move several cells from where they really
 are. The preview SVG shows how far each one moved, and 2D effects look
 coarser. This needs checking by eye on the shark before choosing it.
+
+## The middle grid, 68x33 (`grid68.jsonl`, `effects_68x33.csv`, `ledmap_68x33/`)
+
+`make_ledmap.py --cells 1500 --fin-panel-mm 20`: 68x33 = 2,244 cells of 11.3 mm
+(body 55x33, fin panel 13x18), halfway between the other two in cell size.
+
+How far the generator had to move each LED from its exact spot:
+
+| Grid | Cell | Typical LED moved | 90% of LEDs within |
+|---|---|---|---|
+| 95x41 | 8.9 mm | 0.52 cells | 1.1 cells |
+| 68x33 | 11.3 mm | 0.66 cells | 1.7 cells |
+| 60x28 | 13.2 mm | 0.77 cells | 2.4 cells |
+
+Layer cases on all three grids: fps with the cap lifted. The body is 70x41,
+55x33 and 47x28, and the layers cover the whole grid.
+
+| Case | 95x41 | 68x33 | 60x28 |
+|---|---|---|---|
+| Body only (Solid) | 99.5 | 129.5 | 146.5 |
+| + 1 / 4 / 8 Solid layers | 69.5 / 33 / 21 | 94 / 55 / 33 | 116 / 69 / 42 |
+| + 4 Solid layers, off | 78 | 109 | 130.5 |
+| + Soap layer, on / off | 31 / 35 | 46.5 / 57 | 62.5 / 69.5 |
+| Colorloop + Twinkle | 71.5 | 94.5 | 115 |
+| Octopus + Twinkle | 47 | 72 | 87 |
+| Fire 2012 + Octopus | 31 | 46 | 62 |
+| Soap + Twinkle | 36 | 54 | 69.5 |
+| Soap + Twinkle + Juggle | 29 | 43 | 58 |
+| Soap + Fire 2012 | 25 | 38 | 47 |
+| Soap + Noise 2 | 24 | 35 | 44 |
+| Soap + Noise 2 + Plasmoid | 17 | 26 | 34 |
+| 5 slots: Octopus, Twinkle, Fire 2012, Juggle, bump (off) | 23 | 36 | 45 |
+| 5 slots heavy: Soap, Twinkle, Noise 2, Juggle, bump (off) | 19 | 30 | 38 |
+| Distortion Waves alone | 29 | 40.5 | 55 |
+| Distortion Waves + Soap | 17 | 27 | 34 |
+
+Every effect on the 68x33 body (`effects_68x33.csv`, with the 95x41 fps
+alongside):
+
+- **Base frame:** 7.6 ms (131 fps; the Solid reference, timed every 15
+  effects, stayed between 128.5 and 135).
+- **Effects are cheaper:** effects over 3 ms on 95x41 cost a median 1.5x less
+  here.
+- **Tiers:** 132 cheap, 67 medium, 14 heavy, 3 very heavy (Pacifica 51 ms, PS
+  Hourglass 19 ms, Distortion Waves 17 ms).
+
+**DreamState Clouds** (Distortion Waves body + Soap layer, Screen), as preset
+15 / 19 / 20 at the brain's 42 fps cap: 34 fps on 60x28, 24 on 68x33, 16 on
+95x41. Video of each, compared frame to frame (30 fps phone video): 27% of
+frames repeated on 95x41 (choppy), 5% on 68x33, none on 60x28. In the stills,
+68x33 had the smoothest colour fields; 60x28 showed single LEDs standing out
+from their neighbours.

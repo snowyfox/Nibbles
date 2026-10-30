@@ -103,11 +103,13 @@ eyes and base (`shared/nibbles_link`).
 ## 2D map
 `wled/ledmap/ledmap.json` (made by `tools/sim/make_ledmap.py` from the
 simulator's layout; preview in `ledmap_preview.svg`) makes WLED treat the
-shark as a 70 x 41 matrix, seen from starboard with the nose to the right, for
-WLED's 2D effects. Seen from the side, LEDs overlap: the two strips back to
+shark as a 68 x 33 matrix (cells of 11.3 mm; a 55 x 33 side view plus the fin
+panel), seen from starboard with the nose to the right, for WLED's 2D effects.
+It was 95 x 41 (8.9 mm cells) until 2026-10-29; the coarser grid makes every
+effect and segment layer about 1.5x cheaper (`wled/bench/README.md`). Seen from the side, LEDs overlap: the two strips back to
 back in the main tube, and the two fins. So only the outward strip (channel 1)
-and the starboard fin (channel 5) are mapped where they are (90% within one
-9 mm cell of their real spot); the inward strip and the port fin sit in spare
+and the starboard fin (channel 5) are mapped where they are (90% within 1.7
+cells of their real spot); the inward strip and the port fin sit in spare
 cells nearby, and the usermod copies each one's colour from its partner, so
 both sides match. The fins stick out sideways, so from the side each is a compact patch.
 
@@ -115,9 +117,12 @@ To use it: upload the file as `/ledmap.json` (WLED's file editor, or
 `curl -F "data=@wled/ledmap/ledmap.json;filename=/ledmap.json" http://IP/upload`)
 and reboot. **WLED then runs as a 2D matrix for every preset**: 1D presets
 (segments by strip position) need redoing for 2D; a 2D segment covering the
-whole matrix is `{"start":0,"stop":70,"startY":0,"stopY":41}` (the bottom six
-rows, added 2026-10-21, are where a fin swung down reaches; the shark's 2D
-presets, including boot preset 230, were changed from 35 to 41 rows then).
+body is `{"start":0,"stop":55,"startY":0,"stopY":33}` (the bottom five rows
+are where a fin swung down reaches). On 2026-10-29 every 2D preset was
+converted from the 95 x 41 grid (body 0-70 x 0-41 to 0-55 x 0-33, fin panel
+70-95 x 0-34 to 55-68 x 0-18; backup in `wled/backup/`), and the one-segment
+body presets now also remove segments 2-8, so layers left by another preset
+don't stay on under them (segment 1, the fins, is left alone).
 WLED keeps `presets.json` in memory and, with no clock (NTP off), may not
 notice an uploaded file: restart it after uploading presets. Then reload
 WLED's web page in every browser that has it open: clicking a preset there
@@ -138,11 +143,12 @@ tested on the bench).
 ## Fin presets (2026-10-28; tested on the bench as main board)
 
 The fins can run their own effect while the body keeps its preset. The map
-(`tools/sim/make_ledmap.py`) has a **fin panel**, 25 x 34 cells of 10 mm, to
-the right of the side view (columns 70-94). The body's segment stays on
-columns 0-69.
+(`tools/sim/make_ledmap.py`) has a **fin panel**, 13 x 18 cells of 20 mm, to
+the right of the side view (columns 55-67). The body's segment stays on
+columns 0-54. (Until 2026-10-29: 25 x 34 cells of 10 mm at columns 70-94.)
 
-- **The panel's first cell is mapped to a real LED** (LED 866, whose own
+- **The panel's first cell is mapped to a real LED** (LED 863 on the 68 x 33
+  map, 866 on the old one; its own
   cell comes much later, so it always shows its own colour). WLED works out
   what a segment can do from the LEDs under it: a segment over no LEDs at
   all is on/off only, ignores palettes and draws most effects black (seen
@@ -158,7 +164,7 @@ columns 0-69.
   is a segment on the fin panel, saved with **only that segment checked**
   ("Checked segments only" in WLED's save dialog, segment bounds on,
   brightness off), so it leaves the body alone. Bounds:
-  `{"id":1,"start":70,"stop":95,"startY":0,"stopY":34}`.
+  `{"id":1,"start":55,"stop":68,"startY":0,"stopY":18}`.
 - **Preset 80** = the fins follow the body: a preset that only switches
   that segment off (`{"seg":[{"id":1,"stop":0}]}`).
 - **Body presets** saved the normal way (all segments) switch the fin

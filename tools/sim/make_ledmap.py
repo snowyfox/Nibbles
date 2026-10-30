@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds a WLED 2D LED map of the shark from the simulator's layout.
 
-    python3 tools/sim/make_ledmap.py [--cells 2400]
+    python3 tools/sim/make_ledmap.py [--cells 1500] [--fin-panel-mm 20]
         reads  tools/sim/web/layout.json
         writes wled/ledmap/ledmap.json (upload to WLED as /ledmap.json, then reboot)
                wled/ledmap/ledmap_preview.svg
@@ -47,7 +47,9 @@ seen from the side, or (px + (y - top_y0) / mm, py + (x - top_x0) / mm) from
 above (cell centres at +0.5, as for the side view).
 
 Memory: WLED keeps about 10 bytes per matrix cell (frame buffer, segment
-buffer, map), so --cells sets the RAM cost: 2400 cells ~ 24 KB. The shark's
+buffer, map), so --cells sets the RAM cost: the default (1500, with 20 mm fin
+panel cells) gives 68 x 33 = 2244 cells, ~21 KB, and every frame's cost scales
+with the cell count (wled/bench/README.md). The shark's
 controller has no PSRAM and ~72 KB free, so keep it modest and check the free
 heap after loading. WLED limits each side to 255.
 
@@ -113,8 +115,8 @@ def place(items, pos, grid, reach=None):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cells", type=int, default=2400, help="about how many matrix cells (RAM ~10 bytes each)")
-    ap.add_argument("--fin-panel-mm", type=float, default=10.0, help="fin panel cell size (0: no fin panel)")
+    ap.add_argument("--cells", type=int, default=1500, help="about how many matrix cells (RAM ~10 bytes each)")
+    ap.add_argument("--fin-panel-mm", type=float, default=20.0, help="fin panel cell size (0: no fin panel)")
     args = ap.parse_args()
 
     layout = json.load(open(LAYOUT))

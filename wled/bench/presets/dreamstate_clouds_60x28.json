@@ -1,0 +1,116 @@
+{
+ "_note": "Preset 15 on the brain, saved 2026-10-29 while the 60x28 test map was loaded (body 0-47, layer 1 the whole 60x28 grid). Apply with POST /json/state. On the 95x41 map, widen the segments first.",
+ "preset_id": 15,
+ "preset": {
+  "mainseg": 0,
+  "seg": [
+   {
+    "id": 0,
+    "start": 0,
+    "stop": 47,
+    "startY": 0,
+    "stopY": 28,
+    "grp": 1,
+    "spc": 0,
+    "of": 0,
+    "on": true,
+    "frz": false,
+    "bri": 255,
+    "cct": 127,
+    "set": 0,
+    "lc": 1,
+    "n": "body",
+    "col": [
+     [
+      255,
+      160,
+      0
+     ],
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      0,
+      0,
+      0
+     ]
+    ],
+    "fx": 124,
+    "sx": 128,
+    "ix": 128,
+    "pal": 59,
+    "c1": 128,
+    "c2": 128,
+    "c3": 16,
+    "sel": true,
+    "rev": true,
+    "mi": false,
+    "rY": false,
+    "mY": false,
+    "tp": false,
+    "o1": false,
+    "o2": false,
+    "o3": false,
+    "si": 0,
+    "m12": 0,
+    "bm": 0
+   },
+   {
+    "id": 1,
+    "start": 0,
+    "stop": 60,
+    "startY": 0,
+    "stopY": 28,
+    "grp": 1,
+    "spc": 0,
+    "of": 0,
+    "on": true,
+    "frz": false,
+    "bri": 255,
+    "cct": 127,
+    "set": 0,
+    "lc": 1,
+    "n": "L1 Soap screen",
+    "col": [
+     [
+      255,
+      160,
+      0
+     ],
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      0,
+      0,
+      0
+     ]
+    ],
+    "fx": 125,
+    "sx": 128,
+    "ix": 128,
+    "pal": 60,
+    "c1": 128,
+    "c2": 128,
+    "c3": 16,
+    "sel": false,
+    "rev": false,
+    "mi": false,
+    "rY": false,
+    "mY": false,
+    "tp": false,
+    "o1": false,
+    "o2": false,
+    "o3": false,
+    "si": 0,
+    "m12": 0,
+    "bm": 10
+   }
+  ],
+  "n": "DreamState Clouds"
+ }
+}
