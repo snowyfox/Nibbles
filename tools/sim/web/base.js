@@ -24,9 +24,11 @@ const BASE_NUMPAD = {
   Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4', Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8',
   Numpad0: 'take', NumpadEnter: 'latch', NumpadDivide: 'body', NumpadMultiply: 'eyes', NumpadSubtract: 'all',
   NumpadEqual: 'fins', NumLock: 'fins', NumpadAdd: 'page', NumpadDecimal: 'flash', Numpad9: 'blackout' };
-const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4 };
+const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4, SLOT_LOOK: 5, SLOT_PALETTE: 6 };
+const SLOT = { BODY: 0, FINS: 1, BODY_OVER: 2, FINS_OVER: 3 };   // WLED's layer slots (nl_slot_t)
+const LAYER_BASE = 100;   // NL_LAYER_PRESET_BASE
 const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
-const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET' };
+const BUMP_NAMES = { 1: 'FLASH', 2: 'BLACKOUT', 3: 'PRESET', 4: 'PALETTE', 5: 'LAYER' };
 
 // Fin presets: WLED preset FIN_BASE + n (FIN_BASE itself: the fins follow the body); see nibbles_link.h.
 const FIN_BASE = 80, FIN_COUNT = 16;
@@ -105,15 +107,26 @@ function baseEyePreset() {
 }
 function baseEyeName(n) { return eyesReady && n > 0 && n <= sim._eyes_preset_count() ? sim.UTF8ToString(sim._eyes_preset_name(n - 1)) : ''; }
 
+// WLED's layer slots as last reported ({"nibbles":{"slots":[...]}} in its state, or the shark's mirror)
+let wledSlots = null;
+function baseLayers() {
+  const sl = (i) => wledSlots && wledSlots.find((x) => x.id === i);
+  if (!wledSlots) return [-1, -1, -1, -1];
+  const pal = (i) => (sl(i) && sl(i).on ? sl(i).pal : -1), layer = (i) => (sl(i) && sl(i).on ? sl(i).look || 0 : 0);
+  return [pal(SLOT.BODY), pal(SLOT.FINS), layer(SLOT.BODY_OVER), layer(SLOT.FINS_OVER)];
+}
+
 setInterval(() => {
   if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ base: { live: [wledPs > 0 ? wledPs : 0, baseEyePreset(), finPreset, +$('bri').value, finFollow ? 1 : 0] } }));
+  ws.send(JSON.stringify({ base: { live: [wledPs > 0 ? wledPs : 0, baseEyePreset(), finPreset, +$('bri').value, finFollow ? 1 : 0],
+                                   layers: baseLayers() } }));
   if (!finFollow && lightsFrom !== 'shark') finsFromShark({ finfollow: false });   // the bench has no usermod: lock them here
 }, 250);
 
 // The WLED preset and fin following, from app.js's polling or the live shark's mirror.
 // WLED's last applied preset: a fin preset is the fins', anything else the body's (a bump's isn't Live).
 function baseWledState(state) {
+  if (state && state.nibbles && state.nibbles.slots) wledSlots = state.nibbles.slots;
   if (!state || !('ps' in state) || bumpSaved.on || finBumpSaved) return;
   if (isFinPreset(state.ps)) finPreset = state.ps - FIN_BASE;
   else if (state.ps > 0) wledPs = state.ps;
@@ -123,6 +136,8 @@ function baseFromShark(m) {
   if (m.wled && 'finps' in m.wled && !finBumpSaved) finPreset = m.wled.finps;
   if (m.wled && 'finproj' in m.wled) finProj = m.wled.finproj ? 'top' : 'side';
   if ('finfollow' in m) finFollow = !!m.finfollow;
+  if (m.wled && m.wled.slots)   // [on, look, fx, palette, blend, opacity] per slot
+    wledSlots = m.wled.slots.map((x, id) => ({ id, on: !!x[0], look: x[1], fx: x[2], pal: x[3], bm: x[4], o: x[5] }));
 }
 function baseWledPresets(presets) {
   wledPresetNames = {};
@@ -166,8 +181,46 @@ async function wledBumpEnd() {
   await wledPost({ on: bumpSaved.lit, bri: bumpSaved.bri, tt: 0 }).catch(() => {});
 }
 
+// Palette and layer bumps: the slot shows it while held, then goes back to what
+// it was (or to what a slot command for it meanwhile said: that's LATCH), as the usermod does.
+const slotBumps = {};   // by the base's bump target (TGT.BODY, TGT.FINS): { slot, restore }
+function slotPost(req) { return wledPost({ nibbles: { slot: req } }).catch(() => {}); }
+function slotBump(target, bump, arg) {
+  const s = arg >> 8, v = arg & 255, cur = wledSlots && wledSlots.find((x) => x.id === s);
+  const restore = bump === 4 ? { id: s, pal: cur ? cur.pal : 0 }
+                : cur && cur.on && cur.look ? { id: s, look: cur.look, on: true } : { id: s, on: false };
+  slotBumps[target] = { slot: s, restore };
+  baseBumping = bump;
+  slotPost(bump === 4 ? { id: s, pal: v, tt: 0 } : v ? { id: s, look: v, on: true, tt: 0 } : { id: s, on: false, tt: 0 });
+}
+function slotBumpEnd(target) {
+  const b = slotBumps[target];
+  if (!b) return false;
+  delete slotBumps[target];
+  baseBumping = 0;
+  slotPost({ ...b.restore, tt: 0 });
+  return true;
+}
+function slotCommand(slot, req) {
+  const under = Object.values(slotBumps).find((b) => b.slot === slot);
+  if (under) under.restore = req;   // what the slot goes back to when the bump ends
+  else slotPost(req);
+}
+
 function baseActions(list) {
   for (const [type, target, bump, value] of list) {
+    if (type === ACT.SLOT_LOOK) {
+      slotCommand(target, value ? { id: target, look: value, on: true } : { id: target, on: false });
+      baseEvent = value ? `layer ${value - LAYER_BASE} on ${target === SLOT.FINS_OVER ? 'the fins' : 'the body'}` : 'layer off';
+      continue;
+    }
+    if (type === ACT.SLOT_PALETTE) {
+      slotCommand(target, { id: target, pal: value });
+      baseEvent = `palette ${value} on ${target === SLOT.FINS ? 'the fins' : 'the body'}`;
+      continue;
+    }
+    if (type === ACT.BUMP && (bump === 4 || bump === 5)) { slotBump(target, bump, value); continue; }
+    if (type === ACT.BUMP_END && slotBumpEnd(target)) continue;
     if (type === ACT.PRESET && target === TGT.FINS) {
       if (finBumpSaved !== null) finBumpSaved = value;   // under a fin bump: its release lands here
       else wledPost({ ps: FIN_BASE + value }).catch(() => {});
@@ -342,6 +395,11 @@ function baseDraw() {
     if (bri !== null) $(pre + '3').textContent = `${Math.round(bri * 100 / 255)}%`;
   };
   rows('bs_l', s.live, +$('bri').value, null);
+  {   // LOOK: the body's palette and the layer over it
+    const [bp, , bl] = s.layers || [-1, -1, 0, 0];
+    const pal = bp < 0 ? '--' : s.pal_name || `pal ${bp}`;
+    $('bs_l4').textContent = bl > 0 ? `${pal} + L${bl - LAYER_BASE}` : pal;
+  }
   rows('bs_s', s.standby, null, s.diff);
   $('bs_s3').textContent = s.diff ? 'hold TAKE' : 'same as Live';
   $('bs_s3').style.color = s.diff ? '#30e060' : '#4a505a';
@@ -351,7 +409,7 @@ function baseDraw() {
   const tcol = { ALL: '#ffffff', BODY: '#ff7ad9', EYES: '#36c8ff', FINS: '#ff8000' }[s.target];
   $('bs_target').style.background = s.locked ? '#4a505a' : tcol;
   $('bs_tname').textContent = s.target;
-  $('bs_page').textContent = s.page ? '9-16' : '1-8';
+  $('bs_page').textContent = s.page_name || (s.page ? '9-16' : '1-8');
   $('bs_shift').textContent = s.latch ? 'LATCH' : '';
   $('bs_lock').textContent = s.locked ? 'LOCKED: hold UNLOCK' : '';
   $('baselock').hidden = !s.locked || realMode;

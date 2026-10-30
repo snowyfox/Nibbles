@@ -529,7 +529,7 @@ static void set_event_text(const char *text, uint32_t color)
 #define COL_FINS     0xff8000
 
 typedef struct {
-    lv_obj_t *panel, *title, *note, *val[4], *key[4];
+    lv_obj_t *panel, *title, *note, *val[5], *key[5];
 } scene_panel_t;
 
 static struct {
@@ -583,16 +583,17 @@ static void touch_key(lv_obj_t *obj, ctl_key_t key)
     lv_obj_add_event_cb(obj, on_key_touch, LV_EVENT_PRESS_LOST, (void *)(intptr_t)key);
 }
 
-static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t color)
+// rows: 4 (body, eyes, fins, brightness) or 5 (and the body's look: palette and layer)
+static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t color, int rows)
 {
-    static const char *keys[] = { "BODY", "EYES", "FINS", "BRI" };
-    static const uint32_t key_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_TITLE };
-    sp->panel = make_panel(pagem, y, 132, color);
+    static const char *keys[] = { "BODY", "EYES", "FINS", "BRI", "LOOK" };
+    static const uint32_t key_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_TITLE, COL_WLED };
+    sp->panel = make_panel(pagem, y, 132 + (rows - 4) * 25, color);
     sp->title = at(sp->panel, &lv_font_montserrat_16, color, 8, 5, 0);
     lv_label_set_text(sp->title, title);
     sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 82, 7, 76);
     lv_obj_set_style_text_align(sp->note, LV_TEXT_ALIGN_RIGHT, 0);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < rows; i++) {
         sp->key[i] = at(sp->panel, &lv_font_montserrat_14, key_cols[i], 8, 30 + i * 25, 0);
         lv_label_set_text(sp->key[i], keys[i]);
         sp->val[i] = at(sp->panel, &lv_font_montserrat_16, COL_TEXT, 54, 28 + i * 25, 104);
@@ -782,11 +783,11 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
     m.problem = at(m.power, &font_tab12, COL_BAD, 8, 44, 148);   // in place of row 3 when there is one
 
-    scene_panel(&m.live, 72, "LIVE", COL_LIVE);
-    scene_panel(&m.stby, 210, "STANDBY", COL_STANDBY);
+    scene_panel(&m.live, 72, "LIVE", COL_LIVE, 5);
+    scene_panel(&m.stby, 235, "STANDBY", COL_STANDBY, 4);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 348, 50, 0);
+    m.target = make_panel(pagem, 373, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -794,13 +795,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 404, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 426, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 444, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 429, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 451, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 469, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 466);
+    lv_obj_set_pos(event_labels[2], 8, 491);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -922,6 +923,16 @@ static void main_update(const display_status_t *s)
     // LIVE and STANDBY
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);
     lv_label_set_text(m.live.note, s->wled_fresh || s->eyes_fresh ? "" : "not heard");
+    {   // LOOK: the body's palette and the layer over it
+        const ctl_layers_t *l = &s->layers;
+        char pal[28] = "--";
+        if (l->body_pal >= 0) {
+            if (s->live_pal_name[0]) snprintf(pal, sizeof(pal), "%s", s->live_pal_name);
+            else snprintf(pal, sizeof(pal), "pal %d", l->body_pal);
+        }
+        if (l->body_layer > 0) lv_label_set_text_fmt(m.live.val[4], "%s + L%d", pal, l->body_layer - NL_LAYER_PRESET_BASE);
+        else lv_label_set_text(m.live.val[4], pal);
+    }
     fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, s->stby_fins, -1, s->diff);
     lv_label_set_text(m.stby.val[3], s->diff ? "hold TAKE" : "same as Live");
     lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
@@ -932,7 +943,7 @@ static void main_update(const display_status_t *s)
     // Keypad
     lv_obj_set_style_bg_color(m.target, lv_color_hex(s->keys_locked ? COL_DIM : target_col(s->target)), 0);
     lv_label_set_text(m.target_name, ctl_target_name((ctl_target_t)s->target));
-    lv_label_set_text(m.page, s->page ? "9-16" : "1-8");
+    lv_label_set_text(m.page, ctl_page_name(s->page));
     lv_label_set_text(m.latch, s->latch ? "LATCH" : "");
     lv_label_set_text(m.lock, s->keys_locked ? "LOCKED: hold UNLOCK" : "");
     lv_label_set_text_fmt(m.links, "Eyes %s  WLED %s  ch %d", s->eyes_fresh ? "ok" : "--", s->wled_fresh ? "ok" : "--", s->channel);

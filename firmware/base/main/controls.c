@@ -25,9 +25,27 @@ const char *ctl_target_name(ctl_target_t t)
     return t <= TGT_FINS ? names[t] : "?";
 }
 
+const char *ctl_page_name(int page)
+{
+    static const char *names[] = { "1-8", "9-16", "PALETTE", "LAYER" };
+    return page >= 0 && page < PAGE_COUNT ? names[page] : "?";
+}
+
+const char *ctl_palette_name(const ctl_t *c, int palette)
+{
+    static const char *const names[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTE_NAMES;
+    static const uint8_t defaults[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTES;
+    for (int i = 0; i < CTL_PAGE_SIZE; i++)
+        if (c->palettes[i] == palette && defaults[i] == palette) return names[i];
+    return NULL;
+}
+
 void ctl_init(ctl_t *c, uint32_t autolock_ms)
 {
     memset(c, 0, sizeof(*c));
+    static const uint8_t pals[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTES;
+    memcpy(c->palettes, pals, sizeof(pals));
+    c->layers = (ctl_layers_t){ -1, -1, -1, -1 };
     c->live.fins = c->standby.fins = -1;
     c->fin_sensor = -1;
     c->target = c->target_before = TGT_ALL;
@@ -46,6 +64,8 @@ void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness, int fin
     if (c->standby.fins < 0) c->standby.fins = live->fins;
     c->standby_set = c->standby.body > 0 && c->standby.eyes > 0;
 }
+
+void ctl_set_layers(ctl_t *c, const ctl_layers_t *layers) { c->layers = *layers; }
 
 uint8_t ctl_standby_diff(const ctl_t *c)
 {
@@ -98,6 +118,46 @@ static ctl_target_t key_target(ctl_key_t k)
 }
 
 static bool is_num(ctl_key_t k) { return k >= KEY_NUM1 && k <= KEY_NUM8; }
+static bool preset_page(int page) { return page == PAGE_PRESETS || page == PAGE_PRESETS2; }
+
+// Palettes and layers: which of WLED's layers the target means. The body's go
+// to the body (the fins show it while they follow it); the fins' to the fins'
+// own layers, which only show while the fins run a fin preset (ALL includes them then).
+static bool on_body(const ctl_t *c, ctl_target_t t) { (void)c; return t == TGT_ALL || t == TGT_BODY; }
+static bool on_fins(const ctl_t *c, ctl_target_t t) { return t == TGT_FINS || (t == TGT_ALL && c->live.fins > 0); }
+
+// A palette (palette page) or a layer look (layer page) while the number is held.
+static void bump_layered(ctl_t *c, out_t *o, int page, int value)
+{
+    const bool pal = page == PAGE_PALETTES;
+    const uint8_t action = pal ? NL_BUMP_PALETTE : NL_BUMP_LAYER;
+    if (on_body(c, c->target)) bump_on(c, o, TGT_BODY, action, nl_slot_arg(pal ? NL_SLOT_BODY : NL_SLOT_BODY_OVER, (uint8_t)value));
+    if (on_fins(c, c->target)) bump_on(c, o, TGT_FINS, action, nl_slot_arg(pal ? NL_SLOT_FINS : NL_SLOT_FINS_OVER, (uint8_t)value));
+}
+
+// The held palette or layer look stays (LATCH while it's held). A layer look
+// that's already live switches its layer off instead.
+static void latch_layered(ctl_t *c, out_t *o)
+{
+    const int v = c->num_preset;
+    if (c->num_page == PAGE_PALETTES) {
+        if (on_body(c, c->target)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, 0, v); c->layers.body_pal = v; }
+        if (on_fins(c, c->target)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, 0, v); c->layers.fins_pal = v; }
+    } else {
+        if (on_body(c, c->target)) {
+            const int look = c->num_layers.body_layer == v ? 0 : v;
+            emit(o, ACT_SLOT_LOOK, NL_SLOT_BODY_OVER, 0, look);
+            c->layers.body_layer = look;
+        }
+        if (on_fins(c, c->target)) {
+            const int look = c->num_layers.fins_layer == v ? 0 : v;
+            emit(o, ACT_SLOT_LOOK, NL_SLOT_FINS_OVER, 0, look);
+            c->layers.fins_layer = look;
+        }
+    }
+    bumps_off(c, o);
+    c->num_bump = KEY_NONE;
+}
 static bool is_target(ctl_key_t k) { return k >= KEY_ALL && k <= KEY_FINS; }
 
 // Number key n (1-8) on the current page, cued in Standby for the target.
@@ -117,6 +177,7 @@ static void stage(ctl_t *c, int n)
 // What was Live drops into Standby, one TAKE away.
 static void latch_number(ctl_t *c, out_t *o)
 {
+    if (!preset_page(c->num_page)) { latch_layered(c, o); return; }
     const ctl_scene_t old = c->live;
     const int p = c->num_preset;
     if ((c->target == TGT_ALL || c->target == TGT_BODY) && p != c->live.body) {
@@ -217,13 +278,20 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
                 c->page_used = true;
                 emit(&o, ACT_BRIGHTNESS, TGT_BODY, 0, n * 255 / CTL_PAGE_SIZE);
             } else if (c->down[KEY_LATCH]) {              // LATCH first: cue it in Standby, unseen
-                stage(c, n);
-            } else {                                      // show that preset while held
+                if (preset_page(c->page)) stage(c, n);    // (palettes and layers have no Standby yet)
+            } else {                                      // show it while held
                 if (c->num_bump != KEY_NONE) bumps_off(c, &o);
                 c->num_bump = key;
                 c->num_n = n;
-                c->num_preset = n + c->page * CTL_PAGE_SIZE;
-                bump_target(c, &o, c->target, NL_BUMP_PRESET, c->num_preset);
+                c->num_page = c->page;
+                c->num_layers = c->layers;
+                if (preset_page(c->page)) {
+                    c->num_preset = n + c->page * CTL_PAGE_SIZE;
+                    bump_target(c, &o, c->target, NL_BUMP_PRESET, c->num_preset);
+                } else {
+                    c->num_preset = c->page == PAGE_PALETTES ? c->palettes[n - 1] : NL_LAYER_PRESET_BASE + n;
+                    bump_layered(c, &o, c->page, c->num_preset);
+                }
             }
         } else if (c->num_bump == key) {
             c->num_bump = KEY_NONE;
@@ -236,7 +304,7 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         case KEY_PAGE:
             if (down) c->page_used = false;
-            else if (!c->page_used) c->page ^= 1;
+            else if (!c->page_used) c->page = (c->page + 1) % PAGE_COUNT;
             break;
         case KEY_FLASH:
         case KEY_BLACKOUT:
@@ -293,6 +361,8 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)
 #define C_LIVE     0xff1010   // red, programme
 #define C_BOTH     0xffa000
 #define C_LOCKED   0x400000
+#define C_PALETTE  0x300830   // palette page, idle
+#define C_LAYER    0x003020   // layer page, idle
 
 static uint32_t target_color(ctl_target_t t)
 {
@@ -314,8 +384,19 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
         rgb[KEY_UNLOCK] = c->down[KEY_UNLOCK] ? 0xff2020 : C_LOCKED;
         return;
     }
-    // Number keys: the target's Live preset red, its Standby green, both amber.
-    for (int n = 1; n <= CTL_PAGE_SIZE; n++) {
+    // Number keys: the target's Live preset red, its Standby green, both amber;
+    // on the palette and layer pages, the target's live palette or layer red.
+    for (int n = 1; n <= CTL_PAGE_SIZE && !preset_page(c->page); n++) {
+        const bool pal = c->page == PAGE_PALETTES;
+        const int v = pal ? c->palettes[n - 1] : NL_LAYER_PRESET_BASE + n;
+        const bool live = (on_body(c, c->target) && v == (pal ? c->layers.body_pal : c->layers.body_layer)) ||
+                          (c->target == TGT_FINS && v == (pal ? c->layers.fins_pal : c->layers.fins_layer));
+        uint32_t col = live ? C_LIVE : pal ? C_PALETTE : C_LAYER;
+        if (c->target == TGT_EYES) col = C_OFF;   // the eyes have no layers
+        if (c->down[KEY_NUM1 + n - 1]) col = 0xffffff;
+        rgb[KEY_NUM1 + n - 1] = col;
+    }
+    for (int n = 1; n <= CTL_PAGE_SIZE && preset_page(c->page); n++) {
         const int preset = n + c->page * CTL_PAGE_SIZE;
         int live = 0, stby = 0;
         switch (c->target) {
@@ -336,7 +417,8 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
         const ctl_target_t t = key_target((ctl_key_t)k);
         rgb[k] = t == c->target ? target_color(t) : dim(target_color(t), 12);
     }
-    rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : c->page ? 0x2040ff : C_IDLE;
+    static const uint32_t page_cols[PAGE_COUNT] = { C_IDLE, 0x2040ff, 0xc020c0, 0x00c0a0 };
+    rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : page_cols[c->page];
     // LATCH: lit while there's something held to keep (a number or TAKE).
     rgb[KEY_LATCH] = c->down[KEY_LATCH] ? 0xffffff : (c->num_bump != KEY_NONE || c->take_preview) ? (blink ? 0xffd000 : 0x403400) : C_IDLE;
     rgb[KEY_BLACKOUT] = c->down[KEY_BLACKOUT] ? 0xff0000 : 0x300000;

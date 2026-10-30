@@ -37,6 +37,8 @@ static int64_t wled_us;
 static nl_wled_stream_t wled_stream;
 static int64_t wled_stream_us;
 static nl_fin_state_t fin_state;
+static nl_wled_layers_t wled_layers;   // WLED's layer slots (NL_MSG_WLED_LAYERS)
+static int64_t wled_layers_us;
 static bool have_fins;
 static int64_t fins_us;
 
@@ -60,6 +62,11 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         taskENTER_CRITICAL(&lock);
         memcpy(&wled_stream, pl, sizeof(wled_stream));
         wled_stream_us = esp_timer_get_time();
+        taskEXIT_CRITICAL(&lock);
+    } else if (h->type == NL_MSG_WLED_LAYERS && len == sizeof(nl_wled_layers_t) && h->role == NL_ROLE_WLED) {
+        taskENTER_CRITICAL(&lock);
+        memcpy(&wled_layers, pl, sizeof(wled_layers));
+        wled_layers_us = esp_timer_get_time();
         taskEXIT_CRITICAL(&lock);
     } else if (h->type == NL_MSG_FIN_STATE && len == sizeof(nl_fin_state_t) && h->role == NL_ROLE_WLED) {
         taskENTER_CRITICAL(&lock);
@@ -89,8 +96,8 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const esp_err_t err = nl_espnow_command(mac, &cmd, &status, CMD_TRIES, CMD_TIMEOUT_MS);
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
-                                 "auto presets", "reactivity", "fin following" };
-    const char *what = op <= NL_OP_FIN_FOLLOW ? ops[op] : "?";
+                                 "auto presets", "reactivity", "fin following", "set layer", "set palette" };
+    const char *what = op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
@@ -254,8 +261,11 @@ static void do_ctl_action(const ctl_action_t *a)
         case ACT_FINS:       send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, a->value); break;
         // Fin presets are WLED presets NL_FIN_PRESET_BASE + n (the base itself: follow the body).
         case ACT_BRIGHTNESS: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a->value); break;
+        case ACT_SLOT_LOOK:    send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_LOOK, nl_slot_arg(a->target, (uint8_t)a->value)); break;
+        case ACT_SLOT_PALETTE: send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_PALETTE, nl_slot_arg(a->target, (uint8_t)a->value)); break;
         case ACT_BUMP:
-            if (a->target == TGT_FINS) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value);
+            if (a->target == TGT_FINS && a->bump == NL_BUMP_PRESET) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value);
+            else if (a->target == TGT_FINS) slot_start(SLOT_FINS, a->bump, a->value);   // palette, layer: a slot arg
             else slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value);
             break;
         case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED); break;
@@ -361,6 +371,7 @@ static void buttons_task(void *arg)
 // "bri N" / "wled bri N" (brightness 0..255; "+N" / "-N" steps),
 // "[eyes|wled] bump flash|black|preset N ms" (hold a bump for ms; without a
 // prefix it goes to both; preset numbers are 1-based on both),
+// "wled slot look S N" / "wled slot pal S N" (WLED layer slot S: layer preset N, 0 off; palette N),
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 grid, 2 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
 // "leds on|off" (print the key LED colours when they change),
@@ -456,6 +467,12 @@ static void console_task(void *arg)
         else if (!strncmp(line, "wled bri ", 9)) send_cmd_to(NL_TARGET_WLED, line[9] == '+' || line[9] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 9));
         else if (!strcmp(line, "wled next")) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0);
         else if (!strncmp(line, "wled set ", 9)) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, atoi(line + 9));
+        else if (!strncmp(line, "wled slot look ", 15) || !strncmp(line, "wled slot pal ", 14)) {   // "wled slot look S N", "wled slot pal S N"
+            const bool look = line[10] == 'l';
+            int sl = 0, v = 0;
+            if (sscanf(line + (look ? 15 : 14), "%d %d", &sl, &v) == 2)
+                send_cmd_to(NL_TARGET_WLED, look ? NL_OP_SLOT_LOOK : NL_OP_SLOT_PALETTE, nl_slot_arg((uint8_t)sl, (uint8_t)v));
+        }
         else if (strstr(line, "bump ")) {
             const char *b = strstr(line, "bump ") + 5;
             uint8_t target = !strncmp(line, "eyes ", 5) ? NL_TARGET_EYES
@@ -466,7 +483,7 @@ static void console_task(void *arg)
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, wled slot look|pal S N, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
     }
 }
 
@@ -531,7 +548,17 @@ void app_main(void)
         const bool sfresh = wled_stream_us && now - wled_stream_us < 3000000 && ws.active;
         const nl_fin_state_t fs = fin_state;
         const bool ffresh = have_fins && now - fins_us < 2000000;
+        const nl_wled_layers_t wl = wled_layers;
+        const bool lfresh = wled_layers_us && now - wled_layers_us < 2000000 && wl.count >= NL_SLOT_COUNT;
         taskEXIT_CRITICAL(&lock);
+        // The layers' palettes and looks, for the keys' LEDs and the screen (-1: not known)
+        ctl_layers_t layers = { -1, -1, -1, -1 };
+        if (lfresh) {
+            layers.body_pal = wl.slot[NL_SLOT_BODY].on ? wl.slot[NL_SLOT_BODY].palette : -1;
+            layers.fins_pal = wl.slot[NL_SLOT_FINS].on ? wl.slot[NL_SLOT_FINS].palette : -1;
+            layers.body_layer = wl.slot[NL_SLOT_BODY_OVER].on ? wl.slot[NL_SLOT_BODY_OVER].look : 0;
+            layers.fins_layer = wl.slot[NL_SLOT_FINS_OVER].on ? wl.slot[NL_SLOT_FINS_OVER].look : 0;
+        }
 
         // What the shark shows, for Live; remember the names that come with it.
         const ctl_scene_t live = { .body = wfresh ? w.preset : 0, .eyes = fresh ? e.preset + 1 : 0,
@@ -542,6 +569,7 @@ void app_main(void)
         uint32_t rgb[KEY_COUNT];
         xSemaphoreTake(ctl_mutex, portMAX_DELAY);
         ctl_set_live(&ctl, &live, wfresh ? w.bri : 0, ffresh ? fs.follow : -1);
+        ctl_set_layers(&ctl, &layers);
         const int nacts = ctl_tick(&ctl, now_ms(), acts);
         ctl_led_colors(&ctl, now_ms(), rgb);
         const ctl_t c = ctl;
@@ -594,6 +622,7 @@ void app_main(void)
             .brightness = c.brightness,
             .target = c.target,
             .page = c.page,
+            .layers = c.layers,
             .diff = ctl_standby_diff(&c),
             .keys_locked = c.locked,
             .take_preview = c.take_preview,
@@ -606,6 +635,10 @@ void app_main(void)
         name_of(ds.live_fins, wled_names, 256, c.live.fins > 0 ? NL_FIN_PRESET_BASE + c.live.fins : 0);
         name_of(ds.stby_fins, wled_names, 256, c.standby.fins > 0 ? NL_FIN_PRESET_BASE + c.standby.fins : 0);
         ds.fin_sensor = c.fin_sensor;
+        {
+            const char *pn = ctl_palette_name(&c, c.layers.body_pal);
+            snprintf(ds.live_pal_name, sizeof(ds.live_pal_name), "%s", pn ? pn : "");
+        }
         const uint8_t found = keypad_boards_found();
         ds.keypads_found = __builtin_popcount(found);
         ds.keypads_total = keypad_board_count();

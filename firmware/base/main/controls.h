@@ -1,6 +1,10 @@
 // The keypad's logic: Live / Standby like a video switcher, targets, pages,
 // bumps and the keys' LED colours. Everything is a bump until it's latched:
-// hold a number (or TAKE) to show it, tap LATCH while holding to keep it. Plain C with no ESP-IDF calls, so it runs
+// hold a number (or TAKE) to show it, tap LATCH while holding to keep it.
+// PAGE cycles what the numbers are: presets 1-8, presets 9-16, palettes (on
+// the target's own layer, the effect keeps running) and layer looks (WLED
+// presets NL_LAYER_PRESET_BASE + n on the target's overlay; LATCH on the one
+// that's live switches it off). Palettes and layers have no Standby yet. Plain C with no ESP-IDF calls, so it runs
 // in the host tests (test/host); main.c feeds it key events and telemetry and
 // carries out the actions it returns.
 #pragma once
@@ -13,7 +17,7 @@ typedef enum {
     KEY_NONE = 0,
     KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8,
     KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS,  // target selectors
-    KEY_PAGE,        // tap: presets 1-8 / 9-16; hold + number: brightness
+    KEY_PAGE,        // tap: next page (presets 1-8, 9-16, palettes, layers); hold + number: brightness
     KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
                      // held first, then a number: cue that preset in Standby; + TAKE: Standby = Live
     KEY_BLACKOUT,    // bump while held
@@ -44,8 +48,11 @@ typedef enum {
                      // body: bump = 1 lets the WLED preset's eye settings through (ALL), 0 body only
     ACT_FINS,        // the fins' angle sensor: value = 0 locked at the model angle, 1 follow, 2 toggle
     ACT_BRIGHTNESS,  // value = 0..255 (WLED; the eyes follow it)
-    ACT_BUMP,        // slot (TGT_BODY, TGT_EYES or TGT_FINS), bump = NL_BUMP_* action, value = arg (fins: fin preset)
+    ACT_BUMP,        // slot (TGT_BODY, TGT_EYES or TGT_FINS), bump = NL_BUMP_* action, value = arg
+                     // (fin preset bumps: the fin preset; palette and layer bumps: nl_slot_arg(WLED slot, value))
     ACT_BUMP_END,    // slot
+    ACT_SLOT_LOOK,   // target = WLED layer slot (nl_slot_t), value = layer preset (0: switch the slot off)
+    ACT_SLOT_PALETTE, // target = WLED layer slot, value = palette
 } ctl_act_type_t;
 
 typedef struct {
@@ -59,6 +66,24 @@ typedef struct {
 #define CTL_LOCK_HOLD_MS     1000    // UNLOCK held this long locks or unlocks
 #define CTL_PAGE_SIZE        8
 
+typedef enum {
+    PAGE_PRESETS = 0,    // presets 1-8
+    PAGE_PRESETS2,       // presets 9-16
+    PAGE_PALETTES,
+    PAGE_LAYERS,
+    PAGE_COUNT
+} ctl_page_t;
+
+// WLED palettes on the palette page's keys 1-8 (main can change them before use).
+#define CTL_DEFAULT_PALETTES { 6, 8, 9, 11, 36, 40, 44, 51 }  // Party, Lava, Ocean, Rainbow, Icefire, Magenta, Orange & Teal, Atlantica
+#define CTL_DEFAULT_PALETTE_NAMES { "Party", "Lava", "Ocean", "Rainbow", "Icefire", "Magenta", "Orange & Teal", "Atlantica" }
+
+// WLED's layer slots as last reported (NL_MSG_WLED_LAYERS); -1 = not known.
+typedef struct {
+    int16_t body_pal, fins_pal;      // palette of the body's and the fins' own layer
+    int16_t body_layer, fins_layer;  // layer preset showing over the body / fins (0: none)
+} ctl_layers_t;
+
 typedef struct {
     ctl_scene_t live, standby;
     bool have_live, standby_set;     // standby_set: Standby has been filled from Live once
@@ -68,7 +93,9 @@ typedef struct {
     ctl_target_t target_before;      // to go back to after a held target key
     ctl_key_t target_key;            // target key being held, or KEY_NONE
     bool target_used;                // a number was pressed while it was held: momentary
-    int page;                        // 0: presets 1-8, 1: 9-16
+    int page;                        // ctl_page_t
+    uint8_t palettes[CTL_PAGE_SIZE];  // WLED palette on each key of the palette page
+    ctl_layers_t layers;
     bool page_used;                  // a number was pressed while PAGE was held: brightness, no page flip
     bool locked;
     bool lock_toggled;               // this UNLOCK press already toggled
@@ -78,6 +105,8 @@ typedef struct {
     uint32_t down_ms[KEY_COUNT];
     ctl_key_t num_bump;              // number key held (bumping its preset), or KEY_NONE
     int num_n, num_preset;           // its number (1-8) and preset (with the page) when pressed
+    int num_page;                    // the page it was pressed on
+    ctl_layers_t num_layers;         // the layers before it (WLED reports a layer bump as live)
     bool take_preview;               // TAKE is down and the Standby bumps are on
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on
 } ctl_t;
@@ -94,6 +123,9 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
 // Call every ~10-50 ms: locking by holding UNLOCK, auto-lock.
 int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out);
 
+// WLED's layer slots (from NL_MSG_WLED_LAYERS; fields -1 where not known).
+void ctl_set_layers(ctl_t *c, const ctl_layers_t *layers);
+
 // Which parts of Standby differ from Live (bit per target: 1 << TGT_BODY etc.).
 uint8_t ctl_standby_diff(const ctl_t *c);
 
@@ -103,3 +135,6 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT]);
 const char *ctl_key_name(ctl_key_t key);
 ctl_key_t ctl_key_by_name(const char *name);
 const char *ctl_target_name(ctl_target_t t);
+const char *ctl_page_name(int page);
+// A palette's name if it's one of the palette page's (as set by ctl_init), else NULL.
+const char *ctl_palette_name(const ctl_t *c, int palette);

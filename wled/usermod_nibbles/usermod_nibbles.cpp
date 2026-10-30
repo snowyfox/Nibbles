@@ -57,7 +57,11 @@
 //   the numbering holds. Requests run from loop() (WLED's JSON buffer is busy
 //   while it hands them to us). The state reports them as "nibbles":{"slots"}.
 //   Flash and blackout bumps use the bump slot, so nothing is saved or
-//   restored and commands during them apply at once.
+//   restored and commands during them apply at once. Radio: NL_OP_SLOT_LOOK
+//   and NL_OP_SLOT_PALETTE set a slot; NL_BUMP_PALETTE and NL_BUMP_LAYER show a
+//   palette or a layer look while held and put the slot back exactly after (a
+//   slot command for that slot meanwhile becomes what it goes back to, which is
+//   how the base's LATCH keeps one); NL_MSG_WLED_LAYERS (2 Hz) reports them.
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -356,8 +360,14 @@ class NibblesUsermod : public Usermod {
     uint8_t slotQueueLen = 0;
     uint32_t slotApplied = 0;
     char slotNote[80] = "";                  // the last request's outcome, for the Info page
-    bool bumpInSlot = false;                 // a flash or blackout bump is showing in the bump slot
+    // Bumps shown in a slot (flash, blackout, palette, layer): the request that
+    // shows one and the one that puts its slot back. One for the body's bumps
+    // (NL_TARGET_WLED), one for the fins' (NL_TARGET_FINS).
+    struct SlotBump { bool on = false; uint8_t action = 0, slot = 0; String apply, restore; };
+    SlotBump bodySlotBump, finSlotBump;
     uint8_t bumpBri = 0;                     // the master brightness to go back to after a flash
+    String pendingSlots[4];                  // slot commands during a preset bump, for its end
+    uint8_t pendingSlotCount = 0;
 
     // A slot's cells: [x0, x1) x [y0, y1). The body is the side view, left of the fin panel.
     bool slotArea(unsigned slot, unsigned &x0, unsigned &x1, unsigned &y0, unsigned &y1) const {
@@ -431,7 +441,8 @@ class NibblesUsermod : public Usermod {
       bool setsLook = lookId != 0;
       for (const char *k : LOOK_KEYS) if (!rq[k].isNull()) setsLook = true;
       const bool wasOn = !fresh && strip.getSegment(slot).on;
-      const bool on = rq[F("on")].isNull() ? (setsLook || wasOn) : rq[F("on")].as<bool>();
+      const bool turnsOn = lookId != 0 || !rq[F("fx")].isNull();   // a new effect shows; a new palette alone doesn't
+      const bool on = rq[F("on")].isNull() ? (turnsOn || wasOn) : rq[F("on")].as<bool>();
 
       pDoc->clear();
       JsonObject st = pDoc->to<JsonObject>();
@@ -459,7 +470,8 @@ class NibblesUsermod : public Usermod {
       deserializeState(st, CALL_MODE_DIRECT_CHANGE);
       if (rq[F("bump")] | false) currentPreset = keepPreset;   // a bump is momentary: the preset is still the one showing
       if (lookId) slotLook[slot] = lookId;
-      else if (setsLook) slotLook[slot] = 0;
+      else if (!rq[F("lookid")].isNull()) slotLook[slot] = rq[F("lookid")] | 0;   // a restore puts the look's preset back too
+      else if (turnsOn) slotLook[slot] = 0;
       if (slot == 1 && isFinPreset(lookId) && !finBumpOn) finPreset = lookId - NL_FIN_PRESET_BASE;   // the base sees it as that fin preset
       slotApplied++;
       snprintf(slotNote, sizeof(slotNote), "slot %d (%s): %s%s%s", slot, slotDefs[slot].name, on ? "on" : "off",
@@ -477,25 +489,121 @@ class NibblesUsermod : public Usermod {
       slotQueue[--slotQueueLen] = String();
     }
 
-    // Flash and blackout bumps: the bump slot over everything, then off again.
-    void bumpSlot(bool begin, const nl_bump_t &b) {
-      StaticJsonDocument<512> d;
-      d[F("id")] = SLOT_BUMP;
-      d[F("tt")] = 0;
-      d[F("bump")] = true;
-      if (begin) {
+    void queueSlotString(const String &r) {
+      if (slotQueueLen < sizeof(slotQueue) / sizeof(slotQueue[0])) slotQueue[slotQueueLen++] = r;
+    }
+
+    // A slot as it is now, as a request that puts it back (the end of a bump).
+    String captureSlot(unsigned sl) const {
+      StaticJsonDocument<768> d;
+      d[F("id")] = sl; d[F("tt")] = 0; d[F("bump")] = true;
+      if (sl >= strip.getSegmentsNum() || !strip.getSegment(sl).isActive()) {
+        d[F("on")] = false;
+      } else {
+        const Segment &g = strip.getSegment(sl);
+        d[F("fx")] = g.mode; d[F("sx")] = g.speed; d[F("ix")] = g.intensity;
+        d[F("c1")] = g.custom1; d[F("c2")] = g.custom2; d[F("c3")] = g.custom3;
+        d[F("o1")] = g.check1; d[F("o2")] = g.check2; d[F("o3")] = g.check3;
+        d[F("pal")] = g.palette; d[F("si")] = g.soundSim; d[F("m12")] = g.map1D2D;
+        d[F("rev")] = g.reverse; d[F("mi")] = g.mirror; d[F("rY")] = g.reverse_y; d[F("mY")] = g.mirror_y; d[F("tp")] = g.transpose;
+        JsonArray col = d.createNestedArray(F("col"));
+        for (int i = 0; i < 3; i++) {
+          JsonArray c = col.createNestedArray();
+          c.add(R(g.colors[i])); c.add(G(g.colors[i])); c.add(B(g.colors[i]));
+          if (W(g.colors[i])) c.add(W(g.colors[i]));
+        }
+        d[F("bm")] = g.blendMode; d[F("o")] = g.opacity ? g.opacity : 1;
+        d[F("on")] = g.on;
+        if (!g.on && !g.freeze) d[F("warm")] = true;
+        d[F("lookid")] = slotLook[sl];
+      }
+      String r;
+      serializeJson(d, r);
+      return r;
+    }
+
+    // Starts a bump that lives in a slot: false if it doesn't apply here (no
+    // 2D map, no such slot or preset). Flash and blackout: the bump slot over
+    // everything; a palette on a slot; a layer look in a slot.
+    bool slotBumpStart(const nl_bump_t &b, SlotBump &sb) {
+      StaticJsonDocument<384> d;
+      unsigned a0, a1, b0, b1;
+      if (b.action == NL_BUMP_FLASH || b.action == NL_BUMP_BLACKOUT) {
+        if (!slotArea(SLOT_BUMP, a0, a1, b0, b1)) return false;
         const bool flash = b.action == NL_BUMP_FLASH;
+        const uint8_t c = flash ? 255 : 0;
+        sb.slot = SLOT_BUMP;
         d[F("fx")] = 0;
         JsonArray col = d.createNestedArray(F("col")).createNestedArray();
-        col.add(flash ? 255 : 0); col.add(flash ? 255 : 0); col.add(flash ? 255 : 0);
+        col.add(c); col.add(c); col.add(c);
         d[F("bm")] = 0;                                 // top: covers everything below
         d[F("on")] = true;
         if (flash) d[F("master")] = b.intensity ? b.intensity : 255;   // as bright as asked, whatever the master is
+        sb.restore = String();                          // made at the end (the master brightness may change meanwhile)
+      } else if (b.action == NL_BUMP_PALETTE || b.action == NL_BUMP_LAYER) {
+        const unsigned sl = nl_slot_arg_slot(b.arg), v = nl_slot_arg_value(b.arg);
+        if (!slotArea(sl, a0, a1, b0, b1)) return false;
+        if (b.action == NL_BUMP_PALETTE) {
+          if (sl >= strip.getSegmentsNum() || !strip.getSegment(sl).isActive()) return false;   // nothing showing to recolour
+          d[F("pal")] = v;
+        } else if (v) {
+          refreshPresets();
+          if (!presetExists(v)) return false;
+          d[F("look")] = v;
+          d[F("on")] = true;
+        } else {
+          d[F("on")] = false;
+        }
+        sb.slot = sl;
+        sb.restore = captureSlot(sl);
       } else {
-        d[F("on")] = false;
-        if (b.action == NL_BUMP_FLASH) d[F("master")] = bumpBri;
+        return false;
       }
-      queueSlot(d.as<JsonVariant>());
+      d[F("id")] = sb.slot; d[F("tt")] = 0; d[F("bump")] = true;
+      sb.apply = String();
+      serializeJson(d, sb.apply);
+      sb.action = b.action;
+      sb.on = true;
+      queueSlotString(sb.apply);
+      return true;
+    }
+
+    void slotBumpEnd(SlotBump &sb) {
+      if (!sb.on) return;
+      sb.on = false;
+      if (sb.action == NL_BUMP_FLASH || sb.action == NL_BUMP_BLACKOUT) {
+        String r = String(F("{\"id\":")) + SLOT_BUMP + F(",\"tt\":0,\"bump\":true,\"on\":false");
+        if (sb.action == NL_BUMP_FLASH) r += String(F(",\"master\":")) + bumpBri;
+        queueSlotString(r + "}");
+      } else {
+        queueSlotString(sb.restore);
+      }
+    }
+
+    // A slot command while a bump holds that slot: what the slot goes back to.
+    bool slotCommandUnderBump(unsigned sl, const String &r) {
+      for (SlotBump *sb : { &bodySlotBump, &finSlotBump })
+        if (sb->on && sb->slot == sl && sb->action != NL_BUMP_FLASH && sb->action != NL_BUMP_BLACKOUT) {
+          sb->restore = r;
+          return true;
+        }
+      return false;
+    }
+
+    // WLED's layer slots, for the base (NL_MSG_WLED_LAYERS).
+    void sendLayers() {
+      nl_wled_layers_t m = {};
+      if (strip.isMatrix) {
+        m.count = NL_SLOT_COUNT;
+        for (unsigned i = 0; i < NL_SLOT_COUNT && i < SLOT_COUNT; i++) {
+          nl_slot_state_t &st = m.slot[i];
+          if (i >= strip.getSegmentsNum() || !strip.getSegment(i).isActive()) continue;
+          const Segment &g = strip.getSegment(i);
+          st.on = g.on; st.look = (uint8_t)slotLook[i]; st.fx = g.mode; st.palette = g.palette;
+          st.blend = g.blendMode; st.opacity = g.opacity;
+        }
+      }
+      send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_WLED_LAYERS, &m, sizeof(m));
     }
 
     // One number from a JSON array; false at its closing bracket or the end.
@@ -772,12 +880,23 @@ class NibblesUsermod : public Usermod {
     // What the eyes get from us (audio features) and tell us (telemetry), so
     // the simulator's eyes can follow the real ones.
     void sendMirrorState(unsigned long now) {
-      char buf[512];
+      char buf[640];
       const nl_audio_t &a = lastAudioOut;
       const nl_eye_telemetry_t &e = eyes;
       int len = snprintf(buf, sizeof(buf),
-        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"finps\":%d,\"finproj\":%d,\"on\":%s,\"limit_ma\":%u,\"pack_mv\":%u}", bri, bodyPreset, finPreset, finProj,
+        "{\"wled\":{\"bri\":%u,\"ps\":%d,\"finps\":%d,\"finproj\":%d,\"on\":%s,\"limit_ma\":%u,\"pack_mv\":%u", bri, bodyPreset, finPreset, finProj,
         bri ? "true" : "false", (unsigned)BusManager::ablMilliampsMax(), power.heard ? (unsigned)power.pack_mv : 0u);
+      if (strip.isMatrix) {   // the layer slots: [on, look, fx, palette, blend, opacity] each
+        len += snprintf(buf + len, sizeof(buf) - len, ",\"slots\":[");
+        for (unsigned i = 0; i < SLOT_COUNT; i++) {
+          const bool exists = i < strip.getSegmentsNum() && strip.getSegment(i).isActive();
+          const Segment &g = strip.getSegment(exists ? i : 0);
+          len += snprintf(buf + len, sizeof(buf) - len, "%s[%d,%u,%u,%u,%u,%u]", i ? "," : "", exists && g.on ? 1 : 0, slotLook[i],
+                          exists ? g.mode : 0, exists ? g.palette : 0, exists ? g.blendMode : 0, exists ? g.opacity : 0);
+        }
+        len += snprintf(buf + len, sizeof(buf) - len, "]");
+      }
+      len += snprintf(buf + len, sizeof(buf) - len, "}");
       if (lastAudioOutAt && now - lastAudioOutAt < 1000)
         len += snprintf(buf + len, sizeof(buf) - len,
           ",\"audio\":[%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.4f,%.3f,%lu,%lu]",
@@ -993,6 +1112,24 @@ class NibblesUsermod : public Usermod {
         case NL_OP_BRIGHTNESS_STEP:
           id = -constrain((int)bri + cmd.arg, 1, 255);
           return NL_ACK_OK;
+        case NL_OP_SLOT_LOOK:
+        case NL_OP_SLOT_PALETTE: {
+          const unsigned sl = nl_slot_arg_slot(cmd.arg), v = nl_slot_arg_value(cmd.arg);
+          unsigned a0, a1, b0, b1;
+          if (!slotArea(sl, a0, a1, b0, b1)) return NL_ACK_UNSUPPORTED;
+          if (cmd.op == NL_OP_SLOT_LOOK && v) { refreshPresets(); if (!presetExists(v)) return NL_ACK_BAD_ARG; }
+          String r = String(F("{\"id\":")) + sl;
+          if (cmd.op == NL_OP_SLOT_PALETTE) r += String(F(",\"pal\":")) + v;
+          else if (v) r += String(F(",\"look\":")) + v + F(",\"on\":true");
+          else r += F(",\"on\":false");
+          r += "}";
+          if (!slotCommandUnderBump(sl, r)) {
+            if (haveSaved) { if (pendingSlotCount < 4) pendingSlots[pendingSlotCount++] = r; }   // a preset bump would undo it
+            else queueSlotString(r);
+          }
+          id = NO_ACTION;
+          return NL_ACK_OK;
+        }
         case NL_OP_FIN_FOLLOW:
           if (cmd.arg < 0 || cmd.arg > 2) return NL_ACK_BAD_ARG;
           setFinFollow(cmd.arg == 2 ? !finFollowOn : cmd.arg == 1);
@@ -1021,7 +1158,7 @@ class NibblesUsermod : public Usermod {
         return;
       }
       // A flash puts the master brightness back when it ends: a new brightness is for then.
-      if (bumpInSlot && id < 0 && bumps.bump.action == NL_BUMP_FLASH) { bumpBri = -id; return; }
+      if (bodySlotBump.on && id < 0 && bodySlotBump.action == NL_BUMP_FLASH) { bumpBri = -id; return; }
       // During a bump the saved state comes back on release, which would undo
       // the command: keep it for then instead.
       if (haveSaved) {
@@ -1058,18 +1195,11 @@ class NibblesUsermod : public Usermod {
       return true;
     }
 
-    bool haveBumpSlot() const {
-      unsigned a, b, c, d;
-      return slotArea(SLOT_BUMP, a, b, c, d);
-    }
-
     void bumpBegin(const nl_bump_t &b) {
-      if (b.action != NL_BUMP_PRESET && haveBumpSlot()) {   // flash, blackout: the bump slot, nothing to save
-        bumpCount++;
-        bumpInSlot = true;
-        bumpBri = bri;
-        bumpSlot(true, b);
-        return;
+      if (b.action != NL_BUMP_PRESET) {   // flash, blackout, palette, layer: in a slot, nothing to save
+        if (b.action == NL_BUMP_FLASH) bumpBri = bri;
+        if (slotBumpStart(b, bodySlotBump)) { bumpCount++; return; }
+        if (b.action == NL_BUMP_PALETTE || b.action == NL_BUMP_LAYER) return;   // no slots here (1D)
       }
       haveSaved = saveState();
       savedPreset = currentPreset;
@@ -1096,9 +1226,8 @@ class NibblesUsermod : public Usermod {
     }
 
     void bumpEnd() {
-      if (bumpInSlot) {
-        bumpInSlot = false;
-        bumpSlot(false, bumps.bump);
+      if (bodySlotBump.on) {
+        slotBumpEnd(bodySlotBump);
         return;
       }
       if (!haveSaved) return;
@@ -1127,6 +1256,8 @@ class NibblesUsermod : public Usermod {
       }
       pendingPreset = 0;
       pendingBri = -1;
+      for (unsigned i = 0; i < pendingSlotCount; i++) queueSlotString(pendingSlots[i]);   // slot commands during it
+      pendingSlotCount = 0;
     }
 
     void bumpEvent(nl_bump_event_t ev) {
@@ -1150,6 +1281,7 @@ class NibblesUsermod : public Usermod {
                       finBumps.bump.arg, finBumpRestore, finPreset);
 #endif
       if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
+        slotBumpEnd(finSlotBump);
         if (finBumpOn) {
           finPreset = finBumpRestore - NL_FIN_PRESET_BASE;   // what the fins go back to is theirs
           queuePreset(finBumpRestore);
@@ -1158,6 +1290,7 @@ class NibblesUsermod : public Usermod {
       }
       if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
         const nl_bump_t &b = finBumps.bump;
+        if ((b.action == NL_BUMP_PALETTE || b.action == NL_BUMP_LAYER) && slotBumpStart(b, finSlotBump)) { bumpCount++; return; }
         refreshPresets();
         if (b.action == NL_BUMP_PRESET && isFinPreset(b.arg) && presetExists(b.arg)) {
           finBumpRestore = finPreset ? NL_FIN_PRESET_BASE + finPreset : NL_FIN_PRESET_BASE;
@@ -1264,7 +1397,14 @@ class NibblesUsermod : public Usermod {
     void trackPresets(unsigned long now) {
       if (currentPreset != lastSeenPreset) {
         lastSeenPreset = currentPreset;
-        if (bumpInSlot && currentPreset > 0) bumpSlot(true, bumps.bump);   // a body preset clears slots 2-8: put the bump back
+        if (bodySlotBump.on && currentPreset > 0 && !isFinPreset(currentPreset)) {
+          // A body preset is the new scene under the bump: the slot goes back to
+          // that, not to what it was, and the bump goes back on top (the preset
+          // switched slots 2-8 off).
+          if (bodySlotBump.action != NL_BUMP_FLASH && bodySlotBump.action != NL_BUMP_BLACKOUT)
+            bodySlotBump.restore = captureSlot(bodySlotBump.slot);
+          queueSlotString(bodySlotBump.apply);
+        }
         if (isFinPreset(currentPreset)) {
           if (!finBumpOn) finPreset = currentPreset - NL_FIN_PRESET_BASE;
           slotLook[1] = currentPreset;
@@ -1399,6 +1539,7 @@ class NibblesUsermod : public Usermod {
         lastTelemetry = now;
         sendTelemetry();
         sendFinState();
+        sendLayers();
       }
       if (now - lastStream >= 1000) {
         lastStream = now;

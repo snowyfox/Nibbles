@@ -422,6 +422,16 @@ static void test_stream_gaps(void)
     CHECK(sizeof(nl_wled_stream_t) == 15, "stream message is 15 bytes (got %u)", (unsigned)sizeof(nl_wled_stream_t));
 }
 
+static void test_slot_arg(void)
+{
+    const int16_t a = nl_slot_arg(NL_SLOT_BODY_OVER, 103);
+    CHECK(nl_slot_arg_slot(a) == NL_SLOT_BODY_OVER && nl_slot_arg_value(a) == 103, "slot arg: slot 2, preset 103 round trip (%d)", a);
+    const int16_t b = nl_slot_arg(NL_SLOT_FINS, 255);
+    CHECK(nl_slot_arg_slot(b) == NL_SLOT_FINS && nl_slot_arg_value(b) == 255 && b > 0, "slot arg: palette 255 stays positive");
+    CHECK(sizeof(nl_wled_layers_t) == 1 + 6 * NL_SLOT_COUNT && sizeof(nl_wled_layers_t) + sizeof(nl_radio_hdr_t) <= NL_RADIO_MAX,
+          "layers message fits a radio packet (%u bytes)", (unsigned)sizeof(nl_wled_layers_t));
+}
+
 int main(void)
 {
     srand(1);
@@ -437,6 +447,7 @@ int main(void)
     test_power_limit();
     test_power_limiter();
     test_stream_gaps();
+    test_slot_arg();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

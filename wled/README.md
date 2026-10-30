@@ -233,6 +233,30 @@ the outcome of the last request.
 - Slot changes made by request count as manual changes, so WLED shows no
   current preset after one.
 
+**From the base** (radio, `shared/nibbles_link`):
+- **Commands:** `NL_OP_SLOT_LOOK` (`nl_slot_arg(slot, preset)`; preset 0
+  switches the slot off) and `NL_OP_SLOT_PALETTE` (`nl_slot_arg(slot,
+  palette)`).
+- **Bumps:** `NL_BUMP_PALETTE` and `NL_BUMP_LAYER` show a palette or a layer
+  look while held. On release the slot goes back exactly as it was: every
+  look field, the blend, opacity, on/off, and the look's preset number.
+  - Body slots use `NL_TARGET_WLED` bumps, the fin slots `NL_TARGET_FINS`,
+    so the two can be held together.
+  - A slot command for a slot that a bump holds becomes what the slot goes
+    back to. That's how the base's LATCH keeps one: it sends the command,
+    then lets the bump go.
+  - If a body preset lands during a palette or layer bump, the slot goes
+    back to that preset's version instead.
+- **Report:** `NL_MSG_WLED_LAYERS` reports every slot twice a second (on,
+  look, effect, palette, blend, opacity). The mirror to the simulator
+  carries the same as `"slots"`.
+- **Layer looks** are WLED presets 101-116 (`NL_LAYER_PRESET_BASE` + n).
+  Each is saved as one segment, id 2, with `"mainseg":2`. Its effect,
+  sliders, palette and colours are the look. The bench has 101-108 (Twinkle,
+  Sparkle, Fireworks, Crazy Bees, Lissajous, Drift Rose, Black Hole,
+  Lightning): effects that are cheap and start at once (`wled/bench/`),
+  each with its default sliders, white on black, blend screen.
+
 **Bumps:**
 - **Flash and blackout** use the bump slot: Solid white (or black) on top.
   A flash also raises WLED's master brightness to its intensity while

@@ -183,7 +183,102 @@ static void test_pages_and_brightness(void)
     release(&c, KEY_PAGE);
     CHECK(c.page == 1);
     tap(&c, KEY_PAGE);
-    CHECK(c.page == 0);
+    CHECK(c.page == PAGE_PALETTES);
+    tap(&c, KEY_PAGE);
+    CHECK(c.page == PAGE_LAYERS);
+    tap(&c, KEY_PAGE);
+    CHECK(c.page == PAGE_PRESETS);
+}
+
+static void layers(ctl_t *c, int body_pal, int fins_pal, int body_layer, int fins_layer)
+{
+    const ctl_layers_t l = { body_pal, fins_pal, body_layer, fins_layer };
+    ctl_set_layers(c, &l);
+}
+
+static void test_palettes(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);            // the fins follow the body
+    layers(&c, 11, -1, 0, 0);
+    c.page = PAGE_PALETTES;
+    // ALL: holding 2 shows the second palette on the body only (the fins follow it)
+    press(&c, KEY_NUM2);
+    CHECK(nacts == 1 && acts[0].type == ACT_BUMP && acts[0].target == TGT_BODY && acts[0].bump == NL_BUMP_PALETTE);
+    CHECK(nl_slot_arg_slot(acts[0].value) == NL_SLOT_BODY && nl_slot_arg_value(acts[0].value) == c.palettes[1]);
+    release(&c, KEY_NUM2);
+    CHECK(has(ACT_BUMP_END, TGT_BODY, -10000));
+    CHECK(c.layers.body_pal == 11);           // a bump changes nothing
+    // LATCH keeps it: the command, then the bump lets go
+    press(&c, KEY_NUM3);
+    press(&c, KEY_LATCH);
+    CHECK(acts[0].type == ACT_SLOT_PALETTE && acts[0].target == NL_SLOT_BODY && acts[0].value == c.palettes[2]);
+    CHECK(acts[nacts - 1].type == ACT_BUMP_END);
+    release(&c, KEY_LATCH);
+    CHECK(release(&c, KEY_NUM3) == 0);
+    CHECK(c.layers.body_pal == c.palettes[2] && c.live.body == 1);   // the preset stays
+    // Fins with their own preset: ALL covers them too; FINS alone only them
+    live(&c, 1, 1, 3);
+    press(&c, KEY_NUM1);
+    CHECK(nacts == 2 && has(ACT_BUMP, TGT_FINS, nl_slot_arg(NL_SLOT_FINS, c.palettes[0])));
+    release(&c, KEY_NUM1);
+    press(&c, KEY_FINS);
+    press(&c, KEY_NUM1);
+    CHECK(nacts == 1 && has(ACT_BUMP, TGT_FINS, -10000));
+    release(&c, KEY_NUM1);
+    release(&c, KEY_FINS);
+    // EYES: nothing to recolour
+    press(&c, KEY_EYES);
+    CHECK(press(&c, KEY_NUM1) == 0);
+    release(&c, KEY_NUM1);
+    release(&c, KEY_EYES);
+    // LATCH first on this page doesn't cue anything in Standby
+    press(&c, KEY_LATCH);
+    CHECK(press(&c, KEY_NUM4) == 0 && c.standby.body == 1);
+    release(&c, KEY_NUM4);
+    release(&c, KEY_LATCH);
+}
+
+static void test_layers(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    layers(&c, 11, -1, 0, 0);
+    c.page = PAGE_LAYERS;
+    press(&c, KEY_NUM5);
+    CHECK(nacts == 1 && acts[0].bump == NL_BUMP_LAYER && acts[0].target == TGT_BODY);
+    CHECK(acts[0].value == nl_slot_arg(NL_SLOT_BODY_OVER, NL_LAYER_PRESET_BASE + 5));
+    press(&c, KEY_LATCH);
+    CHECK(acts[0].type == ACT_SLOT_LOOK && acts[0].target == NL_SLOT_BODY_OVER && acts[0].value == NL_LAYER_PRESET_BASE + 5);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM5);
+    CHECK(c.layers.body_layer == NL_LAYER_PRESET_BASE + 5);
+    // the live one's LED is red; LATCH on it again switches the layer off
+    uint32_t rgb[KEY_COUNT];
+    ctl_led_colors(&c, now, rgb);
+    CHECK(rgb[KEY_NUM5] == 0xff1010 && rgb[KEY_NUM4] != 0xff1010);
+    press(&c, KEY_NUM5);
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_SLOT_LOOK, NL_SLOT_BODY_OVER, 0));
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM5);
+    CHECK(c.layers.body_layer == 0);
+    // While a layer bump shows, WLED reports that look as live: LATCH still keeps it
+    press(&c, KEY_NUM6);
+    layers(&c, 11, -1, NL_LAYER_PRESET_BASE + 6, 0);
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_SLOT_LOOK, NL_SLOT_BODY_OVER, NL_LAYER_PRESET_BASE + 6));
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM6);
+    layers(&c, 11, -1, 0, 0);
+    // FINS: the fins' overlay
+    press(&c, KEY_FINS);
+    press(&c, KEY_NUM2);
+    CHECK(acts[0].target == TGT_FINS && nl_slot_arg_slot(acts[0].value) == NL_SLOT_FINS_OVER);
+    release(&c, KEY_NUM2);
+    release(&c, KEY_FINS);
 }
 
 static void test_fins_and_all(void)
@@ -359,6 +454,8 @@ int main(void)
     test_latch_first_cues_standby();
     test_targets();
     test_pages_and_brightness();
+    test_palettes();
+    test_layers();
     test_fins_and_all();
     test_flash_blackout();
     test_lock();

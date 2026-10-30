@@ -67,6 +67,29 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   - **TAKE** held shows Standby (bumps) and goes back on release; tap LATCH
     while holding it to keep the swap (Standby then holds the old Live, so
     TAKE + LATCH again goes back).
+  - **PAGE** cycles what the numbers are (2026-10-29): presets 1-8,
+    presets 9-16, **palettes** and **layers** (the page name is in the target
+    box; the PAGE key's LED is white / blue / magenta / teal).
+    - **Palettes:** the 8 WLED palettes in `CTL_DEFAULT_PALETTES` (Party,
+      Lava, Ocean, Rainbow, Icefire, Magenta, Orange & Teal, Atlantica) go on
+      the target's own layer. The effect keeps running.
+    - **Layers:** the layer looks (WLED presets 101-108,
+      `NL_LAYER_PRESET_BASE` + n) go on the target's overlay.
+    - **Which layers the target means:** BODY means the body's layer and
+      overlay (WLED layer slots 0 and 2). FINS means the fins' (slots 1 and 3,
+      which show only while the fins run a fin preset). ALL means the body's,
+      plus the fins' while they run their own preset. EYES does nothing on
+      these pages.
+    - **Keys work as for presets:** hold to bump (`NL_BUMP_PALETTE`,
+      `NL_BUMP_LAYER`; WLED puts the slot back exactly on release), tap
+      LATCH while holding to keep (`NL_OP_SLOT_PALETTE`, `NL_OP_SLOT_LOOK`).
+      LATCH on the layer that's already live switches the overlay off.
+    - **What's live:** WLED reports its slots twice a second
+      (`NL_MSG_WLED_LAYERS`), and the live palette or layer's key is red.
+      The toggle is decided against the layers from before the number went
+      down, because WLED reports a layer bump as live.
+    - **No Standby** for palettes and layers yet, so LATCH-first does
+      nothing on these pages.
   - LATCH held first, then a number: cue that preset in Standby without
     showing it. LATCH + TAKE: Standby = Live. PAGE + number: brightness in
     eighths. FLASH and BLACKOUT: bumps while held. FIN SENSOR: fins follow
@@ -115,9 +138,12 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   kerning), so values don't shift as they change. `sim on` alternates a minute on an
   external battery (15.6 V; starved for half a minute) or a USB-C supply
   (20.1 V) and a minute on the pack, and sweeps both temperatures through
-  their levels. Then LIVE (red), STANDBY (green; rows that
-  differ bright; tap it = TAKE), and the target box (tap = next target),
-  page, LATCH, lock, links, keypads found, the event line. Page 1 is the
+  their levels. Then LIVE (red; a fifth row, LOOK: the body's palette, by
+  name if it's one of the palette page's, and "+ Ln" for a layer over it),
+  STANDBY (green; rows that differ bright; tap it = TAKE), and the target
+  box (tap = next target), page name, LATCH, lock, links, keypads found, the
+  event line. Positions: card 4, LIVE 72 (157 tall), STANDBY 235, target
+  373, lock 429, links 451, keys 469, event 491. Page 1 is the
   preset grid, page 2 the old cards and bump pads.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
@@ -182,7 +208,8 @@ Earlier features, still there (`main/main.c`):
   eyes and WLED (`BTN_BUMP_TARGET`) while held (START, HOLD every 100 ms, STOP; WLED releases by itself 300 ms after
   the last message).
 - USB serial commands, for testing: `next`, `prev`, `set N` (eyes);
-  `wled next`, `wled set N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
+  `wled next`, `wled set N`; `wled slot look S N` (WLED layer slot S takes
+  layer preset N, 0 switches it off), `wled slot pal S N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
   step; both set WLED's brightness, which the eyes follow, as does the eyes
   card's slider); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `fins on|off|toggle` (WLED's fin
   LEDs follow the fins, or stay at the modelled angle); `shot`; `[eyes|wled] bump flash MS`,

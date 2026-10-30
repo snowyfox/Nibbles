@@ -307,6 +307,8 @@ class Base:
             return
         lib.base_key_name.restype = ctypes.c_char_p
         lib.base_target_name.restype = ctypes.c_char_p
+        lib.base_page_name.restype = ctypes.c_char_p
+        lib.base_palette_name.restype = ctypes.c_char_p
         lib.base_init(0)
         self.names = [lib.base_key_name(k).decode() for k in range(lib.base_key_count())]
         self.lib = lib
@@ -318,14 +320,16 @@ class Base:
         return [list(self.out[i * 4:i * 4 + 4]) for i in range(n)]
 
     def state(self):
-        st = (ctypes.c_int * 13)()
+        st = (ctypes.c_int * 17)()
         self.lib.base_state(st)
         leds = (ctypes.c_uint * len(self.names))()
         self.lib.base_leds(self.now_ms(), leds)
         v = list(st)
         return {"live": v[0:3], "standby": v[3:6], "target": self.lib.base_target_name(v[6]).decode(),
                 "page": v[7], "locked": bool(v[8]), "preview": bool(v[9]), "latch": bool(v[10]), "diff": v[11],
-                "bri": v[12], "leds": {self.names[k]: "#%06x" % leds[k] for k in range(1, len(self.names))}}
+                "bri": v[12], "page_name": self.lib.base_page_name(v[7]).decode(), "layers": v[13:17],
+                "pal_name": self.lib.base_palette_name(v[13]).decode() if v[13] >= 0 else "",
+                "leds": {self.names[k]: "#%06x" % leds[k] for k in range(1, len(self.names))}}
 
     async def send(self, writer, msg):
         await send_to(writer, json.dumps({"base": msg}).encode(), 0x1)
@@ -333,6 +337,8 @@ class Base:
     async def message(self, writer, m):
         if "live" in m:            # what the page's WLED and eyes show: [body, eyes, fin preset, brightness, fin sensor]
             self.lib.base_set_live(*[int(x) for x in m["live"]])
+        if "layers" in m:          # WLED's layer slots: [body palette, fins palette, body layer, fins layer], -1 not known
+            self.lib.base_set_layers(*[int(x) for x in m["layers"]])
         if "key" in m and m["key"] in self.names:
             self.owner = writer
             n = self.lib.base_key(self.names.index(m["key"]), 1 if m.get("down") else 0, self.now_ms(), self.out)

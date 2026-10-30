@@ -36,6 +36,7 @@ typedef enum {
     NL_MSG_FIN_STATE = 11,  // whether the lights follow the fins, and the angles in use, WLED -> radio, 2 Hz
     NL_MSG_WLED_STREAM = 12, // how steadily a streamed picture arrives, WLED -> radio, 1 Hz
     NL_MSG_EYE_LOOK = 13,   // an eye look from a WLED preset, WLED -> leader eye (radio) -> port eye (cable)
+    NL_MSG_WLED_LAYERS = 14, // WLED's layer slots (nl_wled_layers_t), WLED -> radio, 2 Hz
 } nl_msg_type_t;
 
 typedef enum {
@@ -151,6 +152,8 @@ typedef enum {
     NL_OP_AUTO_CYCLE = 6,       // eyes: arg 1 = cycle presets by themselves, 0 = hold the current one
     NL_OP_REACTIVITY = 7,       // eyes: arg = nl_react_t
     NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
+    NL_OP_SLOT_LOOK = 9,        // WLED: arg = nl_slot_arg(slot, preset): the slot takes that preset's look and comes on; preset 0 switches it off
+    NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
 } nl_op_t;
 
 // NL_OP_PRESET_SET to WLED: arg | NL_PRESET_NO_EYES applies the preset to the
@@ -189,6 +192,8 @@ typedef enum {
     NL_BUMP_BLACKOUT = 2,   // everything off
     NL_BUMP_PRESET = 3,     // arg = preset number to show while held, 1-based on every
                             // receiver (WLED preset id; eye preset index + 1)
+    NL_BUMP_PALETTE = 4,    // WLED: arg = nl_slot_arg(slot, palette): that palette while held
+    NL_BUMP_LAYER = 5,      // WLED: arg = nl_slot_arg(slot, preset): the slot shows that preset's look while held
 } nl_bump_action_t;
 
 typedef enum {
@@ -226,6 +231,44 @@ void nl_bump_rx_init(nl_bump_rx_t *rx);
 nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_t now_ms);
 // Call regularly; returns NL_BUMP_EV_END when the active bump times out.
 nl_bump_event_t nl_bump_rx_tick(nl_bump_rx_t *rx, uint32_t now_ms);
+
+// ---------------------------------------------------------------- WLED layer slots
+// WLED 16 stacks overlapping segments; the Nibbles usermod keeps fixed ones as
+// layers, slot n being segment n (wled/README.md, "Layer slots"). Bumps on the
+// fin slots use NL_TARGET_FINS, the others NL_TARGET_WLED, so a fin bump and a
+// body bump can be held together.
+typedef enum {
+    NL_SLOT_BODY = 0,       // the body's look (body presets)
+    NL_SLOT_FINS = 1,       // the fin panel (fin presets)
+    NL_SLOT_BODY_OVER = 2,  // over the body (screen blend)
+    NL_SLOT_FINS_OVER = 3,  // over the fin panel
+    NL_SLOT_BUMP = 4,       // the whole grid: flash and blackout bumps
+    NL_SLOT_COUNT = 5,
+} nl_slot_t;
+
+// Layer looks for the overlay slots: WLED presets NL_LAYER_PRESET_BASE + n
+// (n 1..NL_LAYER_PRESET_COUNT), usually sparse, cheap effects.
+#define NL_LAYER_PRESET_BASE  100
+#define NL_LAYER_PRESET_COUNT 16
+
+// A slot and a value (preset 0..250 or palette 0..255) in one command or bump arg.
+static inline int16_t nl_slot_arg(uint8_t slot, uint8_t value) { return (int16_t)(((slot & 0x7F) << 8) | value); }
+static inline uint8_t nl_slot_arg_slot(int16_t arg) { return (uint8_t)((arg >> 8) & 0x7F); }
+static inline uint8_t nl_slot_arg_value(int16_t arg) { return (uint8_t)(arg & 0xFF); }
+
+typedef struct NL_PACKED {
+    uint8_t on;             // shown (an existing segment, switched on)
+    uint8_t look;           // the preset whose look it took last (0: none, or set directly)
+    uint8_t fx;
+    uint8_t palette;
+    uint8_t blend;          // WLED blend mode (0 top, 2 add, 10 screen, 16 stencil, ...)
+    uint8_t opacity;
+} nl_slot_state_t;
+
+typedef struct NL_PACKED {
+    uint8_t count;          // slots in use (NL_SLOT_COUNT; 0: no 2D map, no slots)
+    nl_slot_state_t slot[NL_SLOT_COUNT];
+} nl_wled_layers_t;
 
 // ---------------------------------------------------------------- eye looks
 // An eye look stored in a WLED preset ("nibbles":{"eyes":{"look":{..}}}):
