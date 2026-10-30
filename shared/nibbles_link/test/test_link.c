@@ -432,6 +432,66 @@ static void test_slot_arg(void)
           "layers message fits a radio packet (%u bytes)", (unsigned)sizeof(nl_wled_layers_t));
 }
 
+// A whole frame of LEDs through the wired pixel framing, a corrupt chunk on
+// the way, and the receiver putting the frame back together.
+static void test_pixels(void)
+{
+    enum { LEDS = 1064 };
+    static uint8_t rgb[LEDS * 3], got[LEDS * 3], wire[8 * NL_PIX_FRAME_MAX];
+    for (int i = 0; i < LEDS * 3; i++) rgb[i] = (uint8_t)(i * 7 + (i >> 8));  // includes zeros
+    size_t n = 0;
+    int chunks = 0;
+    for (unsigned start = 0; start < LEDS; start += NL_PIX_CHUNK_LEDS, chunks++) {
+        const unsigned c = LEDS - start < NL_PIX_CHUNK_LEDS ? LEDS - start : NL_PIX_CHUNK_LEDS;
+        const size_t k = nl_pix_encode(9, (uint16_t)start, LEDS, start + c >= LEDS, rgb + start * 3, c, wire + n, sizeof(wire) - n);
+        CHECK(k > 0 && k <= NL_PIX_FRAME_MAX, "pixel chunk %d encodes (%u bytes)", chunks, (unsigned)k);
+        n += k;
+    }
+    CHECK(chunks == 5 && n < LEDS * 3 + 5 * (NL_PIX_HEADER_LEN + 8), "1064 LEDs: 5 chunks, %u bytes on the wire", (unsigned)n);
+    int zeros = 0;
+    for (size_t i = 0; i < n; i++) zeros += !wire[i];
+    CHECK(zeros == chunks && !wire[n - 1], "the only 0x00s are the %d delimiters (%d)", chunks, zeros);
+
+    nl_pix_parser_t p;
+    nl_pix_parser_init(&p);
+    nl_pix_chunk_t ch;
+    int shown = 0;
+    memset(got, 0, sizeof(got));
+    wire[10] ^= 0x40;  // corrupt the first chunk
+    for (size_t i = 0; i < n; i++) {
+        if (!nl_pix_parse_byte(&p, wire[i], &ch)) continue;
+        memcpy(got + ch.start * 3, ch.rgb, ch.count * 3);
+        if (ch.flags & NL_PIX_LAST) shown++;
+        CHECK(ch.frame == 9 && ch.total == LEDS, "chunk header (frame %u, total %u)", ch.frame, ch.total);
+    }
+    CHECK(p.chunks == 4 && p.crc_errors + p.bad_chunks == 1 && p.frames == 1 && shown == 1,
+          "corrupt chunk dropped, the rest arrive (chunks %u, crc %u, bad %u)", (unsigned)p.chunks, (unsigned)p.crc_errors,
+          (unsigned)p.bad_chunks);
+    CHECK(memcmp(got + NL_PIX_CHUNK_LEDS * 3, rgb + NL_PIX_CHUNK_LEDS * 3, (LEDS - NL_PIX_CHUNK_LEDS) * 3) == 0,
+          "LEDs after the corrupt chunk match");
+    CHECK(got[0] == 0 && got[3] == 0, "the corrupt chunk's LEDs were left alone");
+
+    // Starting mid-chunk (receiver powered up late): resyncs on the next delimiter.
+    nl_pix_parser_init(&p);
+    wire[10] ^= 0x40;
+    int ok = 0;
+    for (size_t i = 100; i < n; i++) ok += nl_pix_parse_byte(&p, wire[i], &ch);
+    CHECK(ok == 4, "joining mid-stream: the next 4 chunks decode (%d)", ok);
+
+    // Bad arguments and a chunk that claims LEDs past the frame.
+    uint8_t one[NL_PIX_FRAME_MAX];
+    CHECK(nl_pix_encode(0, 0, 10, true, rgb, 0, one, sizeof(one)) == 0, "zero LEDs refused");
+    CHECK(nl_pix_encode(0, 5, 10, true, rgb, 6, one, sizeof(one)) == 0, "LEDs past the frame refused");
+    CHECK(nl_pix_encode(0, 0, 999, true, rgb, NL_PIX_CHUNK_LEDS + 1, one, sizeof(one)) == 0, "oversized chunk refused");
+    CHECK(nl_pix_encode(0, 0, 10, true, rgb, 10, one, NL_PIX_FRAME_MAX - 1) == 0, "small output buffer refused");
+    // A regular link frame on the pixel wire is not a chunk.
+    const size_t k = nl_encode(NL_MSG_HEARTBEAT, 1, rgb, 14, one, sizeof(one));
+    nl_pix_parser_init(&p);
+    ok = 0;
+    for (size_t i = 0; i < k; i++) ok += nl_pix_parse_byte(&p, one[i], &ch);
+    CHECK(ok == 0 && p.bad_chunks == 1, "a non-pixel frame is dropped");
+}
+
 int main(void)
 {
     srand(1);
@@ -448,6 +508,7 @@ int main(void)
     test_power_limiter();
     test_stream_gaps();
     test_slot_arg();
+    test_pixels();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

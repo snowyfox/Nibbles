@@ -146,13 +146,50 @@ preset picks which one it reacts to (`peak_beats`).
   `wled/README.md`, "Main board and display"): a faster WLED with PSRAM
   renders and streams every LED to the Bong69 controller, which only
   displays them. Clearly smoother (124 fps of rendering headroom vs 38) and
-  much more memory. Open: the main board (with WLED-supported Ethernet for a
-  short cable in the box, or Wi-Fi on the shark's own AP, which looked
-  stutter-free in the test), which board runs the access point and the radio
-  anchor (with Ethernet, the board whose AP runs keeps Wi-Fi; the other can
-  go wired-only), and moving the usermod's WLED side (telemetry, commands,
-  bumps, fin following) to the main board, keeping the current limit on
-  the display, which drives the LEDs.
+  much more memory. Decided since: the main board ("brain") is an ESP32-S3
+  in the controller's box, wired to the controller, and a second brain is planned (see
+  "Two brains and the Standby preview" below). Still open: which board runs
+  the access point and the radio anchor.
+
+## Two brains and the Standby preview (agreed 2026-10-30)
+The brain (an S3 at 42 fps on the 68 x 33 grid) is near its limit, and the
+base's Standby only shows names. Plan:
+- **Two identical brains, both in the controller's box** on top of the
+  pole, each wired to it (the one-way UART link: controller RX on GPIO 39 for brain A,
+  32 or 33 for brain B once the mic moves to a brain). Live frames never
+  cross the radio. The pole cable can't take a data pair (only room for the
+  two power conductors), so the brains can't sit in the base: Live would
+  have to go up the pole over Wi-Fi.
+- **Brain B renders Standby.** The base sends Standby preset, palette and
+  layer commands to it the same way it sends Live ones to brain A.
+- **The preview comes down over the radio, reduced**: one byte per LED
+  (8-bit colour, ~1 KB a frame), 10-15 fps, about 15 KB/s; dropped frames
+  don't matter for a preview. One ESP-NOW v2 packet per frame (1,470 bytes)
+  if both ends support v2, otherwise 5 packets of 250. The base draws it as
+  a side view of the shark in the Standby panel (172 px wide, about 85 tall),
+  from an LED position table generated from the same positions as the
+  simulator and `make_ledmap.py`. A live side view isn't wanted (look up).
+- **Later, A/B handover**: TAKE makes the controller switch (or crossfade)
+  from one brain's stream to the other's, and the roles swap. The next look
+  is already running, so effects that grow from black (fire) start warm, and
+  each brain runs one look instead of WLED running both during a transition.
+  The controller mixes two 1,064-LED streams, which is cheap. Presets must
+  stay in sync on both brains. Audio: one brain has the mic and sends WLED's
+  audio sync to the other (or each has its own mic).
+- **Order**: (1) the wired brain-to-controller link (usermod and protocol
+  built 2026-10-30, `wled/README.md` "Wire link"; sending and decoding tested
+  on the bench, the controller receiving over a real wire not yet),
+  (2) brain B in the controller's box with the radio preview and the Standby
+  side view, (3) the A/B handover, probably after the festival.
+- **Brain board**: an ESP32-S3 with 16 MB flash and 8 MB octal PSRAM
+  (S3R8 or N16R8), the same memory as the 3.49, so the same WLED build runs
+  with only pin changes. They sit with the controller in the 3D-printed box
+  at the top of the pole (the shark plugs into it with a 24-pin connector),
+  about 3 m from the base through plastic, so an on-board antenna is enough
+  (the controller's is, today); keep its end clear of wires and metal.
+  Ordered 2026-10-30: 3 Waveshare ESP32-S3-DEV-KIT-N16R8 (no headers),
+  WLED env `nibbles_brain_s3`. Not the ESP32-P4: no radio of its own, and
+  WLED 16.0.1 doesn't build for it (assessed 2026-10-29).
 
 ## Top-of-pole wiring (planned 2026-09-27)
 The WLED controller sits in a weatherproof box on top of the pole; the eyes

@@ -98,8 +98,12 @@ eyes and base (`shared/nibbles_link`).
   by tapping the board: the level rose from 4-14% to 40-72% with automatic
   gain off. The level from music is low (about 10% before the automatic
   gain); squelch 3 and AGC "vivid" work.
+- **Wire link** (`wire_pin`, `wire_baud`): the brain sends every LED down a
+  UART wire to the controller, which shows it like a stream; see "Wire link"
+  under "Main board and display".
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
-  (default off).
+  (default off), `wire_pin` (default -1, off) and `wire_baud` (default
+  2000000).
 
 ## 2D map
 `wled/ledmap/ledmap.json` (made by `tools/sim/make_ledmap.py` from the
@@ -369,6 +373,47 @@ Access point notes:
   (REVERT.md: ledmap back), `20261023-2323-pre-ap-test/` (both boards'
   Wi-Fi), `20261023-*-pre-stream-gaps/` (before the stall counter build).
 
+### Wire link (built 2026-10-30; sending tested, receiving not yet)
+The plan (`docs/architecture.md`, "Two brains and the Standby preview") puts
+the brains in the controller's box on top of the pole, each wired to the
+controller, so the picture never crosses the air.
+
+- **Brain:** set `wire_pin` to its TX pin (`{"um":{"Nibbles":{"wire_pin":17}}}`
+  on a `nibbles_brain_s3` board). Every frame WLED shows, the usermod sends
+  what its **network LED output** would send (that output's buffer, at the
+  brightness it applies) out of the pin, in `nl_pix_*` chunks (256 LEDs each,
+  COBS + CRC-16; `shared/nibbles_link`), at 2 Mbaud. 1064 LEDs is 3,257 bytes
+  a frame, 16 ms on the wire, so up to ~60 fps. While nothing new is shown
+  (off, frozen) it resends every 200 ms, so the controller doesn't time out.
+  The network output stays configured (it defines the LEDs): point it at
+  `0.0.0.0` to send nothing over Wi-Fi (WLED skips the send), or leave it on
+  the controller as a Wi-Fi backup (both arrive; the controller shows
+  whichever came last, the same picture).
+- **Controller:** with `display` on, `wire_pin` is its RX pin: GPIO 39 on the
+  Bong69's mic header (input only, so a 10 kOhm pull-up to the header's 3.3 V;
+  no internal pull-up). Chunks go into WLED's realtime path like DDP
+  (`realtimeLock`, `setRealtimePixel`, shown on the last chunk), so the
+  realtime timeout, the current limiter and the stall counter keep working.
+  A corrupt chunk only costs its own LEDs for one frame.
+- **Wiring:** data and GND only, never 3.3 V or 5 V between the boards.
+- **Info page** ("Nibbles wire"): on the brain, fps, LEDs and the time
+  sending takes; on the controller, fps and, since boot, frames, lost frames,
+  partial frames, CRC errors and bad chunks.
+- **Measured** on the bench brain (3.49, sending on GPIO 2, 1064 LEDs):
+  - **Cost:** 1.0 ms a frame (0.3 gathering, 0.6 encoding, 0.15 handing to
+    the UART driver). The frame rate stayed at 43 at the 42 cap, and the
+    heavy DreamState Clouds went from 24 to 23 fps. With the bitwise CRC it
+    was 1.8 ms, so `nl_crc16` now uses a table (same values; the eyes and base
+    use it too).
+  - **Receiving:** a temporary loopback test, with a second UART on the brain
+    listening on the same pin. With the UART driver's default (an interrupt
+    when the 128-byte FIFO holds 120 bytes, 40 us before it overflows at
+    2 Mbaud), about 1 chunk in 1500 was lost to Wi-Fi interrupt delays. With
+    the receiver emptying it from 32 bytes: 0 lost, partial or corrupt in
+    7,200 frames, also at 22 fps on a heavy preset. The receiver uses 32.
+  - **Not yet tested:** the controller (classic ESP32) receiving over a real
+    wire. Needs a brain board with reachable pins (the DevKits are ordered).
+
 ## Lean build
 `nibbles_shark` leaves out features the shark doesn't use: Ethernet (it runs
 on Wi-Fi; Ethernet was already off in its config), Alexa, Hue sync, MQTT,
@@ -398,6 +443,11 @@ NIBBLES_ROOT=/Volumes/Code/Nibbles pio run -e nibbles_dev_s3_349 -t upload --upl
   button on BOOT (GPIO 0), no relay or IR, `NIBBLES_DEBUG` on (a status line
   over USB serial every 5 s, and one per command). AudioReactive is included
   (WLED's default for this env), with the board's own mic (`NIBBLES_ES7210`).
+- `nibbles_brain_s3`: a brain on a Waveshare ESP32-S3-DEV-KIT-N16R8
+  (16 MB flash, 8 MB octal PSRAM, on-board antenna): wire link TX on GPIO 17,
+  an I2S mic (e.g. INMP441) on SD 4, WS 5, SCK 6 as AudioReactive's default,
+  the board's RGB LED (GPIO 38) as the default LED output. Built, not yet run
+  (the boards are on order).
 - `nibbles_shark`: the real controller (below).
 - `nibbles_shark_eth`: `nibbles_shark` with Ethernet (the WT32-ETH01's
   LAN8720), for a wired stream from a main board. Built, not installed. WLED

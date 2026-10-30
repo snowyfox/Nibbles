@@ -69,6 +69,12 @@
 // - Streamed pictures: while this WLED shows another WLED's stream (DDP etc.,
 //   e.g. from a faster main board), it times the gaps between packets and
 //   reports stalls on the Info page and to the base (NL_MSG_WLED_STREAM, 1 Hz).
+// - Wire link (setting "wire_pin"): the brain sends every LED, as its network
+//   LED output would send it, out of a UART pin (nl_pix_* chunks, 2 Mbaud);
+//   the display receives on its pin and shows the frames as a realtime
+//   stream, so the picture doesn't cross the air. The brain's network output
+//   can point at 0.0.0.0 (nothing sent) or stay on the display as a Wi-Fi
+//   backup. Counters on the Info page ("Nibbles wire").
 // - ES7210 mic chip (builds with NIBBLES_ES7210, e.g. the Waveshare 3.49 dev
 //   node): AudioReactive can't set this chip up, so the usermod does, over
 //   I2C, once AudioReactive's I2S clocks run. Then AudioReactive reads it as
@@ -87,6 +93,8 @@
 #include "wled.h"
 #include "nibbles_link.h"
 #include <esp_now.h>
+#include <driver/uart.h>
+#include <driver/gpio.h>
 #include <map>
 #ifdef NIBBLES_ES7210
 #include <Wire.h>
@@ -105,6 +113,11 @@
 #define MIRROR_MIN_MS          20     // at most 50 frames a second to the simulator
 #define MIRROR_MAX_S           30     // a mirror request lasts at most this long
 #define DDP_MAX_LEDS           480    // LEDs per DDP packet (1440 bytes of RGB)
+#define WIRE_UART              UART_NUM_1
+#define WIRE_TX_BUF            8192   // a whole frame of 1064 LEDs is ~3.3 KB encoded
+#define WIRE_RX_BUF            8192   // ~40 ms at 2 Mbaud, for loop() hiccups
+#define WIRE_READ              512
+#define WIRE_KEEPALIVE_MS      200    // resend while WLED shows nothing new (off, frozen)
 
 #ifdef NIBBLES_ES7210
 // The ES7210 4-channel mic ADC, as a slave to the ESP32's I2S clocks (MCLK =
@@ -245,6 +258,24 @@ class NibblesUsermod : public Usermod {
     uint8_t ddpBuf[10 + DDP_MAX_LEDS * 3];
     uint8_t *mirrorRgb = nullptr;  // one frame by physical LED (in 2D, cells are not LEDs)
     unsigned mirrorRgbLeds = 0;
+
+    // Wire link: TX on the brain, RX on the display (wireRx), on one UART.
+    int8_t wirePin = -1;                 // setting; -1 = off
+    uint32_t wireBaud = NL_PIX_BAUD;     // setting
+    int8_t wirePinUp = -1;               // the pin the UART runs on now
+    uint32_t wireBaudUp = 0;
+    bool wireRx = false, wireRecheck = true;
+    const char *wireNote = "";           // why it isn't running, for the Info page
+    volatile bool frameShown = false;    // WLED showed a frame since we last sent one
+    uint8_t *wireBuf = nullptr;          // one encoded chunk (TX) or a read block (RX)
+    nl_pix_parser_t *wireParser = nullptr;
+    uint8_t wireFrame = 0;
+    int wirePrevFrame = -1, wireCurFrame = -1;
+    unsigned wireCurLeds = 0, wireLeds = 0;
+    uint32_t wireFrames = 0, wireLost = 0, wirePartial = 0, wireFpsCount = 0;
+    uint16_t wireFps = 0;
+    uint32_t wireUs = 0, wireUsN = 0;    // time spent sending, for the Info page
+    unsigned long wireLastAt = 0, wireFpsAt = 0;
 
     // 2D map partners: "copy" ranges from /ledmap.json ([dst, dst count,
     // src, src count], physical LED numbers), turned into matrix cell pairs.
@@ -944,6 +975,176 @@ class NibblesUsermod : public Usermod {
       sendMirrorState(now);
     }
 
+    // ---- wire link
+    void wireStop() {
+      if (wirePinUp >= 0) {
+        uart_driver_delete(WIRE_UART);
+        PinManager::deallocatePin(wirePinUp, PinOwner::UM_Unspecified);
+      }
+      free(wireBuf); wireBuf = nullptr;
+      free(wireParser); wireParser = nullptr;
+      wirePinUp = -1;
+    }
+
+    void wireStart() {
+      wireRx = display;
+      wireNote = "";
+      if (wirePin < 0) { wireNote = "off"; return; }
+      if (!PinManager::allocatePin(wirePin, !wireRx, PinOwner::UM_Unspecified)) { wireNote = "pin in use or not usable"; return; }
+      uart_config_t cfg = {};
+      cfg.baud_rate = (int)wireBaud;
+      cfg.data_bits = UART_DATA_8_BITS;
+      cfg.parity = UART_PARITY_DISABLE;
+      cfg.stop_bits = UART_STOP_BITS_1;
+      cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+      cfg.source_clk = UART_SCLK_APB;
+      wireBuf = (uint8_t *)malloc(wireRx ? WIRE_READ : NL_PIX_FRAME_MAX);
+      if (wireRx) wireParser = (nl_pix_parser_t *)malloc(sizeof(nl_pix_parser_t));
+      if (!wireBuf || (wireRx && !wireParser) ||
+          uart_driver_install(WIRE_UART, wireRx ? WIRE_RX_BUF : 256, wireRx ? 0 : WIRE_TX_BUF, 0, nullptr, 0) != ESP_OK) {
+        PinManager::deallocatePin(wirePin, PinOwner::UM_Unspecified);
+        free(wireBuf); wireBuf = nullptr; free(wireParser); wireParser = nullptr;
+        wireNote = "no memory or UART";
+        return;
+      }
+      uart_param_config(WIRE_UART, &cfg);
+      if (wireRx) {
+        uart_set_pin(WIRE_UART, UART_PIN_NO_CHANGE, wirePin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        // Empty the 128-byte FIFO from 32 bytes, not the driver's 120: at 2 Mbaud
+        // 8 bytes is 40 us, and Wi-Fi interrupts held it up longer than that
+        // (~1 chunk in 1500 lost on a bench loopback; none at 32).
+        uart_set_rx_full_threshold(WIRE_UART, 32);
+        // An idle line is high; hold it there while the brain is unplugged
+        // (input-only pins like the controller's GPIO 39 need a resistor instead).
+        if (GPIO_IS_VALID_OUTPUT_GPIO(wirePin)) gpio_pullup_en((gpio_num_t)wirePin);
+        nl_pix_parser_init(wireParser);
+      } else {
+        uart_set_pin(WIRE_UART, wirePin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+      }
+      wirePinUp = wirePin;
+      wireBaudUp = wireBaud;
+      wirePrevFrame = wireCurFrame = -1;
+      wireCurLeds = 0;
+      wireLastAt = 0;
+    }
+
+    // The LEDs as WLED's network output sends them: its buffer, scaled by
+    // the brightness it applies when sending.
+    Bus *wireSourceBus() {
+      for (size_t i = 0; i < BusManager::getNumBusses(); i++) {
+        Bus *b = BusManager::getBus(i);
+        if (b && b->isOk() && b->isVirtual()) return b;
+      }
+      return nullptr;
+    }
+
+    void wireSend(unsigned long now) {
+      if (!frameShown && now - wireLastAt < WIRE_KEEPALIVE_MS) return;
+      if (uart_wait_tx_done(WIRE_UART, 0) != ESP_OK) return;  // the last frame is still going out; send the newest when it's done
+      Bus *bus = wireSourceBus();
+      if (!bus) { wireNote = "no network LED output to copy"; wireLeds = 0; return; }
+      wireNote = "";
+      frameShown = false;
+      wireLastAt = now;
+      const uint32_t t0 = micros();
+      const unsigned total = min((unsigned)bus->getLength(), 65535u);
+      const uint8_t b = scaledBri(strip.getBrightness());
+      uint8_t rgb[NL_PIX_CHUNK_LEDS * 3];
+      for (unsigned start = 0; start < total; start += NL_PIX_CHUNK_LEDS) {
+        const unsigned n = min((unsigned)NL_PIX_CHUNK_LEDS, total - start);
+        for (unsigned i = 0; i < n; i++) {
+          const uint32_t c = bus->getPixelColor(start + i);
+          rgb[i * 3] = scale8(R(c), b);
+          rgb[i * 3 + 1] = scale8(G(c), b);
+          rgb[i * 3 + 2] = scale8(B(c), b);
+        }
+        const size_t len = nl_pix_encode(wireFrame, start, total, start + n >= total, rgb, n, wireBuf, NL_PIX_FRAME_MAX);
+        if (len) uart_write_bytes(WIRE_UART, (const char *)wireBuf, len);
+      }
+      wireUs += micros() - t0;
+      wireUsN++;
+      wireFrame++;
+      wireFrames++;
+      wireFpsCount++;
+      wireLeds = total;
+    }
+
+    void wireChunk(const nl_pix_chunk_t &ch, unsigned long now) {
+      if (wireLastAt && now - wireLastAt > 1000) wirePrevFrame = -1;  // the brain restarted or was unplugged: start counting afresh
+      wireLastAt = now;
+      if (ch.frame != wireCurFrame) { wireCurFrame = ch.frame; wireCurLeds = 0; }
+      wireCurLeds += ch.count;
+      realtimeLock(realtimeTimeoutMs, REALTIME_MODE_DDP);
+      if (!realtimeOverride)
+        for (unsigned i = 0; i < ch.count; i++)
+          setRealtimePixel(ch.start + i, ch.rgb[i * 3], ch.rgb[i * 3 + 1], ch.rgb[i * 3 + 2], 0);
+      if (!(ch.flags & NL_PIX_LAST)) return;
+      e131NewData = true;  // WLED shows it from handleNotifications(), as for a DDP push
+      if (wireCurLeds < ch.total) wirePartial++;
+      if (wirePrevFrame >= 0) wireLost += (uint8_t)(ch.frame - wirePrevFrame - 1);
+      wirePrevFrame = ch.frame;
+      wireCurFrame = -1;
+      wireLeds = ch.total;
+      wireFrames++;
+      wireFpsCount++;
+    }
+
+    void wireReceive(unsigned long now) {
+      size_t avail = 0;
+      uart_get_buffered_data_len(WIRE_UART, &avail);
+      while (avail) {
+        const int n = uart_read_bytes(WIRE_UART, wireBuf, min(avail, (size_t)WIRE_READ), 0);
+        if (n <= 0) break;
+        avail -= min(avail, (size_t)n);
+        for (int i = 0; i < n; i++) {
+          nl_pix_chunk_t ch;
+          if (nl_pix_parse_byte(wireParser, wireBuf[i], &ch)) wireChunk(ch, now);
+        }
+      }
+    }
+
+    void wireLoop() {
+      if (wireRecheck || wirePin != wirePinUp || display != wireRx || (wirePinUp >= 0 && wireBaud != wireBaudUp)) {
+        wireRecheck = false;
+        wireStop();
+        wireStart();
+      }
+      const unsigned long now = millis();
+      if (now - wireFpsAt >= 1000) {
+        wireFps = wireFpsCount * 1000 / max(1UL, now - wireFpsAt);
+        wireFpsCount = 0;
+        wireFpsAt = now;
+      }
+      if (wirePinUp < 0) return;
+      if (wireRx) wireReceive(now);
+      else wireSend(now);
+    }
+
+    void wireInfo(JsonObject &user) {
+      if (wirePin < 0 && wirePinUp < 0) return;
+      JsonArray wa = user.createNestedArray(F("Nibbles wire"));
+      char buf[160];
+      if (wirePinUp < 0) {
+        snprintf(buf, sizeof(buf), "GPIO %d: %s", wirePin, wireNote);
+      } else if (wireRx) {
+        const unsigned long ago = wireLastAt ? millis() - wireLastAt : 0;
+        int n = snprintf(buf, sizeof(buf), "in on GPIO %d at %lu baud: ", wirePinUp, (unsigned long)wireBaudUp);
+        if (!wireLastAt) n += snprintf(buf + n, sizeof(buf) - n, "nothing yet; ");
+        else if (ago > 1000) n += snprintf(buf + n, sizeof(buf) - n, "nothing for %lu s; ", ago / 1000);
+        else n += snprintf(buf + n, sizeof(buf) - n, "%u fps, %u LEDs; ", wireFps, wireLeds);
+        snprintf(buf + n, sizeof(buf) - n, "since boot %lu frames, %lu lost, %lu partial, %lu CRC errors, %lu bad",
+                 (unsigned long)wireFrames, (unsigned long)wireLost, (unsigned long)wirePartial,
+                 (unsigned long)wireParser->crc_errors, (unsigned long)wireParser->bad_chunks);
+      } else if (wireNote[0]) {
+        snprintf(buf, sizeof(buf), "out on GPIO %d: %s", wirePinUp, wireNote);
+      } else {
+        snprintf(buf, sizeof(buf), "out on GPIO %d at %lu baud: %u fps, %u LEDs, %.2f ms a frame (%lu frames since boot)", wirePinUp,
+                 (unsigned long)wireBaudUp, wireFps, wireLeds, wireUsN ? wireUs / 1000.0f / wireUsN : 0.0f, (unsigned long)wireFrames);
+        wireUs = wireUsN = 0;
+      }
+      wa.add(buf);
+    }
+
     bool radioUp() const { return enabled && enableESPNow && statusESPNow == ESP_NOW_STATE_ON; }
 
     // Sent straight through ESP-IDF, not quickEspNow.send(): WLED starts
@@ -1501,6 +1702,7 @@ class NibblesUsermod : public Usermod {
                              strip.isMatrix != copyBuiltMatrix || (!copyPairCount && millis() - copyBuiltAt > 5000)))
         buildCopyPairs();
       streamLoop();  // also without the radio, for the Info page
+      wireLoop();    // likewise
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
       presetQueueLoop(millis());
@@ -1563,6 +1765,7 @@ class NibblesUsermod : public Usermod {
 
     // Called by WLED after the frame is put together, before it goes to the LEDs.
     void handleOverlayDraw() override {
+      frameShown = true;  // for the wire link
       if (!strip.isMatrix) return;
       finPanelOn = panelSegmentOn();
       gatherFinColors();
@@ -1618,6 +1821,7 @@ class NibblesUsermod : public Usermod {
           sa.add(buf);
         }
       }
+      wireInfo(user);
 #ifdef NIBBLES_ES7210
       {
         JsonArray mic = user.createNestedArray(F("Nibbles mic (ES7210)"));
@@ -1775,6 +1979,8 @@ class NibblesUsermod : public Usermod {
       top[F("wire_mohm")] = powerModel.wire_mohm;  // pole wiring, there and back
       top[F("conv_eff")] = powerModel.efficiency_pct;
       top[F("fin_follow")] = finFollowOn;          // fin LEDs follow the fins' angle
+      top[F("wire_pin")] = wirePin;                // wire link: TX on the brain, RX on the display; -1 = off
+      top[F("wire_baud")] = wireBaud;
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -1793,6 +1999,10 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("wire_mohm")], powerModel.wire_mohm, def.wire_mohm);
       complete &= getJsonValue(top[F("conv_eff")], powerModel.efficiency_pct, def.efficiency_pct);
       complete &= getJsonValue(top[F("fin_follow")], finFollowOn, true);
+      complete &= getJsonValue(top[F("wire_pin")], wirePin, (int8_t)-1);
+      complete &= getJsonValue(top[F("wire_baud")], wireBaud, (uint32_t)NL_PIX_BAUD);
+      if (wireBaud < 9600 || wireBaud > 5000000) wireBaud = NL_PIX_BAUD;
+      wireRecheck = true;
       nl_power_limiter_init(&power, &powerModel);  // new settings: start over (readings arrive several times a second)
       powerApplied = 0;
       return complete;

@@ -37,6 +37,7 @@ typedef enum {
     NL_MSG_WLED_STREAM = 12, // how steadily a streamed picture arrives, WLED -> radio, 1 Hz
     NL_MSG_EYE_LOOK = 13,   // an eye look from a WLED preset, WLED -> leader eye (radio) -> port eye (cable)
     NL_MSG_WLED_LAYERS = 14, // WLED's layer slots (nl_wled_layers_t), WLED -> radio, 2 Hz
+    NL_MSG_PIXELS = 15,     // a chunk of LED colours, brain -> controller over a wire (nl_pix_*)
 } nl_msg_type_t;
 
 typedef enum {
@@ -543,6 +544,57 @@ bool nl_parse_byte(nl_parser_t *p, uint8_t byte, nl_frame_t *out);
 
 // CRC-16/CCITT-FALSE, exposed for tests.
 uint16_t nl_crc16(const uint8_t *data, size_t len);
+
+// COBS, shared by both wired framings. Encode needs len + len / 254 + 1
+// bytes of out; decode returns the decoded length, or 0 if malformed.
+size_t nl_cobs_encode(const uint8_t *in, size_t len, uint8_t *out);
+size_t nl_cobs_decode(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
+
+// ---------------------------------------------------------------- wired pixels
+// The brain sends every LED, as the LEDs show it (brightness applied), to the
+// controller over a one-way UART (data + GND, a short wire in the box on top
+// of the pole). The controller shows it as a realtime stream, like DDP over
+// Wi-Fi, but nothing crosses the air. A frame goes as chunks of at most
+// NL_PIX_CHUNK_LEDS LEDs, each a wired frame of its own:
+//   COBS( NL_MSG_PIXELS | version | frame | flags | start (LE16) | total (LE16) | RGB... | CRC-16 (LE) ) 0x00
+// so a corrupt chunk only costs its own LEDs for one frame. NL_PIX_LAST marks
+// a frame's last chunk: show it now. 1064 LEDs at 42 fps is ~135 KB/s, so the
+// default 2 Mbaud (~200 KB/s) leaves room up to ~60 fps.
+
+#define NL_PIX_CHUNK_LEDS   256
+#define NL_PIX_HEADER_LEN   8
+#define NL_PIX_RAW_MAX      (NL_PIX_HEADER_LEN + NL_PIX_CHUNK_LEDS * 3 + NL_CRC_LEN)
+#define NL_PIX_FRAME_MAX    (NL_PIX_RAW_MAX + NL_PIX_RAW_MAX / 254 + 2)  // COBS overhead + delimiter
+#define NL_PIX_LAST         0x01
+#define NL_PIX_BAUD         2000000
+
+// Encode one chunk: leds (1..NL_PIX_CHUNK_LEDS) LEDs of RGB starting at LED
+// start of a frame of total LEDs. out needs NL_PIX_FRAME_MAX bytes. Returns
+// the number of bytes, or 0 if the arguments don't fit.
+size_t nl_pix_encode(uint8_t frame, uint16_t start, uint16_t total, bool last,
+                     const uint8_t *rgb, size_t leds, uint8_t *out, size_t cap);
+
+typedef struct {
+    uint8_t frame, flags;
+    uint16_t start, total, count;   // count LEDs from start; start + count <= total
+    const uint8_t *rgb;             // count * 3 bytes, valid until the next nl_pix_parse_byte call
+} nl_pix_chunk_t;
+
+typedef struct {
+    uint8_t buf[NL_PIX_FRAME_MAX];
+    size_t n;
+    bool overflow;
+    uint8_t dec[NL_PIX_RAW_MAX];
+    uint32_t chunks, frames, crc_errors, bad_chunks;  // frames: last chunks received
+} nl_pix_parser_t;
+
+void nl_pix_parser_init(nl_pix_parser_t *p);
+
+// Feed one received byte. Returns true when a complete, valid chunk has been
+// decoded into *out. Anything else (corrupt, wrong type or version, LEDs
+// outside the frame) is counted and dropped; the parser resynchronises on
+// the next 0x00.
+bool nl_pix_parse_byte(nl_pix_parser_t *p, uint8_t byte, nl_pix_chunk_t *out);
 
 #ifdef __cplusplus
 }
