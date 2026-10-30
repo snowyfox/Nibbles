@@ -3,7 +3,8 @@
 Physical buttons for the base station, replacing the 3.49's touch screen as
 the main input (see `firmware/base/`). Three small 2-layer boards, made by
 `tools/hardware/make_keypad_kicad.py` (run with KiCad's Python; see its
-header). Every part is placed; **nothing is routed yet**. Once a board has
+header). `key_upper` is laid out and routed (DRC clean apart from
+silkscreen); `key_column` and `key_hub` are placed but not routed yet. Once a board has
 been edited in KiCad, edit it there, not by rerunning the script, which
 overwrites the project.
 
@@ -56,9 +57,8 @@ Pins 1-6 are the power board's GH6 keypad pinout (J9, J11).
   sockets** on the back, 16 mm pitch in a single column. Box housings are
   15.6 mm square, so a 14 mm plate cutout leaves a 2 mm web between keys.
   No keycaps assumed: the custom rockers press the stems directly.
-- The LED sits on the switch's LED-window side (opposite the pins, as on
-  Cherry MX). **Check that against a real Box Navy before ordering**; if
-  the window is on the other side, rotate the switch footprints 180 degrees.
+- The LED sits on the switch's LED-window side, opposite the two metal
+  pins (checked on a real Box Navy, 2026-10-29).
 - Everything is on the back: one-sided assembly, hand-solderable (0603,
   TSSOP-16, the LED's 4 pads). The front only has the switch holes.
 - M2 holes at both ends.
