@@ -1,0 +1,217 @@
+fx,name,fps_on_70x41_body,extra_ms_per_frame,tier,spin_up
+0,Solid,98.0,0.1,cheap,instant
+1,Blink,99.0,0,cheap,sparse
+2,Breathe,73.0,3.5,medium,instant
+3,Wipe,73.0,3.5,medium,instant
+4,Wipe Random,74.0,3.4,medium,instant
+5,Random Colors,97.5,0.1,cheap,instant
+6,Sweep,73.0,3.5,medium,instant
+7,Dynamic,75.5,3.1,medium,instant
+8,Colorloop,98.5,0.0,cheap,instant
+9,Rainbow,74.0,3.4,medium,instant
+10,Scan,92.5,0.7,cheap,instant
+11,Scan Dual,86.0,1.5,cheap,instant
+12,Fade,73.0,3.5,medium,~1.3 s
+13,Theater,75.0,3.2,medium,instant
+14,Theater Rainbow,87.0,1.3,cheap,instant
+15,Running,63.0,5.7,medium,instant
+16,Saw,61.0,6.2,heavy,instant
+17,Twinkle,103.0,0,cheap,sparse
+18,Dissolve,86.5,1.4,cheap,instant
+19,Dissolve Rnd,86.5,1.4,cheap,instant
+20,Sparkle,75.5,3.1,medium,instant
+21,Sparkle Dark,75.0,3.2,medium,instant
+22,Sparkle+,75.0,3.2,medium,instant
+23,Strobe,101.0,0,cheap,sparse
+24,Strobe Rainbow,101.5,0,cheap,sparse
+25,Strobe Mega,75.0,3.2,medium,instant
+26,Blink Rainbow,101.0,0,cheap,instant
+27,Android,102.0,0,cheap,instant
+28,Chase,73.0,3.5,medium,instant
+29,Chase Random,87.5,1.3,cheap,instant
+30,Chase Rainbow,94.5,0.4,cheap,instant
+31,Chase Flash,75.0,3.2,medium,instant
+32,Chase Flash Rnd,109.0,0,cheap,sparse
+33,Rainbow Runner,93.5,0.5,cheap,instant
+34,Colorful,87.5,1.3,cheap,instant
+35,Traffic Light,72.0,3.7,medium,instant
+36,Sweep Random,73.0,3.5,medium,instant
+37,Chase 2,74.0,3.4,medium,instant
+38,Aurora,38.0,16.2,very heavy,~5.3 s
+39,Stream,75.0,3.2,medium,instant
+40,Scanner,87.5,1.3,cheap,~0.2 s
+41,Lighthouse,87.0,1.3,cheap,~0.3 s
+42,Fireworks,81.0,2.2,medium,sparse
+43,Rain,102.0,0,cheap,sparse
+44,Tetrix,101.0,0,cheap,~2.1 s
+45,Fire Flicker,102.5,0,cheap,instant
+46,Gradient,70.5,4.0,medium,instant
+47,Loading,72.0,3.7,medium,instant
+48,Rolling Balls,101.0,0,cheap,instant
+49,Fairy,59.5,6.7,heavy,instant
+50,Two Dots,92.0,0.7,cheap,instant
+51,Fairytwinkle,68.0,4.6,medium,instant
+52,Running Dual,48.0,10.7,heavy,instant
+53,Image,111.5,0,cheap,sparse
+54,Chase 3,82.0,2.0,medium,instant
+55,Tri Wipe,71.5,3.8,medium,varies (pattern or music)
+56,Tri Fade,73.0,3.5,medium,instant
+57,Lightning,101.5,0,cheap,sparse
+58,ICU,103.0,0,cheap,sparse
+59,Multi Comet,109.0,0,cheap,sparse
+60,Scanner Dual,86.0,1.5,cheap,~0.2 s
+61,Stream 2,78.0,2.7,medium,instant
+62,Oscillate,82.0,2.0,medium,instant
+63,Pride 2015,55.0,8.0,heavy,instant
+64,Juggle,101.5,0,cheap,sparse
+65,Palette,68.5,4.4,medium,instant
+66,Fire 2012,58.0,7.1,heavy,~0.4 s
+67,Colorwaves,56.0,7.7,heavy,instant
+68,Bpm,76.5,2.9,medium,instant
+69,Fill Noise,66.0,5.0,medium,instant
+70,Noise 1,35.0,18.4,very heavy,instant
+71,Noise 2,46.0,11.6,heavy,instant
+72,Noise 3,46.0,11.6,heavy,instant
+73,Noise 4,66.0,5.0,medium,instant
+74,Colortwinkles,91.5,0.8,cheap,instant
+75,Lake,64.0,5.5,medium,instant
+76,Meteor,80.5,2.3,medium,instant
+77,Copy Segment,57.5,7.2,heavy,sparse
+78,Railway,78.0,2.7,medium,instant
+79,Ripple,96.5,0.2,cheap,sparse
+80,Twinklefox,67.0,4.8,medium,instant
+81,Twinklecat,68.0,4.6,medium,instant
+82,Halloween Eyes,103.0,0,cheap,sparse
+83,Solid Pattern,84.5,1.7,cheap,instant
+84,Solid Pattern Tri,88.5,1.1,cheap,instant
+85,Spots,83.0,1.9,cheap,instant
+86,Spots Fade,81.0,2.2,medium,instant
+87,Glitter,76.0,3.0,medium,instant
+88,Candle,89.5,1.0,cheap,~0.2 s
+89,Fireworks Starburst,82.0,2.0,medium,instant
+90,Fireworks 1D,104.5,0,cheap,sparse
+91,Bouncing Balls,91.0,0.8,cheap,instant
+92,Sinelon,89.0,1.1,cheap,~0.3 s
+93,Sinelon Dual,86.0,1.5,cheap,~0.3 s
+94,Sinelon Rainbow,88.0,1.2,cheap,~0.4 s
+95,Popcorn,99.5,0,cheap,sparse
+96,Drip,94.5,0.4,cheap,instant
+97,Plasma,40.0,14.8,heavy,instant
+98,Percent,77.5,2.8,medium,instant
+99,Ripple Rainbow,94.0,0.5,cheap,sparse
+100,Heartbeat,101.5,0,cheap,instant
+101,Pacifica,11.0,80.8,very heavy,~1.0 s
+102,Candle Multi,76.0,3.0,medium,instant
+103,Solid Glitter,97.0,0.2,cheap,instant
+104,Sunrise,81.5,2.1,medium,sparse
+105,Phased,68.0,4.6,medium,instant
+106,Twinkleup,60.5,6.4,heavy,instant
+107,Noise Pal,66.0,5.0,medium,instant
+108,Sine,69.0,4.3,medium,instant
+109,Phased Noise,63.5,5.6,medium,instant
+110,Flow,101.5,0,cheap,instant
+111,Chunchun,88.5,1.1,cheap,instant
+112,Dancing Shadows,97.0,0.2,cheap,sparse
+113,Washing Machine,67.0,4.8,medium,instant
+114,Rotozoomer,51.5,9.3,heavy,instant
+115,Blends,84.0,1.8,cheap,instant
+116,TV Simulator,87.0,1.3,cheap,instant
+117,Dynamic Smooth,64.0,5.5,medium,~0.3 s
+118,Spaceships,77.0,2.8,medium,sparse
+119,Crazy Bees,101.0,0,cheap,sparse
+120,Ghost Rider,77.0,2.8,medium,instant
+121,Blobs,80.0,2.3,medium,instant
+122,Scrolling Text,103.0,0,cheap,sparse
+123,Drift Rose,79.0,2.5,medium,instant
+124,Distortion Waves,28.0,25.6,very heavy,instant
+125,Soap,42.0,13.7,heavy,instant
+126,Octopus,66.0,5.0,medium,instant
+127,Waving Cell,60.0,6.5,heavy,instant
+128,Pixels,95.0,0.4,cheap,instant
+129,Pixelwave,92.5,0.7,cheap,varies (pattern or music)
+130,Juggles,102.5,0,cheap,sparse
+131,Matripix,94.0,0.5,cheap,varies (pattern or music)
+132,Gravimeter,59.0,6.8,heavy,varies (pattern or music)
+133,Plasmoid,46.0,11.6,heavy,instant
+134,Puddles,106.0,0,cheap,sparse
+135,Midnoise,80.0,2.3,medium,instant
+136,Noisemeter,70.5,4.0,medium,instant
+137,Freqwave,95.0,0.4,cheap,~0.4 s
+138,Freqmatrix,109.0,0,cheap,~2.4 s
+139,GEQ,91.5,0.8,cheap,instant
+140,Waterfall,94.0,0.5,cheap,~2.2 s
+141,Freqpixels,109.0,0,cheap,sparse
+143,Noisefire,39.0,15.5,very heavy,~0.2 s
+144,Puddlepeak,109.5,0,cheap,sparse
+145,Noisemove,103.0,0,cheap,sparse
+146,Noise2D,61.0,6.2,heavy,instant
+147,Perlin Move,100.0,0,cheap,~0.3 s
+148,Ripple Peak,102.5,0,cheap,sparse
+149,Firenoise,73.5,3.5,medium,instant
+150,Squared Swirl,82.0,2.0,medium,sparse
+151,PacMan,92.0,0.7,cheap,instant
+152,DNA,95.0,0.4,cheap,sparse
+153,Matrix,111.5,0,cheap,~3.0 s
+154,Metaballs,49.0,10.3,heavy,instant
+155,Freqmap,110.5,0,cheap,sparse
+156,Gravcenter,43.0,13.1,heavy,instant
+157,Gravcentric,83.0,1.9,cheap,instant
+158,Gravfreq,71.5,3.8,medium,~0.5 s
+159,DJ Light,92.5,0.7,cheap,~1.2 s
+160,Funky Plank,105.5,0,cheap,varies (pattern or music)
+161,Shimmer,90.0,1.0,cheap,sparse
+162,Pulser,81.0,2.2,medium,sparse
+163,Blurz,107.0,0,cheap,sparse
+164,Drift,98.5,0.0,cheap,instant
+165,Waverly,60.5,6.4,heavy,instant
+166,Sun Radiation,54.0,8.4,heavy,instant
+167,Colored Bursts,75.5,3.1,medium,varies (pattern or music)
+168,Julia,69.5,4.2,medium,instant
+172,Game Of Life,84.0,1.8,cheap,instant
+173,Tartan,38.0,16.2,very heavy,instant
+174,Polar Lights,56.0,7.7,heavy,instant
+175,Swirl,82.5,2.0,cheap,sparse
+176,Lissajous,96.0,0.3,cheap,instant
+177,Frizzles,80.0,2.3,medium,sparse
+178,Plasma Ball,43.5,12.8,heavy,instant
+179,Flow Stripe,52.0,9.1,heavy,instant
+180,Hiphotic,55.0,8.0,heavy,instant
+181,Sindots,81.5,2.1,medium,sparse
+182,DNA Spiral,81.0,2.2,medium,instant
+183,Black Hole,102.0,0,cheap,sparse
+184,Wavesins,42.0,13.7,heavy,instant
+185,Rocktaves,104.0,0,cheap,sparse
+186,Akemi,75.0,3.2,medium,instant
+187,PS Volcano,96.0,0.3,cheap,~0.4 s
+188,PS Fire,67.5,4.7,medium,~0.2 s
+189,PS Fireworks,102.0,0,cheap,sparse
+190,PS Vortex,86.0,1.5,cheap,~0.6 s
+191,PS Fuzzy Noise,73.5,3.5,medium,instant
+192,PS Ballpit,90.0,1.0,cheap,~1.2 s
+193,PS Box,75.0,3.2,medium,~1.0 s
+194,PS Attractor,96.5,0.2,cheap,varies (pattern or music)
+195,PS Impact,70.5,4.0,medium,sparse
+196,PS Waterfall,48.5,10.5,heavy,~2.3 s
+197,PS Spray,79.0,2.5,medium,sparse
+198,PS GEQ 2D,96.5,0.2,cheap,sparse
+199,PS GEQ Nova,92.0,0.7,cheap,~0.2 s
+200,PS Ghost Rider,93.0,0.6,cheap,~1.3 s
+201,PS Blobs,91.0,0.8,cheap,instant
+202,PS DripDrop,92.0,0.7,cheap,~4.7 s
+203,PS Pinball,78.0,2.7,medium,sparse
+204,PS Dancing Shadows,96.0,0.3,cheap,~5.3 s
+205,PS Fireworks 1D,95.0,0.4,cheap,~1.4 s
+206,PS Sparkler,105.5,0,cheap,sparse
+207,PS Hourglass,26.0,28.3,very heavy,instant
+208,PS Spray 1D,98.0,0.1,cheap,sparse
+209,PS 1D Balance,49.0,10.3,heavy,instant
+210,PS Chase,87.0,1.3,cheap,instant
+211,PS Starburst,43.0,13.1,heavy,instant
+212,PS GEQ 1D,100.5,0,cheap,instant
+213,PS Fire 1D,90.5,0.9,cheap,~1.0 s
+214,PS Sonic Stream,76.0,3.0,medium,sparse
+215,PS Sonic Boom,101.0,0,cheap,sparse
+216,PS Springy,69.5,4.2,medium,instant
+217,PS Galaxy,96.0,0.3,cheap,~6.0 s
+218,Color Clouds,57.0,7.4,heavy,instant
+219,Slow Transition,77.5,2.8,medium,instant

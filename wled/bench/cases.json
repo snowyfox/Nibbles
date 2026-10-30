@@ -1,0 +1,606 @@
+[
+{
+"name": "base Solid, no layers",
+"base": 0,
+"layers": []
+},
+{
+"name": "1x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "2x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "3x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "4x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "5x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "6x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "7x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "8x Solid layer on (stencil)",
+"base": 0,
+"layers": [
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+],
+[
+0,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "4x Solid layer off",
+"base": 0,
+"layers": [
+[
+0,
+16,
+false,
+false
+],
+[
+0,
+16,
+false,
+false
+],
+[
+0,
+16,
+false,
+false
+],
+[
+0,
+16,
+false,
+false
+]
+]
+},
+{
+"name": "1x Soap on (stencil)",
+"base": 0,
+"layers": [
+[
+125,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "1x Soap on (top)",
+"base": 0,
+"layers": [
+[
+125,
+0,
+true,
+false
+]
+]
+},
+{
+"name": "1x Soap on (screen)",
+"base": 0,
+"layers": [
+[
+125,
+10,
+true,
+false
+]
+]
+},
+{
+"name": "1x Soap off",
+"base": 0,
+"layers": [
+[
+125,
+16,
+false,
+false
+]
+]
+},
+{
+"name": "1x Soap off + frozen",
+"base": 0,
+"layers": [
+[
+125,
+16,
+false,
+true
+]
+]
+},
+{
+"name": "4x Soap off",
+"base": 0,
+"layers": [
+[
+125,
+16,
+false,
+false
+],
+[
+125,
+16,
+false,
+false
+],
+[
+125,
+16,
+false,
+false
+],
+[
+125,
+16,
+false,
+false
+]
+]
+},
+{
+"name": "4x Soap off + frozen",
+"base": 0,
+"layers": [
+[
+125,
+16,
+false,
+true
+],
+[
+125,
+16,
+false,
+true
+],
+[
+125,
+16,
+false,
+true
+],
+[
+125,
+16,
+false,
+true
+]
+]
+},
+{
+"name": "cheap+cheap: Colorloop + Twinkle",
+"base": 8,
+"layers": [
+[
+17,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "medium+cheap: Octopus + Twinkle",
+"base": 126,
+"layers": [
+[
+17,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "medium+medium: Fire 2012 + Octopus",
+"base": 66,
+"layers": [
+[
+126,
+10,
+true,
+false
+]
+]
+},
+{
+"name": "heavy+cheap: Soap + Twinkle",
+"base": 125,
+"layers": [
+[
+17,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "heavy+cheap+cheap: Soap + Twinkle + Juggle",
+"base": 125,
+"layers": [
+[
+17,
+16,
+true,
+false
+],
+[
+64,
+10,
+true,
+false
+]
+]
+},
+{
+"name": "heavy+medium: Soap + Fire 2012",
+"base": 125,
+"layers": [
+[
+66,
+10,
+true,
+false
+]
+]
+},
+{
+"name": "heavy+heavy: Soap + Noise 2",
+"base": 125,
+"layers": [
+[
+71,
+10,
+true,
+false
+]
+]
+},
+{
+"name": "heavy x3: Soap + Noise 2 + Plasmoid",
+"base": 125,
+"layers": [
+[
+71,
+10,
+true,
+false
+],
+[
+133,
+16,
+true,
+false
+]
+]
+},
+{
+"name": "5 slots realistic: Octopus | Twinkle | Fire 2012 | Juggle | bump(off)",
+"base": 126,
+"layers": [
+[
+17,
+16,
+true,
+false
+],
+[
+66,
+16,
+true,
+false
+],
+[
+64,
+10,
+true,
+false
+],
+[
+0,
+2,
+false,
+false
+]
+]
+},
+{
+"name": "5 slots heavy: Soap | Twinkle | Noise 2 | Juggle | bump(off)",
+"base": 125,
+"layers": [
+[
+17,
+16,
+true,
+false
+],
+[
+71,
+16,
+true,
+false
+],
+[
+64,
+10,
+true,
+false
+],
+[
+0,
+2,
+false,
+false
+]
+]
+},
+{
+"name": "very heavy: Distortion Waves alone (base)",
+"base": 124,
+"layers": []
+},
+{
+"name": "very heavy + heavy: Distortion Waves + Soap",
+"base": 124,
+"layers": [
+[
+125,
+10,
+true,
+false
+]
+]
+}
+]
