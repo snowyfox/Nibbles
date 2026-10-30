@@ -45,6 +45,19 @@
 //   whole "look" (every preset_t setting; nl_eye_look_t) broadcast as
 //   NL_MSG_EYE_LOOK. Skipped for presets applied with NL_PRESET_NO_EYES (the
 //   base's BODY target), bump presets and fin presets.
+// - Segment layer slots (2D map only): fixed segments that WLED 16 stacks by
+//   segment number, slot n being segment n: 0 body, 1 fins (the fin panel; fin
+//   presets use it), 2 body overlay, 3 fin overlay, 4 bump (the whole grid).
+//   {"nibbles":{"slot":{"id":2,"look":7,"bm":10,"o":200,"on":true}}} (or an
+//   array of them): "look" takes a preset's effect, speed, sliders, palette and
+//   colours (its main segment, without its position) into the slot; "fx",
+//   "pal", "col" etc. set them directly; "bm" blend mode, "o" opacity, "tt"
+//   transition. A slot that's off is frozen (it costs nothing) unless "warm":
+//   true keeps its effect running. Slots below a new one are created off, so
+//   the numbering holds. Requests run from loop() (WLED's JSON buffer is busy
+//   while it hands them to us). The state reports them as "nibbles":{"slots"}.
+//   Flash and blackout bumps use the bump slot, so nothing is saved or
+//   restored and commands during them apply at once.
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -139,6 +152,10 @@ static bool es7210Setup() {
   return true;
 }
 #endif
+
+// The segment fields that make a look (not where it is, how it blends or whether it's on).
+static const char *const LOOK_KEYS[] = { "fx", "sx", "ix", "c1", "c2", "c3", "o1", "o2", "o3", "pal", "col",
+                                         "si", "m12", "rev", "mi", "rY", "mY", "tp", "cct", "set" };
 
 class NibblesUsermod : public Usermod {
   private:
@@ -327,6 +344,159 @@ class NibblesUsermod : public Usermod {
     bool haveFinPanel = false;
     bool finPanelOn = false;      // a segment is on in the panel
     uint8_t finProj = NL_FIN_PROJ_SIDE;
+
+    // Segment layer slots (see the header): slot n is segment n.
+    enum : uint8_t { AREA_BODY, AREA_FINS, AREA_ALL };
+    struct SlotDef { uint8_t area, bm; const char *name; };
+    static constexpr unsigned SLOT_COUNT = 5;
+    static constexpr unsigned SLOT_BUMP = 4;
+    static const SlotDef slotDefs[SLOT_COUNT];
+    uint16_t slotLook[SLOT_COUNT] = { 0 };   // the preset whose look a slot took last (0: none, or set directly)
+    String slotQueue[6];
+    uint8_t slotQueueLen = 0;
+    uint32_t slotApplied = 0;
+    char slotNote[80] = "";                  // the last request's outcome, for the Info page
+    bool bumpInSlot = false;                 // a flash or blackout bump is showing in the bump slot
+    uint8_t bumpBri = 0;                     // the master brightness to go back to after a flash
+
+    // A slot's cells: [x0, x1) x [y0, y1). The body is the side view, left of the fin panel.
+    bool slotArea(unsigned slot, unsigned &x0, unsigned &x1, unsigned &y0, unsigned &y1) const {
+      if (!strip.isMatrix || slot >= SLOT_COUNT) return false;
+      const unsigned W = Segment::maxWidth, H = Segment::maxHeight;
+      x0 = 0; x1 = W; y0 = 0; y1 = H;
+      switch (slotDefs[slot].area) {
+        case AREA_BODY:
+          if (haveFinPanel) x1 = min((unsigned)finPanel[0], W);
+          break;
+        case AREA_FINS:
+          if (!haveFinPanel) return false;
+          x0 = (unsigned)finPanel[0]; x1 = min(x0 + (unsigned)finPanel[2], W);
+          y0 = (unsigned)finPanel[1]; y1 = min(y0 + (unsigned)finPanel[3], H);
+          break;
+        default: break;
+      }
+      return x1 > x0 && y1 > y0;
+    }
+
+    void queueSlot(JsonVariant v) {
+      if (!v.is<JsonObject>() || slotQueueLen >= sizeof(slotQueue) / sizeof(slotQueue[0])) return;
+      String s;
+      serializeJson(v, s);
+      if (s.length() < 600) slotQueue[slotQueueLen++] = s;
+    }
+
+    // One slot request; false if WLED's JSON buffer was busy (try again next loop).
+    bool applySlot(const String &req) {
+      StaticJsonDocument<768> rq;
+      if (deserializeJson(rq, req)) { snprintf(slotNote, sizeof(slotNote), "bad request"); return true; }
+      const int slot = rq[F("id")] | -1;
+      unsigned x0, x1, y0, y1;
+      if (slot < 0 || slot >= (int)SLOT_COUNT || !slotArea(slot, x0, x1, y0, y1)) {
+        snprintf(slotNote, sizeof(slotNote), "slot %d: no such slot here%s", slot, strip.isMatrix ? "" : " (needs the 2D map)");
+        return true;
+      }
+      JSONBufferGuard guard(JSON_LOCK_NIBBLES);
+      if (!guard) return false;
+      StaticJsonDocument<1024> look;
+      const int lookId = rq[F("look")] | 0;
+      if (lookId) {
+        StaticJsonDocument<64> filter;
+        filter[F("seg")] = true;
+        filter[F("mainseg")] = true;
+        pDoc->clear();
+        if (!readObjectFromFileUsingId(getPresetsFileName(), lookId, pDoc, &filter)) {
+          snprintf(slotNote, sizeof(slotNote), "slot %d: preset %d not found", slot, lookId);
+          return true;
+        }
+        JsonVariant sg = (*pDoc)[F("seg")];
+        JsonObject src;
+        if (sg.is<JsonObject>()) src = sg.as<JsonObject>();
+        else if (sg.is<JsonArray>()) {
+          const int main = (*pDoc)[F("mainseg")] | 0;
+          for (JsonObject s : sg.as<JsonArray>()) {
+            if ((s[F("stop")] | 1) == 0) continue;   // a "delete this segment" entry
+            if (src.isNull() || (s[F("id")] | -1) == main) src = s;
+            if ((s[F("id")] | -1) == main) break;
+          }
+        }
+        if (src.isNull()) {
+          snprintf(slotNote, sizeof(slotNote), "slot %d: preset %d has no segment", slot, lookId);
+          return true;
+        }
+        for (const char *k : LOOK_KEYS)
+          if (!src[k].isNull()) look[k] = src[k];
+      }
+      const unsigned have = strip.getSegmentsNum();
+      const bool fresh = (unsigned)slot >= have || !strip.getSegment(slot).isActive();
+      bool setsLook = lookId != 0;
+      for (const char *k : LOOK_KEYS) if (!rq[k].isNull()) setsLook = true;
+      const bool wasOn = !fresh && strip.getSegment(slot).on;
+      const bool on = rq[F("on")].isNull() ? (setsLook || wasOn) : rq[F("on")].as<bool>();
+
+      pDoc->clear();
+      JsonObject st = pDoc->to<JsonObject>();
+      if (!rq[F("tt")].isNull()) st[F("tt")] = rq[F("tt")];
+      if (!rq[F("master")].isNull()) st[F("bri")] = rq[F("master")];   // WLED's master brightness (flash bumps)
+      JsonArray segs = st.createNestedArray(F("seg"));
+      for (unsigned s = have; s < (unsigned)slot; s++) {   // fill the stack below: those slots off and frozen
+        unsigned a0 = 0, a1 = 1, b0 = 0, b1 = 1;
+        if (!slotArea(s, a0, a1, b0, b1)) slotArea(0, a0, a1, b0, b1);
+        JsonObject p = segs.createNestedObject();
+        p[F("id")] = s; p[F("start")] = a0; p[F("stop")] = a1; p[F("startY")] = b0; p[F("stopY")] = b1;
+        p[F("on")] = false; p[F("frz")] = true; p[F("bm")] = slotDefs[s].bm; p[F("n")] = slotDefs[s].name;
+      }
+      JsonObject o = segs.createNestedObject();
+      o[F("id")] = slot; o[F("start")] = x0; o[F("stop")] = x1; o[F("startY")] = y0; o[F("stopY")] = y1;
+      for (JsonPair kv : look.as<JsonObject>()) o[kv.key()] = kv.value();
+      for (const char *k : LOOK_KEYS) if (!rq[k].isNull()) o[k] = rq[k];
+      if (!rq[F("bm")].isNull()) o[F("bm")] = rq[F("bm")];
+      else if (fresh) o[F("bm")] = slotDefs[slot].bm;
+      if (!rq[F("o")].isNull()) o[F("bri")] = constrain(rq[F("o")].as<int>(), 1, 255);   // opacity; 0 would switch it off
+      if (fresh) o[F("n")] = slotDefs[slot].name;
+      o[F("on")] = on;
+      o[F("frz")] = !on && !(rq[F("warm")] | false);
+      const auto keepPreset = currentPreset;
+      deserializeState(st, CALL_MODE_DIRECT_CHANGE);
+      if (rq[F("bump")] | false) currentPreset = keepPreset;   // a bump is momentary: the preset is still the one showing
+      if (lookId) slotLook[slot] = lookId;
+      else if (setsLook) slotLook[slot] = 0;
+      if (slot == 1 && isFinPreset(lookId) && !finBumpOn) finPreset = lookId - NL_FIN_PRESET_BASE;   // the base sees it as that fin preset
+      slotApplied++;
+      snprintf(slotNote, sizeof(slotNote), "slot %d (%s): %s%s%s", slot, slotDefs[slot].name, on ? "on" : "off",
+               lookId ? ", look of preset " : "", lookId ? String(lookId).c_str() : "");
+#ifdef NIBBLES_DEBUG
+      Serial.printf("nibbles: %s\n", slotNote);
+#endif
+      return true;
+    }
+
+    void slotLoop() {
+      if (!slotQueueLen) return;
+      if (!applySlot(slotQueue[0])) return;   // JSON buffer busy: next time
+      for (unsigned i = 1; i < slotQueueLen; i++) slotQueue[i - 1] = slotQueue[i];
+      slotQueue[--slotQueueLen] = String();
+    }
+
+    // Flash and blackout bumps: the bump slot over everything, then off again.
+    void bumpSlot(bool begin, const nl_bump_t &b) {
+      StaticJsonDocument<512> d;
+      d[F("id")] = SLOT_BUMP;
+      d[F("tt")] = 0;
+      d[F("bump")] = true;
+      if (begin) {
+        const bool flash = b.action == NL_BUMP_FLASH;
+        d[F("fx")] = 0;
+        JsonArray col = d.createNestedArray(F("col")).createNestedArray();
+        col.add(flash ? 255 : 0); col.add(flash ? 255 : 0); col.add(flash ? 255 : 0);
+        d[F("bm")] = 0;                                 // top: covers everything below
+        d[F("on")] = true;
+        if (flash) d[F("master")] = b.intensity ? b.intensity : 255;   // as bright as asked, whatever the master is
+      } else {
+        d[F("on")] = false;
+        if (b.action == NL_BUMP_FLASH) d[F("master")] = bumpBri;
+      }
+      queueSlot(d.as<JsonVariant>());
+    }
 
     // One number from a JSON array; false at its closing bracket or the end.
     static bool nextNumber(File &f, float &out) {
@@ -850,6 +1020,8 @@ class NibblesUsermod : public Usermod {
         else queuePreset(id);
         return;
       }
+      // A flash puts the master brightness back when it ends: a new brightness is for then.
+      if (bumpInSlot && id < 0 && bumps.bump.action == NL_BUMP_FLASH) { bumpBri = -id; return; }
       // During a bump the saved state comes back on release, which would undo
       // the command: keep it for then instead.
       if (haveSaved) {
@@ -886,7 +1058,19 @@ class NibblesUsermod : public Usermod {
       return true;
     }
 
+    bool haveBumpSlot() const {
+      unsigned a, b, c, d;
+      return slotArea(SLOT_BUMP, a, b, c, d);
+    }
+
     void bumpBegin(const nl_bump_t &b) {
+      if (b.action != NL_BUMP_PRESET && haveBumpSlot()) {   // flash, blackout: the bump slot, nothing to save
+        bumpCount++;
+        bumpInSlot = true;
+        bumpBri = bri;
+        bumpSlot(true, b);
+        return;
+      }
       haveSaved = saveState();
       savedPreset = currentPreset;
       finAtBump = finPreset;
@@ -912,6 +1096,11 @@ class NibblesUsermod : public Usermod {
     }
 
     void bumpEnd() {
+      if (bumpInSlot) {
+        bumpInSlot = false;
+        bumpSlot(false, bumps.bump);
+        return;
+      }
       if (!haveSaved) return;
       haveSaved = false;
       bool refin = finPreset != finAtBump;   // the fins changed preset during the bump
@@ -1075,10 +1264,14 @@ class NibblesUsermod : public Usermod {
     void trackPresets(unsigned long now) {
       if (currentPreset != lastSeenPreset) {
         lastSeenPreset = currentPreset;
+        if (bumpInSlot && currentPreset > 0) bumpSlot(true, bumps.bump);   // a body preset clears slots 2-8: put the bump back
         if (isFinPreset(currentPreset)) {
           if (!finBumpOn) finPreset = currentPreset - NL_FIN_PRESET_BASE;
+          slotLook[1] = currentPreset;
         } else if (currentPreset > 0 && !haveSaved) {
           bodyPreset = currentPreset;
+          slotLook[0] = currentPreset;   // a body preset sets the whole stack
+          for (unsigned i = 2; i < SLOT_COUNT; i++) slotLook[i] = 0;
         }
       }
       // A body preset saved with every segment switches the fin segment off: the fins follow the body again.
@@ -1172,6 +1365,7 @@ class NibblesUsermod : public Usermod {
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
       presetQueueLoop(millis());
       trackPresets(millis());
+      if (!display) slotLoop();
       if (!radioUp()) return;
       for (;;) {
         RxItem it;
@@ -1327,6 +1521,20 @@ class NibblesUsermod : public Usermod {
                  finFollowing & 2 ? (finFollow[1].side == NL_FIN_PORT ? "port" : "starboard") : "");
         m2.add(buf);
       }
+      if (strip.isMatrix && !display) {
+        JsonArray la = user.createNestedArray(F("Nibbles layers"));
+        char buf[160];
+        int n = 0;
+        for (unsigned i = 0; i < SLOT_COUNT && n < (int)sizeof(buf) - 24; i++) {
+          unsigned a, b, c, d;
+          if (!slotArea(i, a, b, c, d)) continue;
+          const bool on = i < strip.getSegmentsNum() && strip.getSegment(i).isActive() && strip.getSegment(i).on;
+          if (on) n += snprintf(buf + n, sizeof(buf) - n, "%s%s fx %u bm %u", n ? "; " : "", slotDefs[i].name, strip.getSegment(i).mode, strip.getSegment(i).blendMode);
+          else n += snprintf(buf + n, sizeof(buf) - n, "%s%s off", n ? "; " : "", slotDefs[i].name);
+        }
+        la.add(buf);
+        if (slotNote[0]) la.add(slotNote);
+      }
       if (mirroring(millis())) {
         JsonArray m = user.createNestedArray(F("Nibbles mirror"));
         char buf[48];
@@ -1344,9 +1552,35 @@ class NibblesUsermod : public Usermod {
       }
     }
 
+    // The slots, in the state: {"nibbles":{"slots":[{"id":2,"name":"body+","on":true,"fx":17,"pal":0,"bm":10,"o":255,"look":7}, ...]}}
+    void addToJsonState(JsonObject &root) override {
+      if (display || !strip.isMatrix) return;
+      JsonObject nb = root[F("nibbles")];
+      if (nb.isNull()) nb = root.createNestedObject(F("nibbles"));
+      JsonArray arr = nb.createNestedArray(F("slots"));
+      for (unsigned i = 0; i < SLOT_COUNT; i++) {
+        unsigned a, b, c, d;
+        if (!slotArea(i, a, b, c, d)) continue;
+        JsonObject o = arr.createNestedObject();
+        o[F("id")] = i;
+        o[F("name")] = slotDefs[i].name;
+        const bool exists = i < strip.getSegmentsNum() && strip.getSegment(i).isActive();
+        o[F("on")] = exists && strip.getSegment(i).on;
+        if (!exists) continue;
+        const Segment &sg = strip.getSegment(i);
+        o[F("fx")] = sg.mode; o[F("pal")] = sg.palette; o[F("bm")] = sg.blendMode; o[F("o")] = sg.opacity;
+        o[F("frz")] = sg.freeze;
+        if (slotLook[i]) o[F("look")] = slotLook[i];
+      }
+    }
+
     // {"nibbles":{"mirror":{"ip":"a.b.c.d","port":4050,"s":5}}}: stream to the
     // simulator for s seconds (0 stops).
     void readFromJsonState(JsonObject &root) override {
+      // {"nibbles":{"slot":{...}}} or a list of them: segment layer slots (see the header)
+      JsonVariant sl = root[F("nibbles")][F("slot")];
+      if (sl.is<JsonArray>()) { for (JsonVariant v : sl.as<JsonArray>()) queueSlot(v); }
+      else if (!sl.isNull()) queueSlot(sl);
       // {"nibbles":{"battery":{"mv":13000,"ma":7700}}}: a test reading, as if
       // from the base ("mv":0 forgets: back to the ceiling).
       // {"nibbles":{"finfollow":true|false}}: fin LEDs follow the fins, or stay put
@@ -1427,6 +1661,13 @@ class NibblesUsermod : public Usermod {
 };
 
 const char NibblesUsermod::_name[] PROGMEM = "Nibbles";
+const NibblesUsermod::SlotDef NibblesUsermod::slotDefs[NibblesUsermod::SLOT_COUNT] = {
+  { NibblesUsermod::AREA_BODY, 0, "body" },    // top
+  { NibblesUsermod::AREA_FINS, 0, "fins" },    // top (fin presets)
+  { NibblesUsermod::AREA_BODY, 10, "body+" },  // screen
+  { NibblesUsermod::AREA_FINS, 10, "fins+" },  // screen
+  { NibblesUsermod::AREA_ALL, 2, "bump" },     // add (flash and blackout bumps set top)
+};
 
 static NibblesUsermod nibbles_usermod;
 REGISTER_USERMOD(nibbles_usermod);

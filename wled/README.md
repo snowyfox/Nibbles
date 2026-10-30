@@ -24,7 +24,8 @@ eyes and base (`shared/nibbles_link`).
   original saved state. Preset and brightness commands that arrive during a bump
   are applied when it ends (instead of the saved preset), so the release
   doesn't undo them (verified: preset and brightness sent mid-flash took effect
-  on release).
+  on release). With the 2D map, flash and blackout use the bump slot instead
+  (see "Layer slots"): nothing is saved, and preset commands apply at once.
 - Broadcasts **WLED telemetry** twice a second (on, brightness, preset and its
   name, effect, palette, channel, fps, LED count). Preset names come from the
   same cached read of `/presets.json` as the preset list.
@@ -187,6 +188,59 @@ columns 0-54. (Until 2026-10-29: 25 x 34 cells of 10 mm at columns 70-94.)
   - queues its own preset applies (WLED keeps only one waiting).
 - **Where:** on the main board (see "Main board and display"); the display
   stays 1D.
+
+## Layer slots (2026-10-29; tested on the bench as main board)
+
+WLED 16 stacks segments that overlap: each one is blended over the ones with
+lower numbers (blend mode `bm`, opacity `bri`). The usermod uses five fixed
+segments as layers:
+
+| Slot = segment | Name | Covers | Default blend |
+|---|---|---|---|
+| 0 | body | the side view (0-55 x 0-33) | top |
+| 1 | fins | the fin panel (fin presets) | top |
+| 2 | body+ | the side view | screen |
+| 3 | fins+ | the fin panel | screen |
+| 4 | bump | the whole grid | add (flash and blackout set top) |
+
+Set one with `{"nibbles":{"slot":{...}}}` in a JSON state request (or a list of
+them):
+
+- `"id"`: the slot.
+- `"look"`: a preset's effect, speed, sliders, palette and colours (its
+  main segment) go into the slot. Its position, blend and on/off don't.
+- `"fx"`, `"pal"`, `"col"`, `"sx"`, `"ix"`, `"c1"`-`"c3"`, `"o1"`-`"o3"`:
+  set directly. These go on top of a `look` in the same request.
+- `"bm"` blend mode, `"o"` opacity (1-255), `"tt"` transition (ms),
+  `"on"`. Setting a look or effect switches the slot on unless `"on":false`
+  says otherwise.
+- **A slot that's off is frozen**, so it costs nothing. `"warm":true` keeps
+  its effect running while it's off: it then shows at once, already in
+  motion, but costs a full render every frame (`wled/bench/README.md`).
+
+Asking for a slot creates any missing slots below it, off and frozen, so slot
+n is always segment n. The state reports the slots as
+`"nibbles":{"slots":[...]}` (on, effect, palette, blend, opacity, the preset
+whose look it took). The Info page shows them under "Nibbles layers", with
+the outcome of the last request.
+
+**Presets and slots:**
+- A full preset is a scene: it sets the whole stack.
+- The one-segment body presets switch slots 2-8 off and leave the fins
+  (slot 1) alone, as fin presets need.
+- Old 1D presets with several segments use segments 1-7 for stretches of
+  the strip, so slots don't fit on top of them.
+- Slot changes made by request count as manual changes, so WLED shows no
+  current preset after one.
+
+**Bumps:**
+- **Flash and blackout** use the bump slot: Solid white (or black) on top.
+  A flash also raises WLED's master brightness to its intensity while
+  held.
+- Nothing is saved or restored, and commands during them apply at once. A
+  brightness command during a flash takes effect when it ends.
+- If a body preset lands during the bump, the bump slot comes straight back.
+- **Preset bumps** still save and restore the whole state, as before.
 
 ## Eye settings in presets (2026-10-28; the usermod part not yet built or tested)
 
