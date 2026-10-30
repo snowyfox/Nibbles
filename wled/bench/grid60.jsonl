@@ -1,0 +1,19 @@
+{"name": "base Solid, no layers", "fps": 146.5, "ms": 6.83, "segments": 1}
+{"name": "1x Solid layer on (stencil)", "fps": 116.0, "ms": 8.62, "segments": 2}
+{"name": "4x Solid layer on (stencil)", "fps": 69.0, "ms": 14.49, "segments": 5}
+{"name": "8x Solid layer on (stencil)", "fps": 42.0, "ms": 23.81, "segments": 9}
+{"name": "4x Solid layer off", "fps": 130.5, "ms": 7.66, "segments": 5}
+{"name": "1x Soap on (stencil)", "fps": 62.5, "ms": 16.0, "segments": 2}
+{"name": "1x Soap off", "fps": 69.5, "ms": 14.39, "segments": 2}
+{"name": "cheap+cheap: Colorloop + Twinkle", "fps": 115.0, "ms": 8.7, "segments": 2}
+{"name": "medium+cheap: Octopus + Twinkle", "fps": 87.0, "ms": 11.49, "segments": 2}
+{"name": "medium+medium: Fire 2012 + Octopus", "fps": 62.0, "ms": 16.13, "segments": 2}
+{"name": "heavy+cheap: Soap + Twinkle", "fps": 69.5, "ms": 14.39, "segments": 2}
+{"name": "heavy+cheap+cheap: Soap + Twinkle + Juggle", "fps": 58.0, "ms": 17.24, "segments": 3}
+{"name": "heavy+medium: Soap + Fire 2012", "fps": 47.0, "ms": 21.28, "segments": 2}
+{"name": "heavy+heavy: Soap + Noise 2", "fps": 44.0, "ms": 22.73, "segments": 2}
+{"name": "heavy x3: Soap + Noise 2 + Plasmoid", "fps": 34.0, "ms": 29.41, "segments": 3}
+{"name": "5 slots realistic: Octopus | Twinkle | Fire 2012 | Juggle | bump(off)", "fps": 45.0, "ms": 22.22, "segments": 5}
+{"name": "5 slots heavy: Soap | Twinkle | Noise 2 | Juggle | bump(off)", "fps": 38.0, "ms": 26.32, "segments": 5}
+{"name": "very heavy: Distortion Waves alone (base)", "fps": 55.0, "ms": 18.18, "segments": 1}
+{"name": "very heavy + heavy: Distortion Waves + Soap", "fps": 34.0, "ms": 29.41, "segments": 2}

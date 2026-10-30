@@ -1,0 +1,14 @@
+{"name": "base Solid 95x41, no layers", "fps": 90.5, "ms": 11.05, "segments": 1}
+{"name": "base Solid 70x41, no layers", "fps": 99.0, "ms": 10.1, "segments": 1}
+{"name": "base Solid 35x41, no layers", "fps": 131.0, "ms": 7.63, "segments": 1}
+{"name": "base Solid 10x41, no layers", "fps": 153.0, "ms": 6.54, "segments": 1}
+{"name": "1 Solid layer 95x41 (3895 cells)", "fps": 70.0, "ms": 14.29, "segments": 2}
+{"name": "1 Solid layer 70x41 (2870 cells)", "fps": 76.0, "ms": 13.16, "segments": 2}
+{"name": "1 Solid layer 48x41 (1968 cells)", "fps": 82.0, "ms": 12.2, "segments": 2}
+{"name": "1 Solid layer 48x21 (1008 cells)", "fps": 90.5, "ms": 11.05, "segments": 2}
+{"name": "1 Solid layer 24x21 (504 cells)", "fps": 94.5, "ms": 10.58, "segments": 2}
+{"name": "1 Solid layer 12x10 (120 cells)", "fps": 99.5, "ms": 10.05, "segments": 2}
+{"name": "1 Soap layer 95x41", "fps": 31.0, "ms": 32.26, "segments": 2}
+{"name": "1 Soap layer 48x21", "fps": 66.0, "ms": 15.15, "segments": 2}
+{"name": "1 Noise 2 layer 95x41", "fps": 34.0, "ms": 29.41, "segments": 2}
+{"name": "1 Noise 2 layer 48x21", "fps": 69.0, "ms": 14.49, "segments": 2}

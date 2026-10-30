@@ -62,3 +62,58 @@ Scripts: `fxbench.py` (cost and spin-up for every effect; needs the simulator
 server mirroring the brain), `curves.py` (9 s brightness curves, saved in
 `curves.json`), `layerbench.py` (the layer cases). Back the brain up before
 running them, and restore its fps cap (42), brightness and segments afterwards.
+
+## Layer size and memory (`sizes.jsonl`, `dram.jsonl`)
+
+Layer size (`layerbench2.py` with `cases2.json`; each layer is anchored at the
+top left):
+
+| Case | ms/frame | Extra |
+|---|---|---|
+| Body segment 10 / 35 / 70 / 95 wide, Solid | 6.5 / 7.6 / 10.1 / 11.1 | - |
+| + Solid layer 12x10 / 24x21 / 48x21 / 48x41 / 70x41 / 95x41 | 10.1 / 10.6 / 11.1 / 12.2 / 13.2 / 14.3 | 0 / 0.5 / 1.0 / 2.2 / 3.1 / 4.2 ms |
+| + Soap layer 48x21 / 95x41 | 15.2 / 32.3 | 5.1 / 22.2 ms |
+| + Noise 2 layer 48x21 / 95x41 | 14.5 / 29.4 | 4.4 / 19.4 ms |
+
+- **Fixed cost:** about 6 ms per frame, whatever the layers. That's the output
+  pass over the whole 95x41 frame and the DDP send.
+- **Everything else scales with the cells a layer covers:** about 1.1 us per
+  cell to render a Solid layer and combine it. An effect's own cost scales
+  the same way, or a bit better.
+- The 95x41 grid has 3,895 cells for 1,064 LEDs. A grid about the size of the
+  LED count would make every layer and effect about 3.5-4x cheaper.
+
+**Internal RAM instead of PSRAM:** I flashed a test build that put the
+combined frame (`_pixels`) in internal RAM (`BFRALLOC_ENFORCE_DRAM`) and
+preferred internal RAM for the segment buffers. It made no difference (every
+case within a frame or two, `dram.jsonl`). The S3's cache hides PSRAM for this
+access pattern, so the cost is the per-cell work itself. The brain is back on
+its normal build.
+
+## A coarser grid (`grid60.jsonl`, `cases4.json`, `ledmap_60x28/`)
+
+`make_ledmap.py --cells 1100 --fin-panel-mm 20` gives a 60x28 grid (1,680 cells,
+13.2 mm each; body 47x28, fin panel 13x18), the smallest the generator can fit
+every LED into. I loaded it on the brain for the test and then put the 95x41
+map back. Same cases as above, with the layers covering the whole 60x28 grid:
+
+| Case | 95x41 fps | 60x28 fps |
+|---|---|---|
+| Body only (Solid) | 99.5 | 146.5 |
+| + 1 / 4 / 8 Solid layers | 69.5 / 33 / 21 | 116 / 69 / 42 |
+| + Soap layer | 31 | 62.5 |
+| Octopus + Twinkle | 47 | 87 |
+| Fire 2012 + Octopus | 31 | 62 |
+| Soap + Twinkle + Juggle | 29 | 58 |
+| Soap + Noise 2 + Plasmoid | 17 | 34 |
+| 5 slots: Octopus, Twinkle, Fire 2012, Juggle, bump (off) | 23 | 45 |
+| 5 slots heavy: Soap, Twinkle, Noise 2, Juggle, bump (off) | 19 | 38 |
+| Distortion Waves alone | 29 | 55 |
+
+About twice as fast everywhere: the realistic 5-slot stack goes from 23 fps
+to 45, enough for the 42 fps cap.
+
+**The cost is placement.** With bigger cells, LEDs that sit close together
+compete for the same cell, so some move several cells from where they really
+are. The preview SVG shows how far each one moved, and 2D effects look
+coarser. This needs checking by eye on the shark before choosing it.
