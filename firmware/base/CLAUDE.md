@@ -88,8 +88,18 @@ file. Until the hardware exists, all of it can be driven from USB serial.
       (`NL_MSG_WLED_LAYERS`), and the live palette or layer's key is red.
       The toggle is decided against the layers from before the number went
       down, because WLED reports a layer bump as live.
-    - **No Standby** for palettes and layers yet, so LATCH-first does
-      nothing on these pages.
+    - **Standby** (2026-10-30): LATCH held first, then a number, cues that
+      palette or layer look in Standby (`ctl_t.standby_layers`) for the
+      target, unseen; a layer look Standby already has is cued off. A new
+      preset cued in Standby clears its side's cues (it brings its own
+      palette and layers). TAKE previews and takes them with Standby's
+      presets: a preset alone is still a preset bump; with a cue it's one
+      `NL_BUMP_SCENE` bump per side (body or fins: preset if new, palette,
+      layer look), and LATCH sends the preset, then the palette, then the
+      look. Standby then holds Live as it was (preset, palette, layer).
+      Latching a palette or layer look live also drops the old one into
+      Standby, as presets do. LATCH + TAKE clears the cues. The keys show
+      the Standby palette or look green, both amber.
   - LATCH held first, then a number: cue that preset in Standby without
     showing it. LATCH + TAKE: Standby = Live. PAGE + number: brightness in
     eighths. FLASH and BLACKOUT: bumps while held. FIN SENSOR: fins follow
@@ -142,8 +152,10 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   name if it's one of the palette page's, and "+ Ln" for a layer over it),
   STANDBY (green; rows that differ bright; tap it = TAKE), and the target
   box (tap = next target), page name, LATCH, lock, links, keypads found, the
-  event line. Positions: card 4, LIVE 72 (157 tall), STANDBY 235, target
-  373, lock 429, links 451, keys 469, event 491. Page 1 is the
+  event line. STANDBY has a LOOK row too (as TAKE would leave it: "--"
+  where a new preset brings its own palette) and the "hold TAKE" line
+  under it. Positions: card 4, LIVE 72 (157 tall), STANDBY 235 (157 tall),
+  target 398, lock 454, links 476, keys 494, event 516. Page 1 is the
   preset grid, page 2 the old cards and bump pads.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,

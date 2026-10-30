@@ -61,7 +61,9 @@
 //   and NL_OP_SLOT_PALETTE set a slot; NL_BUMP_PALETTE and NL_BUMP_LAYER show a
 //   palette or a layer look while held and put the slot back exactly after (a
 //   slot command for that slot meanwhile becomes what it goes back to, which is
-//   how the base's LATCH keeps one); NL_MSG_WLED_LAYERS (2 Hz) reports them.
+//   how the base's LATCH keeps one); NL_BUMP_SCENE shows a preset, a palette
+//   and a layer look together (TAKE's preview of Standby) and puts all of it
+//   back; NL_MSG_WLED_LAYERS (2 Hz) reports them.
 // - Mirror for the lighting simulator (tools/sim): while asked to (JSON state
 //   {"nibbles":{"mirror":{"ip":..,"port":..,"s":..}}}, renewed every few
 //   seconds), streams every LED as it is shown (DDP, to port) and the eyes'
@@ -387,7 +389,7 @@ class NibblesUsermod : public Usermod {
     static constexpr unsigned SLOT_BUMP = 4;
     static const SlotDef slotDefs[SLOT_COUNT];
     uint16_t slotLook[SLOT_COUNT] = { 0 };   // the preset whose look a slot took last (0: none, or set directly)
-    String slotQueue[6];
+    String slotQueue[12];
     uint8_t slotQueueLen = 0;
     uint32_t slotApplied = 0;
     char slotNote[80] = "";                  // the last request's outcome, for the Info page
@@ -399,6 +401,15 @@ class NibblesUsermod : public Usermod {
     uint8_t bumpBri = 0;                     // the master brightness to go back to after a flash
     String pendingSlots[4];                  // slot commands during a preset bump, for its end
     uint8_t pendingSlotCount = 0;
+    // Scene bumps (NL_BUMP_SCENE): the body's is saved like a preset bump, plus
+    // its overlay slot and the slots' looks; the fins' as their two slots.
+    bool sceneOn = false, finSceneOn = false;
+    String sceneOverRestore, finSceneRestore[2];
+    String sceneQueued[2], finSceneQueued[2];   // its palette and look requests, until they apply
+    uint16_t sceneLooks[SLOT_COUNT] = { 0 };
+    uint8_t finScenePreset = 0;              // a fin preset command during the fins' scene, for its end
+    String finScenePending[4];               // fin slot commands during it
+    uint8_t finScenePendingCount = 0;
 
     // A slot's cells: [x0, x1) x [y0, y1). The body is the side view, left of the fin panel.
     bool slotArea(unsigned slot, unsigned &x0, unsigned &x1, unsigned &y0, unsigned &y1) const {
@@ -503,7 +514,7 @@ class NibblesUsermod : public Usermod {
       if (lookId) slotLook[slot] = lookId;
       else if (!rq[F("lookid")].isNull()) slotLook[slot] = rq[F("lookid")] | 0;   // a restore puts the look's preset back too
       else if (turnsOn) slotLook[slot] = 0;
-      if (slot == 1 && isFinPreset(lookId) && !finBumpOn) finPreset = lookId - NL_FIN_PRESET_BASE;   // the base sees it as that fin preset
+      if (slot == 1 && isFinPreset(lookId) && !finBumpOn && !finSceneOn) finPreset = lookId - NL_FIN_PRESET_BASE;   // the base sees it as that fin preset
       slotApplied++;
       snprintf(slotNote, sizeof(slotNote), "slot %d (%s): %s%s%s", slot, slotDefs[slot].name, on ? "on" : "off",
                lookId ? ", look of preset " : "", lookId ? String(lookId).c_str() : "");
@@ -515,6 +526,9 @@ class NibblesUsermod : public Usermod {
 
     void slotLoop() {
       if (!slotQueueLen) return;
+      // A preset still on its way would replace what the slot request sets
+      // (a scene bump, or slot commands after a preset), so it goes first.
+      if (presetQueueLen || presetWaiting) return;
       if (!applySlot(slotQueue[0])) return;   // JSON buffer busy: next time
       for (unsigned i = 1; i < slotQueueLen; i++) slotQueue[i - 1] = slotQueue[i];
       slotQueue[--slotQueueLen] = String();
@@ -1325,7 +1339,8 @@ class NibblesUsermod : public Usermod {
           else r += F(",\"on\":false");
           r += "}";
           if (!slotCommandUnderBump(sl, r)) {
-            if (haveSaved) { if (pendingSlotCount < 4) pendingSlots[pendingSlotCount++] = r; }   // a preset bump would undo it
+            if (finSceneOn && (sl == 1 || sl == 3)) { if (finScenePendingCount < 4) finScenePending[finScenePendingCount++] = r; }
+            else if (haveSaved) { if (pendingSlotCount < 4) pendingSlots[pendingSlotCount++] = r; }   // a preset bump would undo it
             else queueSlotString(r);
           }
           id = NO_ACTION;
@@ -1355,6 +1370,7 @@ class NibblesUsermod : public Usermod {
         // screen, and re-applying it doesn't change currentPreset for trackPresets.
         finPreset = id - NL_FIN_PRESET_BASE;
         if (finBumpOn) finBumpRestore = id;
+        else if (finSceneOn) finScenePreset = id;
         else queuePreset(id);
         return;
       }
@@ -1396,7 +1412,81 @@ class NibblesUsermod : public Usermod {
       return true;
     }
 
+    // A scene bump's palette and layer look, on top of its preset (slotLoop
+    // waits for the preset to land).
+    void sceneSlots(const nl_bump_t &b, unsigned palSlot, unsigned overSlot, String queued[2]) {
+      const uint8_t layer = nl_scene_arg_layer(b.arg);
+      queued[0] = queued[1] = String();
+      if (b.intensity)
+        queued[0] = String(F("{\"id\":")) + palSlot + F(",\"pal\":") + (b.intensity - 1) + F(",\"tt\":0,\"bump\":true}");
+      if (layer == NL_SCENE_LAYER_OFF)
+        queued[1] = String(F("{\"id\":")) + overSlot + F(",\"on\":false,\"tt\":0,\"bump\":true}");
+      else if (layer && presetExists(NL_LAYER_PRESET_BASE + layer))
+        queued[1] = String(F("{\"id\":")) + overSlot + F(",\"look\":") + (NL_LAYER_PRESET_BASE + layer) + F(",\"on\":true,\"tt\":0,\"bump\":true}");
+      for (int i = 0; i < 2; i++) if (queued[i].length()) queueSlotString(queued[i]);
+    }
+
+    // A scene that ends before its requests applied (a quick tap of TAKE,
+    // its preset still on the way) mustn't apply them after the restore.
+    void unqueueSlots(const String queued[2]) {
+      for (int k = 0; k < 2; k++) {
+        if (!queued[k].length()) continue;
+        for (unsigned i = 0; i < slotQueueLen; i++) {
+          if (slotQueue[i] != queued[k]) continue;
+          for (unsigned j = i + 1; j < slotQueueLen; j++) slotQueue[j - 1] = slotQueue[j];
+          slotQueue[--slotQueueLen] = String();
+          break;
+        }
+      }
+    }
+
+    // TAKE's preview of the body's Standby: saved like a preset bump (the
+    // overlay slot too: a state restore doesn't remove a segment it added).
+    void sceneBegin(const nl_bump_t &b) {
+      if (!strip.isMatrix) return;   // no slots without the 2D map
+      haveSaved = saveState();
+      savedPreset = currentPreset;
+      finAtBump = finPreset;
+      sceneOn = true;
+      memcpy(sceneLooks, slotLook, sizeof(sceneLooks));
+      sceneOverRestore = captureSlot(2);
+      bumpCount++;
+      refreshPresets();
+      const uint8_t ps = nl_scene_arg_preset(b.arg);
+      if (ps && presetExists(ps)) queuePreset(ps);
+      sceneSlots(b, 0, 2, sceneQueued);
+    }
+
+    // The fins' Standby: their preset (a slot look of the fin panel), palette
+    // and overlay; both slots go back exactly on release.
+    void finSceneBegin(const nl_bump_t &b) {
+      if (!strip.isMatrix || !haveFinPanel) return;
+      finSceneOn = true;
+      finScenePreset = 0;
+      finScenePendingCount = 0;
+      finSceneRestore[0] = captureSlot(1);
+      finSceneRestore[1] = captureSlot(3);
+      bumpCount++;
+      refreshPresets();
+      const uint8_t ps = nl_scene_arg_preset(b.arg);
+      if (ps && (isFinPreset(ps) || ps == NL_FIN_PRESET_BASE) && presetExists(ps)) queuePreset(ps);
+      sceneSlots(b, 1, 3, finSceneQueued);
+    }
+
+    void finSceneEnd() {
+      if (!finSceneOn) return;
+      finSceneOn = false;
+      unqueueSlots(finSceneQueued);
+      if (finScenePreset) queuePreset(finScenePreset);   // LATCH: the new fin preset, not the old slot
+      else queueSlotString(finSceneRestore[0]);
+      queueSlotString(finSceneRestore[1]);
+      for (unsigned i = 0; i < finScenePendingCount; i++) queueSlotString(finScenePending[i]);
+      finScenePendingCount = 0;
+      finScenePreset = 0;
+    }
+
     void bumpBegin(const nl_bump_t &b) {
+      if (b.action == NL_BUMP_SCENE) { sceneBegin(b); return; }
       if (b.action != NL_BUMP_PRESET) {   // flash, blackout, palette, layer: in a slot, nothing to save
         if (b.action == NL_BUMP_FLASH) bumpBri = bri;
         if (slotBumpStart(b, bodySlotBump)) { bumpCount++; return; }
@@ -1431,12 +1521,17 @@ class NibblesUsermod : public Usermod {
         slotBumpEnd(bodySlotBump);
         return;
       }
-      if (!haveSaved) return;
+      if (sceneOn) unqueueSlots(sceneQueued);
+      if (!haveSaved) { sceneOn = false; return; }
       haveSaved = false;
       bool refin = finPreset != finAtBump;   // the fins changed preset during the bump
       if (pendingPreset) {
         refin = true;                // the body's new preset leaves the fin segment as the bump left it
         queuePreset(pendingPreset, pendingNoEyes);  // a preset command came in during the bump
+        if (sceneOn) {               // re-applying the scene's own preset doesn't land as a change: reset the looks here
+          slotLook[0] = pendingPreset;
+          for (unsigned i = 2; i < SLOT_COUNT; i++) slotLook[i] = 0;
+        }
         // Record it now: a preset bump may already show this preset (LATCH
         // while holding its number), and re-applying it doesn't change
         // currentPreset for trackPresets.
@@ -1448,9 +1543,14 @@ class NibblesUsermod : public Usermod {
         applyJson(json);
         currentPreset = savedPreset;  // restoring the state clears it; it's the same look
         lastSeenPreset = currentPreset;
+        if (sceneOn) {
+          memcpy(slotLook, sceneLooks, sizeof(sceneLooks));
+          queueSlotString(sceneOverRestore);
+        }
       }
+      sceneOn = false;
       // Put the fins' own preset back over the restored state (not under a fin bump: that restores itself).
-      if (haveFinPanel && refin && !finBumpOn) queuePreset(finPreset ? NL_FIN_PRESET_BASE + finPreset : NL_FIN_PRESET_BASE);
+      if (haveFinPanel && refin && !finBumpOn && !finSceneOn) queuePreset(finPreset ? NL_FIN_PRESET_BASE + finPreset : NL_FIN_PRESET_BASE);
       if (pendingBri >= 0) {
         bri = pendingBri;
         stateUpdated(CALL_MODE_DIRECT_CHANGE);
@@ -1483,6 +1583,7 @@ class NibblesUsermod : public Usermod {
 #endif
       if (ev == NL_BUMP_EV_END || ev == NL_BUMP_EV_REPLACE) {
         slotBumpEnd(finSlotBump);
+        finSceneEnd();
         if (finBumpOn) {
           finPreset = finBumpRestore - NL_FIN_PRESET_BASE;   // what the fins go back to is theirs
           queuePreset(finBumpRestore);
@@ -1491,6 +1592,7 @@ class NibblesUsermod : public Usermod {
       }
       if (ev == NL_BUMP_EV_BEGIN || ev == NL_BUMP_EV_REPLACE) {
         const nl_bump_t &b = finBumps.bump;
+        if (b.action == NL_BUMP_SCENE) { finSceneBegin(b); return; }
         if ((b.action == NL_BUMP_PALETTE || b.action == NL_BUMP_LAYER) && slotBumpStart(b, finSlotBump)) { bumpCount++; return; }
         refreshPresets();
         if (b.action == NL_BUMP_PRESET && isFinPreset(b.arg) && presetExists(b.arg)) {
@@ -1607,7 +1709,7 @@ class NibblesUsermod : public Usermod {
           queueSlotString(bodySlotBump.apply);
         }
         if (isFinPreset(currentPreset)) {
-          if (!finBumpOn) finPreset = currentPreset - NL_FIN_PRESET_BASE;
+          if (!finBumpOn && !finSceneOn) finPreset = currentPreset - NL_FIN_PRESET_BASE;
           slotLook[1] = currentPreset;
         } else if (currentPreset > 0 && !haveSaved) {
           bodyPreset = currentPreset;
@@ -1618,7 +1720,7 @@ class NibblesUsermod : public Usermod {
       // A body preset saved with every segment switches the fin segment off: the fins follow the body again.
       if (finPanelOn || !haveFinPanel) panelOffSince = 0;
       else if (!panelOffSince) panelOffSince = now;
-      else if (finPreset && !finBumpOn && now - panelOffSince > 500) finPreset = 0;
+      else if (finPreset && !finBumpOn && !finSceneOn && now - panelOffSince > 500) finPreset = 0;
     }
 
     void handle(const RxItem &it) {

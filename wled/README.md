@@ -251,6 +251,18 @@ the outcome of the last request.
     then lets the bump go.
   - If a body preset lands during a palette or layer bump, the slot goes
     back to that preset's version instead.
+  - `NL_BUMP_SCENE` (2026-10-30; the base's TAKE preview of a Standby with
+    a palette or layer look cued): a preset, a palette and a layer look
+    together. `arg = nl_scene_arg(preset, layer)` (preset 0 leaves it;
+    layer 1-16 a layer look, `NL_SCENE_LAYER_OFF` off), `intensity` =
+    palette + 1 (0 leaves it). On `NL_TARGET_WLED` it's the body: saved like
+    a preset bump (plus the overlay slot, which a state restore wouldn't
+    remove), the preset, then slot 0's palette and slot 2's look. On
+    `NL_TARGET_FINS` it's the fins: slots 1 and 3 captured, the fin preset
+    (as a preset), then their palette and look; both slots put back
+    exactly. Commands during it (LATCH) are what it ends on.
+  - Slot requests wait while a preset is queued or still landing, so a
+    preset never wipes a palette or layer look sent after it.
 - **Report:** `NL_MSG_WLED_LAYERS` reports every slot twice a second (on,
   look, effect, palette, blend, opacity). The mirror to the simulator
   carries the same as `"slots"`.

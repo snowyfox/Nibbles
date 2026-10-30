@@ -428,6 +428,10 @@ static void test_slot_arg(void)
     CHECK(nl_slot_arg_slot(a) == NL_SLOT_BODY_OVER && nl_slot_arg_value(a) == 103, "slot arg: slot 2, preset 103 round trip (%d)", a);
     const int16_t b = nl_slot_arg(NL_SLOT_FINS, 255);
     CHECK(nl_slot_arg_slot(b) == NL_SLOT_FINS && nl_slot_arg_value(b) == 255 && b > 0, "slot arg: palette 255 stays positive");
+    const int16_t sc = nl_scene_arg(250, NL_SCENE_LAYER_OFF);
+    CHECK(nl_scene_arg_preset(sc) == 250 && nl_scene_arg_layer(sc) == NL_SCENE_LAYER_OFF && sc > 0, "scene arg: preset 250, layer off round trip");
+    const int16_t sd = nl_scene_arg(0, NL_LAYER_PRESET_COUNT);
+    CHECK(nl_scene_arg_preset(sd) == 0 && nl_scene_arg_layer(sd) == NL_LAYER_PRESET_COUNT, "scene arg: keep preset, layer 16");
     CHECK(sizeof(nl_wled_layers_t) == 1 + 6 * NL_SLOT_COUNT && sizeof(nl_wled_layers_t) + sizeof(nl_radio_hdr_t) <= NL_RADIO_MAX,
           "layers message fits a radio packet (%u bytes)", (unsigned)sizeof(nl_wled_layers_t));
 }

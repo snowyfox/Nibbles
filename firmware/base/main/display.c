@@ -583,12 +583,16 @@ static void touch_key(lv_obj_t *obj, ctl_key_t key)
     lv_obj_add_event_cb(obj, on_key_touch, LV_EVENT_PRESS_LOST, (void *)(intptr_t)key);
 }
 
-// rows: 4 (body, eyes, fins, brightness) or 5 (and the body's look: palette and layer)
-static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t color, int rows)
+// LIVE: body, eyes, fins, brightness and the body's look (palette and layer);
+// STANDBY: body, eyes, fins, the look, then what TAKE does.
+static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t color, bool live)
 {
-    static const char *keys[] = { "BODY", "EYES", "FINS", "BRI", "LOOK" };
-    static const uint32_t key_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_TITLE, COL_WLED };
-    sp->panel = make_panel(pagem, y, 132 + (rows - 4) * 25, color);
+    static const char *live_keys[] = { "BODY", "EYES", "FINS", "BRI", "LOOK" }, *stby_keys[] = { "BODY", "EYES", "FINS", "LOOK", "" };
+    static const uint32_t live_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_TITLE, COL_WLED }, stby_cols[] = { COL_WLED, COL_EYES, COL_FINS, COL_WLED, COL_TITLE };
+    const char *const *keys = live ? live_keys : stby_keys;
+    const uint32_t *key_cols = live ? live_cols : stby_cols;
+    const int rows = 5;
+    sp->panel = make_panel(pagem, y, 157, color);
     sp->title = at(sp->panel, &lv_font_montserrat_16, color, 8, 5, 0);
     lv_label_set_text(sp->title, title);
     sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 82, 7, 76);
@@ -783,11 +787,11 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
     m.problem = at(m.power, &font_tab12, COL_BAD, 8, 44, 148);   // in place of row 3 when there is one
 
-    scene_panel(&m.live, 72, "LIVE", COL_LIVE, 5);
-    scene_panel(&m.stby, 235, "STANDBY", COL_STANDBY, 4);
+    scene_panel(&m.live, 72, "LIVE", COL_LIVE, true);
+    scene_panel(&m.stby, 235, "STANDBY", COL_STANDBY, false);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 373, 50, 0);
+    m.target = make_panel(pagem, 398, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -795,13 +799,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 429, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 451, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 469, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 454, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 476, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 494, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 491);
+    lv_obj_set_pos(event_labels[2], 8, 516);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -825,6 +829,18 @@ static void fill_scene(scene_panel_t *sp, const ctl_scene_t *sc, const char *bod
     if (bri >= 0) lv_label_set_text_fmt(sp->val[3], "%d%%", (bri * 100 + 127) / 255);
     for (int i = 0; i < 3; i++)
         lv_obj_set_style_text_color(sp->val[i], lv_color_hex(bright_rows & (1 << (i + 1)) ? COL_TEXT : COL_DIM), 0);
+}
+
+// LOOK: the body's palette ("--" where not known, or a new preset's own) and the layer over it.
+static void set_look(lv_obj_t *val, const ctl_layers_t *l, const char *pal_name)
+{
+    char pal[28] = "--";
+    if (l->body_pal >= 0) {
+        if (pal_name[0]) snprintf(pal, sizeof(pal), "%s", pal_name);
+        else snprintf(pal, sizeof(pal), "pal %d", l->body_pal);
+    }
+    if (l->body_layer > 0) lv_label_set_text_fmt(val, "%s + L%d", pal, l->body_layer - NL_LAYER_PRESET_BASE);
+    else lv_label_set_text(val, pal);
 }
 
 static uint32_t target_col(int t)
@@ -923,19 +939,13 @@ static void main_update(const display_status_t *s)
     // LIVE and STANDBY
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);
     lv_label_set_text(m.live.note, s->wled_fresh || s->eyes_fresh ? "" : "not heard");
-    {   // LOOK: the body's palette and the layer over it
-        const ctl_layers_t *l = &s->layers;
-        char pal[28] = "--";
-        if (l->body_pal >= 0) {
-            if (s->live_pal_name[0]) snprintf(pal, sizeof(pal), "%s", s->live_pal_name);
-            else snprintf(pal, sizeof(pal), "pal %d", l->body_pal);
-        }
-        if (l->body_layer > 0) lv_label_set_text_fmt(m.live.val[4], "%s + L%d", pal, l->body_layer - NL_LAYER_PRESET_BASE);
-        else lv_label_set_text(m.live.val[4], pal);
-    }
+    set_look(m.live.val[4], &s->layers, s->live_pal_name);
     fill_scene(&m.stby, &s->standby, s->stby_body, s->stby_eyes, s->stby_fins, -1, s->diff);
-    lv_label_set_text(m.stby.val[3], s->diff ? "hold TAKE" : "same as Live");
-    lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
+    set_look(m.stby.val[3], &s->stby_layers, s->stby_pal_name);
+    lv_obj_set_style_text_color(m.stby.val[3], lv_color_hex(s->stby_layers.body_pal != s->layers.body_pal ||
+                                                             s->stby_layers.body_layer != s->layers.body_layer ? COL_TEXT : COL_DIM), 0);
+    lv_label_set_text(m.stby.val[4], s->diff ? "hold TAKE" : "same as Live");
+    lv_obj_set_style_text_color(m.stby.val[4], lv_color_hex(s->diff ? COL_STANDBY : COL_DIM), 0);
     lv_label_set_text(m.stby.note, s->take_preview ? "PREVIEW" : "");
     lv_obj_set_style_text_color(m.stby.note, lv_color_hex(COL_STANDBY), 0);
     lv_obj_set_style_bg_color(m.stby.panel, lv_color_hex(s->take_preview ? 0x0c3a18 : COL_CARD), 0);

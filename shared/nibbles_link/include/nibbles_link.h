@@ -195,6 +195,11 @@ typedef enum {
                             // receiver (WLED preset id; eye preset index + 1)
     NL_BUMP_PALETTE = 4,    // WLED: arg = nl_slot_arg(slot, palette): that palette while held
     NL_BUMP_LAYER = 5,      // WLED: arg = nl_slot_arg(slot, preset): the slot shows that preset's look while held
+    NL_BUMP_SCENE = 6,      // WLED: a preset, a palette and a layer look together while held (TAKE's
+                            // preview of Standby): arg = nl_scene_arg(preset, layer), intensity =
+                            // palette + 1 (0: leave it). NL_TARGET_WLED: the body (a body preset, the
+                            // body's palette and overlay); NL_TARGET_FINS: the fins (a fin preset, their
+                            // palette and overlay). Everything goes back as it was on release.
 } nl_bump_action_t;
 
 typedef enum {
@@ -256,6 +261,15 @@ typedef enum {
 static inline int16_t nl_slot_arg(uint8_t slot, uint8_t value) { return (int16_t)(((slot & 0x7F) << 8) | value); }
 static inline uint8_t nl_slot_arg_slot(int16_t arg) { return (uint8_t)((arg >> 8) & 0x7F); }
 static inline uint8_t nl_slot_arg_value(int16_t arg) { return (uint8_t)(arg & 0xFF); }
+
+// A scene bump's preset and layer look. preset: a WLED preset id, 0 to leave
+// it (the fins: NL_FIN_PRESET_BASE + n, NL_FIN_PRESET_BASE itself following
+// the body). layer: 0 to leave it, 1..NL_LAYER_PRESET_COUNT the look of layer
+// preset NL_LAYER_PRESET_BASE + n, NL_SCENE_LAYER_OFF the overlay off.
+#define NL_SCENE_LAYER_OFF 0x7F
+static inline int16_t nl_scene_arg(uint8_t preset, uint8_t layer) { return (int16_t)(((layer & 0x7F) << 8) | preset); }
+static inline uint8_t nl_scene_arg_preset(int16_t arg) { return (uint8_t)(arg & 0xFF); }
+static inline uint8_t nl_scene_arg_layer(int16_t arg) { return (uint8_t)((arg >> 8) & 0x7F); }
 
 typedef struct NL_PACKED {
     uint8_t on;             // shown (an existing segment, switched on)

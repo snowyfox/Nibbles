@@ -40,6 +40,8 @@ typedef struct {
     char live_fins[NL_NAME_LEN], stby_fins[NL_NAME_LEN];  // fin preset names
     ctl_layers_t layers;      // WLED's layer slots (palettes, overlays), -1 where not known
     char live_pal_name[24];   // the body's palette by name, "" if not one the keypad knows
+    ctl_layers_t stby_layers; // Standby's, as TAKE would leave them (ctl_standby_layers)
+    char stby_pal_name[24];
     int8_t fin_sensor;        // the fins follow their angle sensor (1), are locked (0), -1 not known
     uint8_t brightness;       // WLED's master brightness
     uint8_t target;           // ctl_target_t

@@ -233,11 +233,124 @@ static void test_palettes(void)
     CHECK(press(&c, KEY_NUM1) == 0);
     release(&c, KEY_NUM1);
     release(&c, KEY_EYES);
-    // LATCH first on this page doesn't cue anything in Standby
+    // LATCH first cues the palette in Standby, unseen
     press(&c, KEY_LATCH);
-    CHECK(press(&c, KEY_NUM4) == 0 && c.standby.body == 1);
+    CHECK(press(&c, KEY_NUM4) == 0 && c.standby.body == 1 && c.standby_layers.body_pal == c.palettes[3]);
     release(&c, KEY_NUM4);
     release(&c, KEY_LATCH);
+}
+
+static ctl_action_t *find(ctl_act_type_t type, int target)
+{
+    for (int i = 0; i < nacts; i++)
+        if (acts[i].type == type && (target < 0 || acts[i].target == target)) return &acts[i];
+    return NULL;
+}
+
+// Palettes and layer looks in Standby: cue, preview with TAKE, take with LATCH.
+static void test_standby_layers(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    layers(&c, 11, -1, 0, 0);
+    c.page = PAGE_PALETTES;
+    // LATCH held, then 2: Lava cued for the body; nothing sent; TAKE lights up
+    press(&c, KEY_LATCH);
+    CHECK(press(&c, KEY_NUM2) == 0 && c.standby_layers.body_pal == 8);
+    release(&c, KEY_NUM2);
+    release(&c, KEY_LATCH);
+    CHECK(ctl_standby_diff(&c) == (1 << TGT_BODY));
+    uint32_t rgb[KEY_COUNT];
+    ctl_led_colors(&c, now, rgb);
+    CHECK(rgb[KEY_NUM2] == 0x00e040 && rgb[KEY_NUM4] == 0xff1010);   // Standby green, Live (Rainbow 11) red
+    // TAKE previews it: one scene bump on the body, palette + 1, preset and layer left alone
+    press(&c, KEY_TAKE);
+    CHECK(nacts == 1 && acts[0].type == ACT_BUMP && acts[0].target == TGT_BODY && acts[0].bump == NL_BUMP_SCENE);
+    CHECK(acts[0].value == nl_scene_arg(0, 0) && acts[0].extra == 9);
+    layers(&c, 8, -1, 0, 0);                  // WLED reports the preview as live
+    press(&c, KEY_LATCH);                     // keep it: the palette, then the bump lets go
+    CHECK(nacts == 2 && acts[0].type == ACT_SLOT_PALETTE && acts[0].target == NL_SLOT_BODY && acts[0].value == 8);
+    CHECK(acts[1].type == ACT_BUMP_END);
+    release(&c, KEY_LATCH);
+    CHECK(release(&c, KEY_TAKE) == 0);
+    CHECK(c.layers.body_pal == 8 && c.standby_layers.body_pal == 11);   // the old palette, one TAKE away
+    // TAKE without LATCH: a preview of Rainbow, then back
+    press(&c, KEY_TAKE);
+    CHECK(nacts == 1 && acts[0].bump == NL_BUMP_SCENE && acts[0].extra == 12);
+    release(&c, KEY_TAKE);
+    CHECK(nacts == 1 && acts[0].type == ACT_BUMP_END && c.layers.body_pal == 8);
+
+    // A new preset in Standby comes with its own palette (the cue is cleared);
+    // a layer look cued after it goes with it.
+    c.page = PAGE_PRESETS;
+    press(&c, KEY_LATCH);
+    press(&c, KEY_NUM5);
+    release(&c, KEY_NUM5);
+    c.page = PAGE_LAYERS;
+    press(&c, KEY_NUM3);
+    release(&c, KEY_NUM3);
+    release(&c, KEY_LATCH);
+    CHECK(c.standby.body == 5 && c.standby_layers.body_pal == -1 && c.standby_layers.body_layer == NL_LAYER_PRESET_BASE + 3);
+    press(&c, KEY_TAKE);
+    const ctl_action_t *b = find(ACT_BUMP, TGT_BODY);
+    CHECK(b && b->bump == NL_BUMP_SCENE && b->value == nl_scene_arg(5, 3) && b->extra == 0);
+    CHECK(has(ACT_BUMP, TGT_EYES, 5) && !find(ACT_BUMP, TGT_FINS));
+    press(&c, KEY_LATCH);
+    // the preset, then its layer look, then the eyes, then the bumps let go
+    CHECK(acts[0].type == ACT_PRESET && acts[0].target == TGT_BODY && acts[0].value == 5);
+    CHECK(acts[1].type == ACT_SLOT_LOOK && acts[1].target == NL_SLOT_BODY_OVER && acts[1].value == NL_LAYER_PRESET_BASE + 3);
+    CHECK(has(ACT_PRESET, TGT_EYES, 5) && acts[nacts - 1].type == ACT_BUMP_END);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_TAKE);
+    CHECK(c.live.body == 5 && c.layers.body_layer == NL_LAYER_PRESET_BASE + 3 && c.layers.body_pal == -1);
+    CHECK(c.standby.body == 1 && c.standby_layers.body_pal == 8 && c.standby_layers.body_layer == 0);   // Live as it was
+    // Taking it back puts preset 1 back with Lava and no layer
+    layers(&c, 30, -1, NL_LAYER_PRESET_BASE + 3, 0);
+    press(&c, KEY_TAKE);
+    b = find(ACT_BUMP, TGT_BODY);
+    CHECK(b && b->bump == NL_BUMP_SCENE && b->value == nl_scene_arg(1, NL_SCENE_LAYER_OFF) && b->extra == 9);
+    release(&c, KEY_TAKE);
+
+    // A layer look Standby already has is cued off; LATCH + TAKE clears the cues
+    press(&c, KEY_LATCH);
+    tap(&c, KEY_NUM3);
+    CHECK(c.standby_layers.body_layer == NL_LAYER_PRESET_BASE + 3);
+    tap(&c, KEY_NUM3);
+    CHECK(c.standby_layers.body_layer == 0);
+    tap(&c, KEY_TAKE);
+    release(&c, KEY_LATCH);
+    CHECK(c.standby.body == 5 && c.standby_layers.body_pal == -1 && c.standby_layers.body_layer == -1 && ctl_standby_diff(&c) == 0);
+
+    // The fins on their own preset: a palette cued for FINS previews as a scene bump on the fins
+    live(&c, 5, 5, 3);
+    layers(&c, 30, 6, 0, 0);
+    c.page = PAGE_PALETTES;
+    press(&c, KEY_LATCH);                     // Standby = Live
+    tap(&c, KEY_TAKE);
+    release(&c, KEY_LATCH);
+    press(&c, KEY_FINS);
+    press(&c, KEY_LATCH);
+    tap(&c, KEY_NUM1);                        // Party is already the fins' palette: nothing to take
+    CHECK(ctl_standby_diff(&c) == 0);
+    tap(&c, KEY_NUM2);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_FINS);
+    CHECK(ctl_standby_diff(&c) == (1 << TGT_FINS));
+    press(&c, KEY_TAKE);
+    CHECK(nacts == 1 && acts[0].target == TGT_FINS && acts[0].bump == NL_BUMP_SCENE && acts[0].value == nl_scene_arg(0, 0) && acts[0].extra == 9);
+    press(&c, KEY_LATCH);
+    CHECK(acts[0].type == ACT_SLOT_PALETTE && acts[0].target == NL_SLOT_FINS && acts[0].value == 8);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_TAKE);
+
+    // Latching a palette live drops the old one into Standby
+    layers(&c, 30, 8, 0, 0);
+    press(&c, KEY_NUM3);
+    press(&c, KEY_LATCH);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM3);
+    CHECK(c.layers.body_pal == c.palettes[2] && c.standby.body == 5 && c.standby_layers.body_pal == 30);
 }
 
 static void test_layers(void)
@@ -456,6 +569,7 @@ int main(void)
     test_pages_and_brightness();
     test_palettes();
     test_layers();
+    test_standby_layers();
     test_fins_and_all();
     test_flash_blackout();
     test_lock();

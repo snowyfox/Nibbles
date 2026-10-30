@@ -128,11 +128,12 @@ static const uint8_t slot_target[SLOTS] = { NL_TARGET_EYES, NL_TARGET_WLED, NL_T
 static uint16_t bump_id;
 static SemaphoreHandle_t bump_mutex;
 
-static void slot_start(int i, uint8_t action, int arg)
+// intensity: 255 (full) for flashes; a scene bump's palette + 1.
+static void slot_start(int i, uint8_t action, int arg, uint8_t intensity)
 {
     xSemaphoreTake(bump_mutex, portMAX_DELAY);
     slots[i].b = (nl_bump_t){ .id = ++bump_id, .target = slot_target[i],
-                              .action = action, .phase = NL_BUMP_START, .intensity = 255, .arg = (int16_t)arg };
+                              .action = action, .phase = NL_BUMP_START, .intensity = intensity, .arg = (int16_t)arg };
     slots[i].on = true;
     slots[i].next_hold = esp_timer_get_time() + NL_BUMP_KEEPALIVE_MS * 1000LL;
     nl_espnow_broadcast(NL_MSG_BUMP, &slots[i].b, sizeof(nl_bump_t));
@@ -153,8 +154,8 @@ static void slot_stop(int i)
 // target: NL_TARGET_* mask
 static void bump_start(uint8_t target, uint8_t action, int arg)
 {
-    if (target & NL_TARGET_EYES) slot_start(SLOT_EYES, action, arg);
-    if (target & NL_TARGET_WLED) slot_start(SLOT_WLED, action, arg);
+    if (target & NL_TARGET_EYES) slot_start(SLOT_EYES, action, arg, 255);
+    if (target & NL_TARGET_WLED) slot_start(SLOT_WLED, action, arg, 255);
 }
 
 static void bump_stop(uint8_t target)
@@ -264,9 +265,10 @@ static void do_ctl_action(const ctl_action_t *a)
         case ACT_SLOT_LOOK:    send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_LOOK, nl_slot_arg(a->target, (uint8_t)a->value)); break;
         case ACT_SLOT_PALETTE: send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_PALETTE, nl_slot_arg(a->target, (uint8_t)a->value)); break;
         case ACT_BUMP:
-            if (a->target == TGT_FINS && a->bump == NL_BUMP_PRESET) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value);
-            else if (a->target == TGT_FINS) slot_start(SLOT_FINS, a->bump, a->value);   // palette, layer: a slot arg
-            else slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value);
+            if (a->target == TGT_FINS && a->bump == NL_BUMP_PRESET) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value, 255);
+            else if (a->bump == NL_BUMP_SCENE) slot_start(a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED, a->bump, a->value, a->extra);
+            else if (a->target == TGT_FINS) slot_start(SLOT_FINS, a->bump, a->value, 255);   // palette, layer: a slot arg
+            else slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value, 255);
             break;
         case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED); break;
     }
@@ -638,6 +640,9 @@ void app_main(void)
         {
             const char *pn = ctl_palette_name(&c, c.layers.body_pal);
             snprintf(ds.live_pal_name, sizeof(ds.live_pal_name), "%s", pn ? pn : "");
+            ctl_standby_layers(&c, &ds.stby_layers);
+            pn = ctl_palette_name(&c, ds.stby_layers.body_pal);
+            snprintf(ds.stby_pal_name, sizeof(ds.stby_pal_name), "%s", pn ? pn : "");
         }
         const uint8_t found = keypad_boards_found();
         ds.keypads_found = __builtin_popcount(found);

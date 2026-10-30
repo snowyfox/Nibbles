@@ -4,7 +4,9 @@
 // PAGE cycles what the numbers are: presets 1-8, presets 9-16, palettes (on
 // the target's own layer, the effect keeps running) and layer looks (WLED
 // presets NL_LAYER_PRESET_BASE + n on the target's overlay; LATCH on the one
-// that's live switches it off). Palettes and layers have no Standby yet. Plain C with no ESP-IDF calls, so it runs
+// that's live switches it off). Standby holds palettes and layer looks too:
+// LATCH held first, then a number, cues one (a layer look already in Standby
+// is cued off); TAKE previews and takes them with Standby's presets. Plain C with no ESP-IDF calls, so it runs
 // in the host tests (test/host); main.c feeds it key events and telemetry and
 // carries out the actions it returns.
 #pragma once
@@ -19,7 +21,8 @@ typedef enum {
     KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS,  // target selectors
     KEY_PAGE,        // tap: next page (presets 1-8, 9-16, palettes, layers); hold + number: brightness
     KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
-                     // held first, then a number: cue that preset in Standby; + TAKE: Standby = Live
+                     // held first, then a number: cue that preset (palette, layer look) in Standby;
+                     // + TAKE: Standby = Live
     KEY_BLACKOUT,    // bump while held
     KEY_FIN_SENSOR,  // tap: fin LEDs follow the fins' real angle, or stay at the modelled angle (live)
     KEY_TAKE,        // held: show Standby while held; + a tap of LATCH: swap Standby and Live
@@ -49,7 +52,8 @@ typedef enum {
     ACT_FINS,        // the fins' angle sensor: value = 0 locked at the model angle, 1 follow, 2 toggle
     ACT_BRIGHTNESS,  // value = 0..255 (WLED; the eyes follow it)
     ACT_BUMP,        // slot (TGT_BODY, TGT_EYES or TGT_FINS), bump = NL_BUMP_* action, value = arg
-                     // (fin preset bumps: the fin preset; palette and layer bumps: nl_slot_arg(WLED slot, value))
+                     // (fin preset bumps: the fin preset; palette and layer bumps: nl_slot_arg(WLED slot, value);
+                     // scene bumps: nl_scene_arg(WLED preset id, layer) and extra = palette + 1)
     ACT_BUMP_END,    // slot
     ACT_SLOT_LOOK,   // target = WLED layer slot (nl_slot_t), value = layer preset (0: switch the slot off)
     ACT_SLOT_PALETTE, // target = WLED layer slot, value = palette
@@ -60,6 +64,7 @@ typedef struct {
     uint8_t target;
     uint8_t bump;
     int16_t value;
+    uint8_t extra;   // NL_BUMP_SCENE: palette + 1 (0: leave it), the bump's intensity
 } ctl_action_t;
 
 #define CTL_MAX_ACTIONS      8
@@ -86,6 +91,8 @@ typedef struct {
 
 typedef struct {
     ctl_scene_t live, standby;
+    ctl_layers_t standby_layers;     // palettes and layer looks cued in Standby (layer 0: off); -1: none cued,
+                                     // Standby leaves it as it is, or as its new preset sets it
     bool have_live, standby_set;     // standby_set: Standby has been filled from Live once
     uint8_t brightness;              // WLED's, from telemetry
     int8_t fin_sensor;               // the fins follow their angle sensor: 1, 0, -1 not known
@@ -108,6 +115,7 @@ typedef struct {
     int num_page;                    // the page it was pressed on
     ctl_layers_t num_layers;         // the layers before it (WLED reports a layer bump as live)
     bool take_preview;               // TAKE is down and the Standby bumps are on
+    ctl_layers_t take_layers;        // the layers when TAKE went down (WLED reports its preview as live)
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on
 } ctl_t;
 
@@ -126,8 +134,14 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out);
 // WLED's layer slots (from NL_MSG_WLED_LAYERS; fields -1 where not known).
 void ctl_set_layers(ctl_t *c, const ctl_layers_t *layers);
 
-// Which parts of Standby differ from Live (bit per target: 1 << TGT_BODY etc.).
+// Which parts of Standby differ from Live (bit per target: 1 << TGT_BODY etc.;
+// a cued palette or layer look counts for the body or the fins).
 uint8_t ctl_standby_diff(const ctl_t *c);
+
+// Standby's palettes and layer looks as TAKE would leave them: the cued one,
+// else Live's where Standby keeps Live's preset; else -1 for the palette (the
+// new preset's own) and 0 for the layer (a new preset clears it).
+void ctl_standby_layers(const ctl_t *c, ctl_layers_t *out);
 
 // Each key's LED colour now (0xRRGGBB, full scale; the LED driver dims it).
 void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT]);

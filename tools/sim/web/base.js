@@ -181,34 +181,57 @@ async function wledBumpEnd() {
   await wledPost({ on: bumpSaved.lit, bri: bumpSaved.bri, tt: 0 }).catch(() => {});
 }
 
-// Palette and layer bumps: the slot shows it while held, then goes back to what
-// it was (or to what a slot command for it meanwhile said: that's LATCH), as the usermod does.
-const slotBumps = {};   // by the base's bump target (TGT.BODY, TGT.FINS): { slot, restore }
+// Palette, layer and scene bumps: the slots show it while held, then go back to
+// what they were (or to what a slot command for one meanwhile said: that's
+// LATCH), as the usermod does. A scene (TAKE's preview of a cued palette or
+// layer look) may also carry a preset, bumped the usual way.
+const slotBumps = {};   // by the base's bump target (TGT.BODY, TGT.FINS): { restores: {slot: request}, preset, newPreset }
+const BUMP_SCENE = 6;
 function slotPost(req) { return wledPost({ nibbles: { slot: req } }).catch(() => {}); }
-function slotBump(target, bump, arg) {
-  const s = arg >> 8, v = arg & 255, cur = wledSlots && wledSlots.find((x) => x.id === s);
-  const restore = bump === 4 ? { id: s, pal: cur ? cur.pal : 0 }
-                : cur && cur.on && cur.look ? { id: s, look: cur.look, on: true } : { id: s, on: false };
-  slotBumps[target] = { slot: s, restore };
-  baseBumping = bump;
-  slotPost(bump === 4 ? { id: s, pal: v, tt: 0 } : v ? { id: s, look: v, on: true, tt: 0 } : { id: s, on: false, tt: 0 });
+function slotNow(s) {
+  const cur = wledSlots && wledSlots.find((x) => x.id === s);
+  return { pal: { id: s, pal: cur ? cur.pal : 0 }, look: cur && cur.on && cur.look ? { id: s, look: cur.look, on: true } : { id: s, on: false } };
 }
-function slotBumpEnd(target) {
+function lookReq(s, v) { return v ? { id: s, look: v, on: true, tt: 0 } : { id: s, on: false, tt: 0 }; }
+function slotBump(target, bump, arg) {
+  const s = arg >> 8, v = arg & 255;
+  slotBumps[target] = { restores: { [s]: bump === 4 ? slotNow(s).pal : slotNow(s).look } };
+  baseBumping = bump;
+  slotPost(bump === 4 ? { id: s, pal: v, tt: 0 } : lookReq(s, v));
+}
+async function sceneBump(target, arg, extra) {
+  const fins = target === TGT.FINS, ps = arg & 255, layer = (arg >> 8) & 127;
+  const palSlot = fins ? SLOT.FINS : SLOT.BODY, laySlot = fins ? SLOT.FINS_OVER : SLOT.BODY_OVER;
+  const restores = {};
+  if (extra) restores[palSlot] = slotNow(palSlot).pal;
+  if (layer) restores[laySlot] = slotNow(laySlot).look;
+  slotBumps[target] = { restores, preset: !!ps };
+  baseBumping = BUMP_SCENE;
+  if (ps && fins) await finBump(ps - FIN_BASE);
+  else if (ps) await wledBump(3, ps);
+  if (extra) await slotPost({ id: palSlot, pal: extra - 1, tt: 0 });
+  if (layer) await slotPost(lookReq(laySlot, layer === 127 ? 0 : LAYER_BASE + layer));
+}
+async function slotBumpEnd(target) {
   const b = slotBumps[target];
   if (!b) return false;
   delete slotBumps[target];
   baseBumping = 0;
-  slotPost({ ...b.restore, tt: 0 });
+  if (b.preset && target === TGT.FINS) await finBumpEnd();
+  else if (b.preset) await wledBumpEnd();
+  // A new preset (LATCH) brings its own palette and layers: only commands go on top of it.
+  for (const r of Object.values(b.restores))
+    if (!b.newPreset || r.cmd) { const { cmd, ...req } = r; await slotPost({ ...req, tt: 0 }); }
   return true;
 }
 function slotCommand(slot, req) {
-  const under = Object.values(slotBumps).find((b) => b.slot === slot);
-  if (under) under.restore = req;   // what the slot goes back to when the bump ends
+  const under = Object.values(slotBumps).find((b) => slot in b.restores);
+  if (under) under.restores[slot] = { ...req, cmd: true };   // what the slot goes back to when the bump ends
   else slotPost(req);
 }
 
 function baseActions(list) {
-  for (const [type, target, bump, value] of list) {
+  for (const [type, target, bump, value, extra] of list) {
     if (type === ACT.SLOT_LOOK) {
       slotCommand(target, value ? { id: target, look: value, on: true } : { id: target, on: false });
       baseEvent = value ? `layer ${value - LAYER_BASE} on ${target === SLOT.FINS_OVER ? 'the fins' : 'the body'}` : 'layer off';
@@ -220,7 +243,9 @@ function baseActions(list) {
       continue;
     }
     if (type === ACT.BUMP && (bump === 4 || bump === 5)) { slotBump(target, bump, value); continue; }
-    if (type === ACT.BUMP_END && slotBumpEnd(target)) continue;
+    if (type === ACT.BUMP && bump === BUMP_SCENE) { sceneBump(target, value, extra); continue; }
+    if (type === ACT.PRESET && slotBumps[target]) slotBumps[target].newPreset = true;
+    if (type === ACT.BUMP_END && slotBumps[target]) { slotBumpEnd(target); continue; }
     if (type === ACT.PRESET && target === TGT.FINS) {
       if (finBumpSaved !== null) finBumpSaved = value;   // under a fin bump: its release lands here
       else wledPost({ ps: FIN_BASE + value }).catch(() => {});
@@ -395,14 +420,19 @@ function baseDraw() {
     if (bri !== null) $(pre + '3').textContent = `${Math.round(bri * 100 / 255)}%`;
   };
   rows('bs_l', s.live, +$('bri').value, null);
-  {   // LOOK: the body's palette and the layer over it
-    const [bp, , bl] = s.layers || [-1, -1, 0, 0];
-    const pal = bp < 0 ? '--' : s.pal_name || `pal ${bp}`;
-    $('bs_l4').textContent = bl > 0 ? `${pal} + L${bl - LAYER_BASE}` : pal;
-  }
+  // LOOK: the body's palette and the layer over it
+  const look = (l, name) => {
+    const [bp, , bl] = l || [-1, -1, 0, 0];
+    const pal = bp < 0 ? '--' : name || `pal ${bp}`;
+    return bl > 0 ? `${pal} + L${bl - LAYER_BASE}` : pal;
+  };
+  $('bs_l4').textContent = look(s.layers, s.pal_name);
   rows('bs_s', s.standby, null, s.diff);
-  $('bs_s3').textContent = s.diff ? 'hold TAKE' : 'same as Live';
-  $('bs_s3').style.color = s.diff ? '#30e060' : '#4a505a';
+  $('bs_s3').textContent = look(s.stby_layers, s.stby_pal_name);
+  const lookDiff = s.stby_layers && s.layers && (s.stby_layers[0] !== s.layers[0] || s.stby_layers[2] !== s.layers[2]);
+  $('bs_s3').style.color = lookDiff ? 'var(--text)' : '#4a505a';
+  $('bs_s4').textContent = s.diff ? 'hold TAKE' : 'same as Live';
+  $('bs_s4').style.color = s.diff ? '#30e060' : '#4a505a';
   $('bs_preview').textContent = s.preview ? 'PREVIEW' : '';
   $('bs_stby').style.background = s.preview ? '#0c3a18' : 'var(--card)';
   // target box and the rest

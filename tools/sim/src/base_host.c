@@ -23,14 +23,15 @@ void base_set_layers(int body_pal, int fins_pal, int body_layer, int fins_layer)
     ctl_set_layers(&ctl, &l);
 }
 
-// Actions as 4 ints each: type, target, bump, value. Returns how many.
+// Actions as 5 ints each: type, target, bump, value, extra. Returns how many.
 static int flat(const ctl_action_t *a, int n, int *out)
 {
     for (int i = 0; i < n; i++) {
-        out[i * 4] = a[i].type;
-        out[i * 4 + 1] = a[i].target;
-        out[i * 4 + 2] = a[i].bump;
-        out[i * 4 + 3] = a[i].value;
+        out[i * 5] = a[i].type;
+        out[i * 5 + 1] = a[i].target;
+        out[i * 5 + 2] = a[i].bump;
+        out[i * 5 + 3] = a[i].value;
+        out[i * 5 + 4] = a[i].extra;
     }
     return n;
 }
@@ -48,13 +49,16 @@ int base_tick(unsigned now_ms, int *out)
 }
 
 // live body, eyes, fins; standby body, eyes, fins; target, page, locked,
-// take_preview, latch, diff, brightness; layers: body palette, fins palette, body layer, fins layer
-void base_state(int out[17])
+// take_preview, latch, diff, brightness; layers: body palette, fins palette, body layer, fins layer;
+// Standby's the same way, as TAKE would leave them (ctl_standby_layers)
+void base_state(int out[21])
 {
-    const int v[17] = { ctl.live.body, ctl.live.eyes, ctl.live.fins, ctl.standby.body, ctl.standby.eyes,
+    ctl_layers_t sb;
+    ctl_standby_layers(&ctl, &sb);
+    const int v[21] = { ctl.live.body, ctl.live.eyes, ctl.live.fins, ctl.standby.body, ctl.standby.eyes,
                         ctl.standby.fins, ctl.target, ctl.page, ctl.locked, ctl.take_preview, ctl.down[KEY_LATCH],
                         ctl_standby_diff(&ctl), ctl.brightness, ctl.layers.body_pal, ctl.layers.fins_pal,
-                        ctl.layers.body_layer, ctl.layers.fins_layer };
+                        ctl.layers.body_layer, ctl.layers.fins_layer, sb.body_pal, sb.fins_pal, sb.body_layer, sb.fins_layer };
     memcpy(out, v, sizeof(v));
 }
 

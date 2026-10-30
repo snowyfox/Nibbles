@@ -20,3 +20,7 @@ CONFIG_LV_FONT_MONTSERRAT_40=y
 
 # The app outgrew the default 1 MB partition; this board has 16 MB of flash
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# The main loop copies the keypad state and builds the screen status on its
+# stack; the default 3.5 KB overflowed once Standby got palettes and layers.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

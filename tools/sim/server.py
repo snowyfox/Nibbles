@@ -317,10 +317,10 @@ class Base:
         return int((time.monotonic() - self.t0) * 1000) & 0xFFFFFFFF
 
     def actions(self, n):
-        return [list(self.out[i * 4:i * 4 + 4]) for i in range(n)]
+        return [list(self.out[i * 5:i * 5 + 5]) for i in range(n)]
 
     def state(self):
-        st = (ctypes.c_int * 17)()
+        st = (ctypes.c_int * 21)()
         self.lib.base_state(st)
         leds = (ctypes.c_uint * len(self.names))()
         self.lib.base_leds(self.now_ms(), leds)
@@ -329,6 +329,8 @@ class Base:
                 "page": v[7], "locked": bool(v[8]), "preview": bool(v[9]), "latch": bool(v[10]), "diff": v[11],
                 "bri": v[12], "page_name": self.lib.base_page_name(v[7]).decode(), "layers": v[13:17],
                 "pal_name": self.lib.base_palette_name(v[13]).decode() if v[13] >= 0 else "",
+                "stby_layers": v[17:21],
+                "stby_pal_name": self.lib.base_palette_name(v[17]).decode() if v[17] >= 0 else "",
                 "leds": {self.names[k]: "#%06x" % leds[k] for k in range(1, len(self.names))}}
 
     async def send(self, writer, msg):
