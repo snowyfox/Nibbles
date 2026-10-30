@@ -1,61 +1,61 @@
 LCSC,MPN,Maker,Comment,Kind,Per board x builds,Needed,Spares,Order qty,LCSC stock,Unit USD,Line USD,Designators,Notes
-C133062,BM08B-GHS-TBT(LF)(SN),JST,"JST-GH 8 vertical (cable to the 3.49, instead of J6) / JST-GH 8 vertical",connector,power_charger 1 x 2; key_column 1 x 4; key_upper 1 x 2; key_hub 5 x 2,18,9,30,40510,0.6099,18.30,"power_charger: J10 | key_column: J1 | key_upper: J1 | key_hub: J1,J2,J3,J4,J5",LCSC minimum/multiple 5/5
-C133065,SM06B-GHS-TB(LF)(SN),JST,JST-GH 6 side entry SM06B-GHS-TB (option for J9/J11; see the notes),connector,,0,5,5,24465,0.3599,1.80,,not on a board yet
-C161690,BM02B-GHS-TBT(LF)(SN),JST,"NTC 103AT on the cells (JST-GH 2, vertical)",connector,power_charger 3 x 2,6,3,10,68870,0.1748,1.75,"power_charger: J4,J7,J8",LCSC minimum/multiple 5/5
-C189892,BM06B-GHS-TBT(LF)(SN),JST,JST-GH 6 vertical (keypad port: I2C),connector,power_charger 2 x 2,4,2,6,6280,0.9749,5.85,"power_charger: J9,J11",
+C133062,BM08B-GHS-TBT(LF)(SN),JST,"JST-GH 8 vertical (cable to the 3.49, instead of J6) / JST-GH 8 vertical",connector,power_charger 1 x 5; key_column 1 x 5; key_upper 1 x 5; key_hub 5 x 5,40,20,60,40505,0.5223,31.34,"power_charger: J10 | key_column: J1 | key_upper: J1 | key_hub: J1,J2,J3,J4,J5",
+C133065,SM06B-GHS-TB(LF)(SN),JST,JST-GH 6 side entry SM06B-GHS-TB (option for J9/J11; see the notes),connector,,0,5,5,24075,0.3599,1.80,,not on a board yet
+C161690,BM02B-GHS-TBT(LF)(SN),JST,"NTC 103AT on the cells (JST-GH 2, vertical)",connector,power_charger 3 x 5,15,8,25,68870,0.1748,4.37,"power_charger: J4,J7,J8",LCSC minimum/multiple 5/5
+C189892,BM06B-GHS-TBT(LF)(SN),JST,JST-GH 6 vertical (keypad port: I2C),connector,power_charger 2 x 5,10,5,15,6214,0.7799,11.70,"power_charger: J9,J11",
 C189893,SM02B-GHS-TB(LF)(SN),JST,JST-GH 2 side entry SM02B-GHS-TB (option for the NTC ports; see the notes),connector,,0,10,10,21025,0.5110,5.11,,not on a board yet
 C265111,SM08B-GHS-TB(LF)(SN),JST,JST-GH 8 side entry SM08B-GHS-TB (option for the vertical GH8; see the notes),connector,,0,10,10,18450,0.2979,2.98,,not on a board yet
-C2932674,KH-2.54FH-1X11P-H8.5,kinghelm,To the 3.49 (stacked headers),connector,power_charger 2 x 2,4,2,10,2345,0.1475,1.47,power_charger: J6,LCSC minimum/multiple 5/5
-C431092,XT30PW-M30.G.Y,Changzhou Amass Elec,"XT30PW-M (dock power, from the LEMO)",connector,power_charger 3 x 2,6,3,9,52212,0.3761,3.38,"power_charger: J2,J3,J5",
-C206010,TCA9534APWR,TI,TCA9534APWR,ic,key_column 1 x 4; key_upper 1 x 2,6,2,8,15759,1.2847,10.28,key_column: U1 | key_upper: U1,
-C2155765,TPS259827ONRGET,TI,TPS259827ONRGET,ic,power_charger 1 x 2,2,2,4,1219,4.8936,19.57,power_charger: U5,
-C2876593,BQ25798RQMR,TI,BQ25798RQMR,ic,power_charger 1 x 2,2,2,4,3710,2.8553,11.42,power_charger: U2,
-C2941042,LM74700QDBVRQ1,TI,LM74700-Q1 (dock),ic,power_charger 3 x 2,6,2,8,8008,2.5955,20.76,"power_charger: U3,U4,U9",
-C3200405,TPS62933DRLR,TI,TPS62933DRLR,ic,power_charger 1 x 2,2,2,4,23761,0.4828,1.93,power_charger: U7,
-C49851,INA226AIDGSR,TI,INA226AIDGSR,ic,power_charger 1 x 2,2,2,4,39389,0.6647,2.66,power_charger: U6,
-C7484,SN74AHCT1G125DBVR,TI,SN74AHCT1G125DBVR,ic,key_hub 1 x 2,2,2,5,17060,0.1011,0.51,key_hub: U1,LCSC minimum/multiple 5/5
-C783615,TCA9534PWR,TI,TCA9534PWR,ic,power_charger 1 x 2,2,2,4,10753,0.9384,3.75,power_charger: U8,
-C5149201,SK6812MINI-E,OPSCO Optoelectronics,SK6812MINI-E,led,key_column 8 x 4; key_upper 3 x 2,38,19,60,97655,0.0651,3.91,"key_column: D1,D2,D3,D4,D5,D6,D7,D8 | key_upper: D1,D2,D3",LCSC minimum/multiple 5/5
-C106205,CC0402KRX7R9BB102,YAGEO,1nF 50V,passive,power_charger 1 x 2,2,10,100,8010600,0.0024,0.24,power_charger: C28,LCSC minimum/multiple 100/100
-C131394,CC0402KRX7R9BB104,YAGEO,0.1uF 25V,passive,power_charger 3 x 2,6,10,50,6745350,0.0107,0.53,"power_charger: C12,C16,C22",LCSC minimum/multiple 50/50
-C14663,CC0603KRX7R9BB104,YAGEO,0.1uF / 100nF,passive,power_charger 7 x 2; key_column 9 x 4; key_upper 4 x 2; key_hub 2 x 2,62,41,200,4848800,0.0087,1.74,"power_charger: C30,C31,C38,C42,C43,C47,C48 | key_column: C1,C11,C12,C13,C14,C15,C16,C17,C18 | key_upper: C1,C11,C12,C13 | key_hub: C1,C4","+10 trial: dVdt 365 ms, RETRY_DLY 4.7 s; LCSC minimum/multiple 100/100"
-C154685,LR2512-23R002F4,RALEC,2 mOhm 2512 3W,passive,power_charger 1 x 2,2,10,15,27980,0.1898,2.85,power_charger: R29,LCSC minimum/multiple 5/5
-C15849,CL10A105KB8NNNC,Samsung Electro-Mechanics,1uF 50V,passive,power_charger 2 x 2,4,10,50,54700,0.0140,0.70,"power_charger: C49,C50",LCSC minimum/multiple 50/50
-C15850,CL21A106KAYNNNE,Samsung Electro-Mechanics,10uF 25V / 10uF,passive,power_charger 13 x 2; key_column 1 x 4; key_upper 1 x 2,32,16,60,1625180,0.0441,2.65,"power_charger: C10,C11,C13,C14,C15,C17,C18,C19,C20,C21,C23,C24,C34 | key_column: C2 | key_upper: C2",LCSC minimum/multiple 20/20
-C1589,CL10B103KB8NNNC,Samsung Electro-Mechanics,10nF,passive,power_charger 1 x 2,2,20,50,2242200,0.0075,0.38,power_charger: C46,+10 trial: ITIMER 4.7 ms; LCSC minimum/multiple 50/50
-C1622,CL10B473KB8NNNC,Samsung Electro-Mechanics,47nF 25V,passive,power_charger 3 x 2,6,20,100,32900,0.0059,0.59,"power_charger: C26,C27,C37","+10 trial: ITIMER 22 ms, RETRY_DLY 2.2 s; LCSC minimum/multiple 100/100"
-C19666,CL10A475KO8NNNC,Samsung Electro-Mechanics,4.7uF 10V,passive,power_charger 1 x 2,2,10,20,1507940,0.0171,0.34,power_charger: C25,LCSC minimum/multiple 10/10
-C21122,CL10B223KB8NNNC,Samsung Electro-Mechanics,22nF,passive,power_charger 2 x 2,4,20,50,227200,0.0058,0.29,"power_charger: C35,C36",+10 trial: dVdt 80 ms ramp; LCSC minimum/multiple 50/50
-C21190,0603WAF1001T5E,UNI-ROYAL,1k,passive,power_charger 3 x 2,6,10,100,6070700,0.0017,0.17,"power_charger: R3,R4,R27",LCSC minimum/multiple 100/100
-C22775,0603WAF1000T5E,UNI-ROYAL,100R,passive,key_column 1 x 4; key_upper 1 x 2; key_hub 1 x 2,8,10,100,1107800,0.0024,0.24,key_column: R1 | key_upper: R1 | key_hub: R2,LCSC minimum/multiple 100/100
-C22796,0603WAF1300T5E,UNI-ROYAL,130 1%,passive,power_charger 1 x 2,2,10,100,349100,0.0014,0.14,power_charger: R26,LCSC minimum/multiple 100/100
-C22857,0603WAF1072T5E,UNI-ROYAL,10.7k 1%,passive,power_charger 1 x 2,2,10,100,32200,0.0017,0.17,power_charger: R38,LCSC minimum/multiple 100/100
-C22935,0603WAF1004T5E,UNI-ROYAL,1M,passive,power_charger 3 x 2,6,10,100,2110700,0.0018,0.18,"power_charger: R20,R21,R35",LCSC minimum/multiple 100/100
-C22977,0603WAF200KT5E,UNI-ROYAL,2 (input snubber),passive,power_charger 1 x 2,2,10,100,438000,0.0022,0.22,power_charger: R39,LCSC minimum/multiple 100/100
-C23121,0603WAF8662T5E,UNI-ROYAL,86.6k 1%,passive,power_charger 1 x 2,2,10,100,102800,0.0028,0.28,power_charger: R23,LCSC minimum/multiple 100/100
-C23162,0603WAF4701T5E,UNI-ROYAL,4.7k,passive,power_charger 2 x 2,4,10,100,3249000,0.0028,0.28,"power_charger: R32,R33",LCSC minimum/multiple 100/100
-C23234,0603WAF7501T5E,UNI-ROYAL,7.5k,passive,power_charger 1 x 2,2,10,100,723900,0.0018,0.18,power_charger: R36,LCSC minimum/multiple 100/100
-C25076,0402WGF1000TCE,UNI-ROYAL,100,passive,power_charger 1 x 2,2,10,100,2096700,0.0013,0.13,power_charger: R11,LCSC minimum/multiple 100/100
-C25771,0402WGF2702TCE,UNI-ROYAL,27.0k 1%,passive,power_charger 1 x 2,2,10,100,565400,0.0010,0.10,power_charger: R10,LCSC minimum/multiple 100/100
-C25803,0603WAF1003T5E,UNI-ROYAL,100k,passive,power_charger 3 x 2; key_hub 1 x 2,8,10,100,8896600,0.0030,0.30,"power_charger: R5,R22,R25 | key_hub: R1",LCSC minimum/multiple 100/100
-C2933105,FRC0402F5231TS,FOJAN,5.23k 1%,passive,power_charger 1 x 2,2,10,100,175200,0.0014,0.14,power_charger: R12,LCSC minimum/multiple 100/100
-C2933235,FRC0603F5232TS,FOJAN,52.3k 1%,passive,power_charger 1 x 2,2,10,100,192500,0.0021,0.21,power_charger: R30,LCSC minimum/multiple 100/100
-C29718,4D03WGJ0103T5E,UNI-ROYAL,10k x4,passive,key_column 2 x 4; key_upper 2 x 2,12,10,100,694400,0.0076,0.76,"key_column: RN1,RN2 | key_upper: RN1,RN2",LCSC minimum/multiple 100/100
-C2981459,KNM2220UF25V149EC0051,KNSCHA,220uF 25V polymer,passive,power_charger 2 x 2,4,10,15,590,0.2730,4.10,"power_charger: C32,C33",LCSC minimum/multiple 5/5
-C2998131,FRC0402F3012TS,FOJAN,30.1k 1%,passive,power_charger 1 x 2,2,10,100,91200,0.0013,0.13,power_charger: R13,LCSC minimum/multiple 100/100
-C4190,0603WAF2201T5E,UNI-ROYAL,2.2k,passive,power_charger 1 x 2,2,10,100,2932000,0.0018,0.18,power_charger: R15,LCSC minimum/multiple 100/100
-C45783,CL21A226MAQNNNE,Samsung Electro-Mechanics,22uF 10V / 22uF,passive,power_charger 2 x 2; key_hub 2 x 2,8,10,20,273840,0.1936,3.87,"power_charger: C44,C45 | key_hub: C2,C3",LCSC minimum/multiple 20/20
-C89632,CL31B106KBHNNNE,Samsung Electro-Mechanics,10uF 35V,passive,power_charger 2 x 2,4,10,15,10580,0.2556,3.83,"power_charger: C40,C41",LCSC minimum/multiple 5/5
-C98220,RC0603FR-0710KL,YAGEO,10k,passive,power_charger 6 x 2,12,10,100,3482800,0.0027,0.27,"power_charger: R14,R16,R24,R28,R31,R37",LCSC minimum/multiple 100/100
-C10212,SMBJ18A,RUILON,SMBJ18A,power,power_charger 1 x 2,2,2,5,925,0.0760,0.38,power_charger: D2,LCSC minimum/multiple 5/5
-C179623,NTMFS4C022NT1G,onsemi,30V N-FET >= 15 A,power,power_charger 3 x 2,6,3,9,26939,0.4327,3.89,"power_charger: Q5,Q6,Q9",
-C2286,KT-0603R,Hubei KENTO Elec,LED (charging),power,power_charger 1 x 2,2,2,100,4767000,0.0077,0.77,power_charger: LED1,LCSC minimum/multiple 100/100
-C2443310,CC12H15A-TR,EATON,15A,power,power_charger 1 x 2,2,2,5,2715,0.1153,0.58,power_charger: F1,LCSC minimum/multiple 5/5
-C285805,MHCB06030-6R8M-C1,Chilisin,6.8uH Isat>=4A,power,power_charger 1 x 2,2,2,5,430,0.2367,1.18,power_charger: L2,LCSC minimum/multiple 5/5
-C285810,MHCB06030-2R2M-C1,Chilisin,2.2uH Isat>=7A,power,power_charger 1 x 2,2,2,5,400,0.1661,0.83,power_charger: L1,LCSC minimum/multiple 5/5
-C48260,TPD1E10B06DPYR,TI,TPD1E10B06DPYR,power,power_charger 2 x 2,4,2,20,300000,0.0451,0.90,"power_charger: D3,D4",LCSC minimum/multiple 20/20
-C8545,2N7002,JSCJ,2N7002,power,power_charger 2 x 2,4,2,50,2820750,0.0167,0.83,"power_charger: Q7,Q8",LCSC minimum/multiple 50/50
-C8678,SS34,MDD(Microdiode Semiconductor),SS34,power,power_charger 1 x 2,2,2,20,2601340,0.0353,0.71,power_charger: D5,LCSC minimum/multiple 20/20
-C41430893,CPG151101S11-16,HanElectricity,Kailh CPG151101S11 hotswap socket (for the Box Navy switches),socket,key_column 8 x 4; key_upper 3 x 2,38,19,60,184610,0.0450,2.70,"key_column: SW1,SW2,SW3,SW4,SW5,SW6,SW7,SW8 | key_upper: SW1,SW2,SW3",LCSC minimum/multiple 10/10
+C2932674,KH-2.54FH-1X11P-H8.5,kinghelm,To the 3.49 (stacked headers),connector,power_charger 2 x 5,10,5,15,2345,0.1475,2.21,power_charger: J6,
+C431092,XT30PW-M30.G.Y,Changzhou Amass Elec,"XT30PW-M (dock power, from the LEMO)",connector,power_charger 3 x 5,15,8,23,52037,0.3281,7.55,"power_charger: J2,J3,J5",
+C206010,TCA9534APWR,TI,TCA9534APWR,ic,key_column 1 x 5; key_upper 1 x 5,10,3,13,15756,1.0466,13.61,key_column: U1 | key_upper: U1,
+C2155765,TPS259827ONRGET,TI,TPS259827ONRGET,ic,power_charger 1 x 5,5,2,7,1216,4.8936,34.26,power_charger: U5,
+C2876593,BQ25798RQMR,TI,BQ25798RQMR,ic,power_charger 1 x 5,5,2,7,3780,2.8553,19.99,power_charger: U2,
+C2941042,LM74700QDBVRQ1,TI,LM74700-Q1 (dock),ic,power_charger 3 x 5,15,5,20,6411,2.2795,45.59,"power_charger: U3,U4,U9",
+C3200405,TPS62933DRLR,TI,TPS62933DRLR,ic,power_charger 1 x 5,5,2,7,23348,0.4828,3.38,power_charger: U7,
+C49851,INA226AIDGSR,TI,INA226AIDGSR,ic,power_charger 1 x 5,5,2,7,38806,0.6647,4.65,power_charger: U6,
+C7484,SN74AHCT1G125DBVR,TI,SN74AHCT1G125DBVR,ic,key_hub 1 x 5,5,2,10,15905,0.1011,1.01,key_hub: U1,LCSC minimum/multiple 5/5
+C783615,TCA9534PWR,TI,TCA9534PWR,ic,power_charger 1 x 5,5,2,7,10753,0.9384,6.57,power_charger: U8,
+C5149201,SK6812MINI-E,OPSCO Optoelectronics,SK6812MINI-E,led,key_column 8 x 5; key_upper 3 x 5,55,28,85,105055,0.0651,5.53,"key_column: D1,D2,D3,D4,D5,D6,D7,D8 | key_upper: D1,D2,D3",LCSC minimum/multiple 5/5
+C106205,CC0402KRX7R9BB102,YAGEO,1nF 50V,passive,power_charger 1 x 5,5,10,100,8004300,0.0024,0.24,power_charger: C28,LCSC minimum/multiple 100/100
+C131394,CC0402KRX7R9BB104,YAGEO,0.1uF 25V,passive,power_charger 3 x 5,15,10,50,6741450,0.0107,0.53,"power_charger: C12,C16,C22",LCSC minimum/multiple 50/50
+C14663,CC0603KRX7R9BB104,YAGEO,0.1uF / 100nF,passive,power_charger 7 x 5; key_column 9 x 5; key_upper 4 x 5; key_hub 2 x 5,110,65,200,727000,0.0087,1.74,"power_charger: C30,C31,C38,C42,C43,C47,C48 | key_column: C1,C11,C12,C13,C14,C15,C16,C17,C18 | key_upper: C1,C11,C12,C13 | key_hub: C1,C4","+10 trial: dVdt 365 ms, RETRY_DLY 4.7 s; LCSC minimum/multiple 100/100"
+C154685,LR2512-23R002F4,RALEC,2 mOhm 2512 3W,passive,power_charger 1 x 5,5,10,15,27980,0.1898,2.85,power_charger: R29,
+C77386,GRM188R61H105KAALD,muRata,1uF 50V,passive,power_charger 2 x 5,10,10,20,22390,0.0764,1.53,"power_charger: C49,C50",C77386 instead of C15849 (CL10A105KB8NNNC: LCSC has 0): Murata GRM188R61H105KAALD: same 1uF 50V X5R 0603
+C15850,CL21A106KAYNNNE,Samsung Electro-Mechanics,10uF 25V / 10uF,passive,power_charger 13 x 5; key_column 1 x 5; key_upper 1 x 5,75,38,120,1549560,0.0441,5.29,"power_charger: C10,C11,C13,C14,C15,C17,C18,C19,C20,C21,C23,C24,C34 | key_column: C2 | key_upper: C2",LCSC minimum/multiple 20/20
+C1589,CL10B103KB8NNNC,Samsung Electro-Mechanics,10nF,passive,power_charger 1 x 5,5,20,50,2236500,0.0075,0.38,power_charger: C46,+10 trial: ITIMER 4.7 ms; LCSC minimum/multiple 50/50
+C107093,CC0603KRX7R9BB473,YAGEO,47nF 25V,passive,power_charger 3 x 5,15,20,50,1285900,0.0084,0.42,"power_charger: C26,C27,C37","+10 trial: ITIMER 22 ms, RETRY_DLY 2.2 s; C107093 instead of C1622 (CL10B473KB8NNNC: LCSC has 0): Yageo CC0603KRX7R9BB473: same 47nF 50V X7R 0603; LCSC minimum/multiple 50/50"
+C19666,CL10A475KO8NNNC,Samsung Electro-Mechanics,4.7uF 10V,passive,power_charger 1 x 5,5,10,20,1435690,0.0171,0.34,power_charger: C25,LCSC minimum/multiple 10/10
+C21122,CL10B223KB8NNNC,Samsung Electro-Mechanics,22nF,passive,power_charger 2 x 5,10,20,50,200100,0.0058,0.29,"power_charger: C35,C36",+10 trial: dVdt 80 ms ramp; LCSC minimum/multiple 50/50
+C21190,0603WAF1001T5E,UNI-ROYAL,1k,passive,power_charger 3 x 5,15,10,100,5679600,0.0017,0.17,"power_charger: R3,R4,R27",LCSC minimum/multiple 100/100
+C22775,0603WAF1000T5E,UNI-ROYAL,100R,passive,key_column 1 x 5; key_upper 1 x 5; key_hub 1 x 5,15,10,100,1021600,0.0024,0.24,key_column: R1 | key_upper: R1 | key_hub: R2,LCSC minimum/multiple 100/100
+C22796,0603WAF1300T5E,UNI-ROYAL,130 1%,passive,power_charger 1 x 5,5,10,100,347800,0.0014,0.14,power_charger: R26,LCSC minimum/multiple 100/100
+C22857,0603WAF1072T5E,UNI-ROYAL,10.7k 1%,passive,power_charger 1 x 5,5,10,100,32200,0.0017,0.17,power_charger: R38,LCSC minimum/multiple 100/100
+C22935,0603WAF1004T5E,UNI-ROYAL,1M,passive,power_charger 3 x 5,15,10,100,2061400,0.0018,0.18,"power_charger: R20,R21,R35",LCSC minimum/multiple 100/100
+C22977,0603WAF200KT5E,UNI-ROYAL,2 (input snubber),passive,power_charger 1 x 5,5,10,100,442300,0.0022,0.22,power_charger: R39,LCSC minimum/multiple 100/100
+C23121,0603WAF8662T5E,UNI-ROYAL,86.6k 1%,passive,power_charger 1 x 5,5,10,100,103500,0.0028,0.28,power_charger: R23,LCSC minimum/multiple 100/100
+C23162,0603WAF4701T5E,UNI-ROYAL,4.7k,passive,power_charger 2 x 5,10,10,100,3123300,0.0028,0.28,"power_charger: R32,R33",LCSC minimum/multiple 100/100
+C23234,0603WAF7501T5E,UNI-ROYAL,7.5k,passive,power_charger 1 x 5,5,10,100,717800,0.0018,0.18,power_charger: R36,LCSC minimum/multiple 100/100
+C25076,0402WGF1000TCE,UNI-ROYAL,100,passive,power_charger 1 x 5,5,10,100,1468500,0.0013,0.13,power_charger: R11,LCSC minimum/multiple 100/100
+C25771,0402WGF2702TCE,UNI-ROYAL,27.0k 1%,passive,power_charger 1 x 5,5,10,100,567400,0.0010,0.10,power_charger: R10,LCSC minimum/multiple 100/100
+C25803,0603WAF1003T5E,UNI-ROYAL,100k,passive,power_charger 3 x 5; key_hub 1 x 5,20,10,100,8756300,0.0030,0.30,"power_charger: R5,R22,R25 | key_hub: R1",LCSC minimum/multiple 100/100
+C2933105,FRC0402F5231TS,FOJAN,5.23k 1%,passive,power_charger 1 x 5,5,10,100,175200,0.0014,0.14,power_charger: R12,LCSC minimum/multiple 100/100
+C2933235,FRC0603F5232TS,FOJAN,52.3k 1%,passive,power_charger 1 x 5,5,10,100,192500,0.0021,0.21,power_charger: R30,LCSC minimum/multiple 100/100
+C29718,4D03WGJ0103T5E,UNI-ROYAL,10k x4,passive,key_column 2 x 5; key_upper 2 x 5,20,10,100,675300,0.0076,0.76,"key_column: RN1,RN2 | key_upper: RN1,RN2",LCSC minimum/multiple 100/100
+C2981459,KNM2220UF25V149EC0051,KNSCHA,220uF 25V polymer,passive,power_charger 2 x 5,10,10,20,590,0.2730,5.46,"power_charger: C32,C33",
+C2998131,FRC0402F3012TS,FOJAN,30.1k 1%,passive,power_charger 1 x 5,5,10,100,91200,0.0013,0.13,power_charger: R13,LCSC minimum/multiple 100/100
+C4190,0603WAF2201T5E,UNI-ROYAL,2.2k,passive,power_charger 1 x 5,5,10,100,2802100,0.0018,0.18,power_charger: R15,LCSC minimum/multiple 100/100
+C45783,CL21A226MAQNNNE,Samsung Electro-Mechanics,22uF 10V / 22uF,passive,power_charger 2 x 5; key_hub 2 x 5,20,10,40,226420,0.1936,7.74,"power_charger: C44,C45 | key_hub: C2,C3",LCSC minimum/multiple 20/20
+C13585,CL31A106KBHNNNE,Samsung Electro-Mechanics,10uF 35V,passive,power_charger 2 x 5,10,10,20,12440,0.2132,4.26,"power_charger: C40,C41","C13585 instead of C89632 (CL31B106KBHNNNE: LCSC has 0): Samsung CL31A106KBHNNNE: 10uF 50V 1206, X5R instead of X7R (rated to 85 C, not 125 C)"
+C98220,RC0603FR-0710KL,YAGEO,10k,passive,power_charger 6 x 5,30,15,100,3248400,0.0027,0.27,"power_charger: R14,R16,R24,R28,R31,R37",LCSC minimum/multiple 100/100
+C10212,SMBJ18A,RUILON,SMBJ18A,power,power_charger 1 x 5,5,3,10,925,0.0760,0.76,power_charger: D2,LCSC minimum/multiple 5/5
+C179623,NTMFS4C022NT1G,onsemi,30V N-FET >= 15 A,power,power_charger 3 x 5,15,8,23,26939,0.3376,7.76,"power_charger: Q5,Q6,Q9",
+C2286,KT-0603R,Hubei KENTO Elec,LED (charging),power,power_charger 1 x 5,5,3,100,4725800,0.0077,0.77,power_charger: LED1,LCSC minimum/multiple 100/100
+C2443310,CC12H15A-TR,EATON,15A,power,power_charger 1 x 5,5,3,10,2715,0.1153,1.15,power_charger: F1,LCSC minimum/multiple 5/5
+C285805,MHCB06030-6R8M-C1,Chilisin,6.8uH Isat>=4A,power,power_charger 1 x 5,5,3,10,430,0.2367,2.37,power_charger: L2,LCSC minimum/multiple 5/5
+C285810,MHCB06030-2R2M-C1,Chilisin,2.2uH Isat>=7A,power,power_charger 1 x 5,5,3,10,400,0.1661,1.66,power_charger: L1,LCSC minimum/multiple 5/5
+C48260,TPD1E10B06DPYR,TI,TPD1E10B06DPYR,power,power_charger 2 x 5,10,5,20,298980,0.0451,0.90,"power_charger: D3,D4",LCSC minimum/multiple 20/20
+C8545,2N7002,JSCJ,2N7002,power,power_charger 2 x 5,10,5,50,2810300,0.0167,0.83,"power_charger: Q7,Q8",LCSC minimum/multiple 50/50
+C8678,SS34,MDD(Microdiode Semiconductor),SS34,power,power_charger 1 x 5,5,3,20,2571840,0.0353,0.71,power_charger: D5,LCSC minimum/multiple 20/20
+C41430893,CPG151101S11-16,HanElectricity,Kailh CPG151101S11 hotswap socket (for the Box Navy switches),socket,key_column 8 x 5; key_upper 3 x 5,55,28,90,185540,0.0450,4.05,"key_column: SW1,SW2,SW3,SW4,SW5,SW6,SW7,SW8 | key_upper: SW1,SW2,SW3",LCSC minimum/multiple 10/10
 
-,,,"Builds: {'power_charger': 2, 'key_column': 4, 'key_upper': 2, 'key_hub': 2}",,,,,,,Total USD,154.40
+,,,"Builds: {'power_charger': 5, 'key_column': 5, 'key_upper': 5, 'key_hub': 5}",,,,,,,Total USD,257.76

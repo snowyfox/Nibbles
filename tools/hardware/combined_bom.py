@@ -27,13 +27,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT = os.path.join(ROOT, "hardware", "fab")
 KICAD_CLI = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"
 
-# How many of each board to build parts for. The keypad design isn't locked,
-# so there's room for a third column and a second hub and upper keypad.
+# How many of each board to build parts for: all 5 of JLCPCB's minimum PCB
+# order, so every board can be assembled and there are spare built boards.
 BUILDS = {
-    "power_charger": 2,   # the power + charger board (fab files tagged JLCPCB-BaseController-v1.0)
-    "key_column": 4,      # 8 keys each; 2 needed (16 keys)
-    "key_upper": 2,       # 3 keys; 1 needed
-    "key_hub": 2,         # 1 needed
+    "power_charger": 5,   # the power + charger board (fab files tagged JLCPCB-BaseController-v1.0); 1 needed
+    "key_column": 5,      # 8 keys each; 2 needed (16 keys)
+    "key_upper": 5,       # 3 keys; 1 needed
+    "key_hub": 5,         # 1 needed
 }
 
 # Spares on top of BUILDS x per board, by part kind: (fraction, at least).
@@ -62,6 +62,14 @@ EXTRAS = [
 TRIALS = {"C1589": "trial: ITIMER 4.7 ms", "C21122": "trial: dVdt 80 ms ramp",
           "C1622": "trial: ITIMER 22 ms, RETRY_DLY 2.2 s", "C14663": "trial: dVdt 365 ms, RETRY_DLY 4.7 s"}
 TRIAL_QTY = 10
+
+# Used instead when LCSC can't supply the whole quantity of the original
+# (checked 2026-10-30: these three went to 0 stock that day). Same footprint.
+SUBSTITUTES = {
+    "C15849": ("C77386", "Murata GRM188R61H105KAALD: same 1uF 50V X5R 0603"),
+    "C1622": ("C107093", "Yageo CC0603KRX7R9BB473: same 47nF 50V X7R 0603"),
+    "C89632": ("C13585", "Samsung CL31A106KBHNNNE: 10uF 50V 1206, X5R instead of X7R (rated to 85 C, not 125 C)"),
+}
 
 # Crimp housings and contacts for making GH cables (needs a fine crimper).
 OPTIONAL = [
@@ -173,6 +181,11 @@ def main():
         info = lcsc(code)
         want = p["need"] + spare
         q = order_qty(info, want)
+        if code in SUBSTITUTES and (info.get("stockNumber") or 0) < q:
+            sub, why = SUBSTITUTES[code]
+            notes.append(f"{sub} instead of {code} ({info.get('productModel', '')}: LCSC has {info.get('stockNumber')}): {why}")
+            code, info = sub, lcsc(sub)
+            q = order_qty(info, want)
         price = unit_price(info, q)
         stock = info.get("stockNumber")
         line = q * price if price is not None else 0.0

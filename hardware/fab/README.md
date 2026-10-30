@@ -15,10 +15,13 @@ stock and prices. Rerun it after a schematic changes; change `BUILDS`,
 
 | Board | Builds | Needed |
 |---|---|---|
-| Power + charger | 2 | 1 |
-| Key column (8 keys) | 4 | 2 |
-| Upper keypad (3 keys) | 2 | 1 |
-| Keypad hub | 2 | 1 |
+| Power + charger | 5 | 1 |
+| Key column (8 keys) | 5 | 2 |
+| Upper keypad (3 keys) | 5 | 1 |
+| Keypad hub | 5 | 1 |
+
+Five of each: JLCPCB's minimum PCB order, so every board made can be
+assembled, with spare built boards.
 
 Spares on top: 50% (at least 10) of the hotswap sockets and the SK6812MINI-E
 LEDs, 30% (at least 2) of the ICs, 50% of connectors and passives, plus
@@ -27,6 +30,17 @@ order (50-100 for most 0402/0603 passives) often adds more.
 
 Not in it: the **Kailh Box Navy switches** themselves (not sold by LCSC),
 cables, the cells and the BMS, and the PCBs.
+
+**Substitutes** (`SUBSTITUTES` in the script, used only when LCSC can't
+supply the original; on 2026-10-30 all three originals showed 0 stock):
+
+| Board parts | Original | Ordered instead |
+|---|---|---|
+| C49, C50 (1 uF 50 V X5R 0603) | C15849 CL10A105KB8NNNC | C77386 Murata GRM188R61H105KAALD, same spec |
+| C26, C27, C37 (47 nF 0603) + trials | C1622 CL10B473KB8NNNC | C107093 Yageo CC0603KRX7R9BB473, 47 nF 50 V X7R |
+| C40, C41 (10 uF 50 V 1206, light bus at the buck's input) | C89632 CL31B106KBHNNNE (X7R) | C13585 Samsung CL31A106KBHNNNE, X5R: rated to 85 C, not 125 C; fine for bulk decoupling at up to 20 V |
+
+All the same footprint and value; the board files still name the originals.
 
 ## Side-entry JST-GH (enclosure options)
 
