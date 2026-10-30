@@ -1,6 +1,7 @@
 # Nibbles
 
-A festival totem: a shark on top of a 3 m pole that looks like it swims in the
+A festival totem: a shark on top of a 3 m pole (a K-Tek K-123 boom pole; see
+`docs/architecture.md`) that looks like it swims in the
 sky and dances to the music (trance, EDM, dubstep, drum and bass; up to 180+
 bpm). Several ESP32 boards work together as one system. This repo holds all
 of Nibbles' own code; WLED itself stays upstream.

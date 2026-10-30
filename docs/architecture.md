@@ -16,6 +16,15 @@ in. Agreed 2026-09-24; update this file as decisions change.
   later, DMX-style bump buttons for momentary effects. Its power system
   (internal pack, power board, battery dock) is designed in
   [power.md](power.md).
+- **Pole**: a K-Tek **K-123** (Klassic series, six-section graphite boom
+  pole; discontinued). Its bottom section is 551 mm long; the upper keypad
+  goes near the top of that section, within arm's reach. The base enclosure
+  attaches through a **modified K-Tek KFT** flow-through foot
+  ([listing](https://wilcoxsound.com/product/k-tek-k-ft-straight-cable-flow-through-base-unit-with-standard-pole-base/),
+  discontinued). The KFT was cut in two through its cable slot, and the
+  side dimples were drilled and tapped for the enclosure's screws.
+  Dimensions measured from the Fusion 360 STEP exports are in
+  [pole.md](pole.md).
 
 ## Repository
 One monorepo: a single shared protocol, used by every firmware, changes in one
