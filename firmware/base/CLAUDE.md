@@ -157,7 +157,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   (grey shackle, amber body; unlocked: shackle lifted with its right end clear,
   all at 25% opacity; dim body when not known), and an invisible touch key for FIN SENSOR across the whole band; a
   card shows behind the fins only while that key is down (`display_fin_key`).
-  Under the fins, the **eyes** at y 242, 80 px each, port on the left: stills of
+  Under the fins, the **eyes** at y 242, 80 px each, starboard on the left, port on the right: stills of
   the preset on screen (`eye_thumb.c`, the rings, spiral arms, colours and lids of
   the eyes' `render_core.c` with no music or motion; it builds in the eyes'
   `presets.c`, so new presets just appear). Redrawn only when the telemetry's preset

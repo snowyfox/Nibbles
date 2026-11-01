@@ -719,7 +719,7 @@ static int8_t graph_pct[GRAPH_W];
 static int64_t graph_next_us;
 
 // ------------------------------------------------------------------ the eyes
-// Stills of what the eyes show (eye_thumb.c), port on the left as with the fins,
+// Stills of what the eyes show (eye_thumb.c), starboard on the left, port on the right,
 // redrawn only when the preset, a look or the eyes' state changes.
 #define EYE_Y   242
 #define EYE_GAP 6
@@ -782,7 +782,7 @@ static void eyes_update(const nl_eye_telemetry_t *e, bool fresh)
     const int64_t t0 = esp_timer_get_time();
     for (int i = 0; i < 2; i++) {
         if (index < 0) eye_thumb_unlit(eye_px[i], EYE_THUMB_SIZE, SHARK_DIM);
-        else eye_thumb_draw(eye_px[i], EYE_THUMB_SIZE, preset_get(index), eye_thumb_lid(state), i == 0);
+        else eye_thumb_draw(eye_px[i], EYE_THUMB_SIZE, preset_get(index), eye_thumb_lid(state), i == 1);   // port: spirals mirrored
         lv_obj_invalidate(eye_canvas[i]);
     }
     ESP_LOGI(TAG, "eyes: preset %d state %d drawn in %d ms", index, state, (int)((esp_timer_get_time() - t0) / 1000));
