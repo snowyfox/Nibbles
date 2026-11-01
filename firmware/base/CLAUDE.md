@@ -180,9 +180,13 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   software I2C on GPIO 47/48; 0 if it has lost its time). The `sim` column marks
   made-up readings. It never formats a card that won't mount. At boot, if the
   clock is good, the last hour of the last five files refills the charge graph
-  (real readings only). The 3.49 has no backup cell fitted as far as we know: if
-  the clock loses its time with the power off, `time` reads 0 and the graph
-  starts empty until `tools/base_log.py PORT time` sets it.
+  (real readings only). The clock chip's VDD is 3V3 and the board's VBAT through
+  two diodes, plus 1 uF (schematic): a cell on the battery connector keeps it
+  going with the power off, tested over a 30 s+ unplug with the prototype's
+  18650. With no cell it loses the time within seconds of power off: `time`
+  reads 0 and the graph starts empty until `tools/base_log.py PORT time` sets it.
+  Pulling the card and putting it back was tested too: a new file, the gap
+  counted in `dropped`, up to 10 s of unsynced rows lost, no crash.
   `tools/base_log.py` sets the clock and fetches files over USB. Page 1 shows
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
