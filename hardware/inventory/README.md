@@ -1,0 +1,19 @@
+# Parts inventory
+
+`inventory.csv` is the record of parts bought, for this project and later
+ones. Edit it by hand or in a spreadsheet. It's a snapshot, so
+`tools/hardware/combined_bom.py` doesn't touch it.
+
+- **Ordered / Received:** how many were bought and how many have arrived.
+  Received stays 0 until the order is checked in; then set it and change
+  Status to `In stock`.
+- **Reserved for Nibbles:** what 5 of every board use (power + charger, key
+  column, upper keypad, hub). Lower it if fewer get built.
+- **Free:** Ordered minus Reserved. Treat a part as usable only once it has
+  been received. Lower it when parts go into another project.
+
+Order log:
+
+| Date | Supplier | What |
+|---|---|---|
+| 2026-11-01 | LCSC | Everything in `hardware/fab/combined-LCSC-order.csv` as of that day (58 lines, about $242 before shipping). Not the optional cable parts. |
