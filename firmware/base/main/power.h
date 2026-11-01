@@ -28,6 +28,7 @@ typedef struct {
     int light_mv, light_ma, light_mw;
     bool efuse_pg;            // eFuse power good
     bool lights_off, pack_off; // what the expander is driving
+    bool pole_off;            // the pole's power is off by request, on a USB-C supply (power_set_pole)
     // derived
     int pack_mv;              // best pack voltage reading (0 = none)
     int pack_pct;             // -1 = no reading
@@ -43,8 +44,12 @@ typedef struct {
 esp_err_t power_start(void);
 void power_get(power_status_t *out);
 i2c_master_bus_handle_t power_bus(void);   // shared with the keypads (NULL until started)
+void power_bus_after_read(void);           // call after every read on it (i2c_recover.c)
 void power_sim(bool on);
 // Lights' eFuse on/off (LIGHT_OFF). The pack's ideal diode (PACK_OFF) is
 // only switched off while docked, and comes back on by itself when the dock goes.
 void power_set_lights(bool on);
 void power_set_pack(bool on);
+// Off only while a USB-C supply feeds the LEMO, and it comes back on by itself
+// when the supply goes (pole_off_stays). Returns false if there's no supply now.
+bool power_set_pole(bool off);

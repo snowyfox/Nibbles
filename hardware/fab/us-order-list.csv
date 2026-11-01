@@ -1,0 +1,10 @@
+Status,Part,Manufacturer,MPN,DigiKey PN,Mouser PN,Qty,Approx unit USD,Used for,DigiKey stock 2026-11-01,Notes
+Needed,NTC thermistor 10k 1% B3435,Semitec,103AT-2,4316-103AT-2-ND,954-103AT-2,10,0.57,Pack temperature sensor on J4 (1 per pack),6205,Leads are 12.5 mm; extend and sleeve them
+Needed,JST-GH 2-pin housing,JST,GHR-02V-S,455-1592-ND,,10,0.07,"J4 NTC, J7 LEMO data/detect, J8 dock LED",0,DigiKey out of stock (16 wk lead); look for it at Mouser (likely 306-GHR-02V-S; not confirmed)
+Needed,JST-GH 6-pin housing,JST,GHR-06V-S,455-1596-ND,,5,0.16,"J9 and J11 keypad/I2C ports",40968,Out of stock at LCSC
+Needed,JST-GH 8-pin housing,JST,GHR-08V-S,455-1598-ND,306-GHR-08V-S,20,0.14,"Key boards, hub ports, J10",83738,
+Needed,Pre-crimped GH wire 12 in 28 AWG (socket both ends),JST,AGHGH28K305,455-3074-ND,,50,0.44,"Every GH cable, no crimper needed",270457,All black: mark pin 1. Cut one in half for two pigtails. Upper keypad needs a splice or crimped wire for 60-80 cm
+Confirm,Male header 1x40 2.54 mm breakaway,Sullins,PRPC040SAAN-RC,S1011EC-40-ND,,2,1.23,"3.49 to power board J6 (2 x 11 pins per 3.49), only if stacking rather than using J10",65645,2.5 mm insulation matches the 11 mm stack in the footprint
+Needed,Solder paste Sn63/Pb37 Type 4 15 g syringe,Chip Quik,TS391AX,TS391AX-ND,,2,15.95,"Stencil and hot plate, top side of all boards",231,Melts at 183 C; keeps at 20-25 C for 12 months; wash hands after use
+Needed,Low-temp solder paste Sn42/Bi57.6/Ag0.4 Type 4 15 g syringe,Chip Quik,SMDLTLFPT4,SMDLTLFPT4-ND,,1,18.95,"Bottom-side small passives, after the top reflow",19,Melts at 138 C; brittle joints: small passives only; not for high current or heavy parts
+Needed,TVS diode 22 V standoff SMB (replaces D2 for a 20 V dongle),Littelfuse,SMBJ22A,SMBJ22ALFCT-ND,,10,0.31,"D2 on DOCK_RAW, same footprint as SMBJ18A",3436,"Standoff 22 V, breakdown 24.4 V min, clamp 35.5 V. Needed on every board that takes the 20 V dongle"

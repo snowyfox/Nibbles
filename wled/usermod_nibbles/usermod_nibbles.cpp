@@ -77,6 +77,10 @@
 //   stream, so the picture doesn't cross the air. The brain's network output
 //   can point at 0.0.0.0 (nothing sent) or stay on the display as a Wi-Fi
 //   backup. Counters on the Info page ("Nibbles wire").
+// - Preview stream (setting "preview", or state {"nibbles":{"preview":true}}):
+//   broadcasts a reduced copy of the LEDs for a preview screen (NL_MSG_PREVIEW,
+//   firmware/preview), RGB332 before master brightness, "preview_fps" a second,
+//   one packet per loop so it doesn't hold up rendering.
 // - ES7210 mic chip (builds with NIBBLES_ES7210, e.g. the Waveshare 3.49 dev
 //   node): AudioReactive can't set this chip up, so the usermod does, over
 //   I2C, once AudioReactive's I2S clocks run. Then AudioReactive reads it as
@@ -260,6 +264,14 @@ class NibblesUsermod : public Usermod {
     uint8_t ddpBuf[10 + DDP_MAX_LEDS * 3];
     uint8_t *mirrorRgb = nullptr;  // one frame by physical LED (in 2D, cells are not LEDs)
     unsigned mirrorRgbLeds = 0;
+
+    // Preview stream for a preview screen.
+    bool previewOn = false;              // setting
+    uint8_t previewFps = 12;             // setting
+    uint8_t previewFrame = 0;
+    unsigned previewNext = 0, previewChunks = 0;
+    unsigned long previewFrameAt = 0, previewChunkAt = 0;
+    uint32_t previewFrames = 0;
 
     // Wire link: TX on the brain, RX on the display (wireRx), on one UART.
     int8_t wirePin = -1;                 // setting; -1 = off
@@ -987,6 +999,33 @@ class NibblesUsermod : public Usermod {
       lastMirror = now;
       sendMirrorFrame();
       sendMirrorState(now);
+    }
+
+    // ---- preview stream
+    void previewLoop(unsigned long now) {
+      if (!previewOn || display) return;
+      Bus *bus = wireSourceBus();
+      if (!bus) return;
+      const unsigned total = bus->getLength();
+      if (previewNext == 0 && now - previewFrameAt < 1000UL / max((uint8_t)1, previewFps)) return;
+      if (now - previewChunkAt < 2) return;
+      nl_preview_t m;
+      const unsigned n = min((unsigned)NL_PREVIEW_CHUNK_LEDS, total - previewNext);
+      const bool last = previewNext + n >= total;
+      if (previewNext == 0) previewFrameAt = now;
+      m.frame = previewFrame;
+      m.flags = last ? NL_PREVIEW_LAST : 0;
+      m.start = previewNext;
+      m.total = total;
+      for (unsigned i = 0; i < n; i++) {
+        const uint32_t c = bus->getPixelColor(previewNext + i);
+        m.rgb332[i] = (R(c) & 0xE0) | ((G(c) & 0xE0) >> 3) | (B(c) >> 6);
+      }
+      send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_PREVIEW, &m, NL_PREVIEW_HEADER_LEN + n);
+      previewChunkAt = now;
+      previewChunks++;
+      previewNext = last ? 0 : previewNext + n;
+      if (last) { previewFrame++; previewFrames++; }
     }
 
     // ---- wire link
@@ -1834,6 +1873,7 @@ class NibblesUsermod : public Usermod {
       bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
       finBumpEvent(nl_bump_rx_tick(&finBumps, millis()));
       eyeSendLoop(millis());
+      previewLoop(millis());
       const unsigned long now = millis();
       if (now - lastHeartbeat >= ANCHOR_HEARTBEAT_MS) {
         lastHeartbeat = now;
@@ -1924,6 +1964,11 @@ class NibblesUsermod : public Usermod {
         }
       }
       wireInfo(user);
+      if (previewOn) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "sending at %u fps: %lu frames", previewFps, (unsigned long)previewFrames);
+        user.createNestedArray(F("Nibbles preview")).add(buf);
+      }
 #ifdef NIBBLES_ES7210
       {
         JsonArray mic = user.createNestedArray(F("Nibbles mic (ES7210)"));
@@ -2036,6 +2081,8 @@ class NibblesUsermod : public Usermod {
       const char *proj = root[F("nibbles")][F("finproj")] | (const char *)nullptr;
       if (proj) finProj = !strcmp(proj, "top") ? NL_FIN_PROJ_TOP : NL_FIN_PROJ_SIDE;
       readEyeSettings(root[F("nibbles")][F("eyes")]);
+      // {"nibbles":{"preview":true|false}}: the preview stream, until the next reboot
+      if (!root[F("nibbles")][F("preview")].isNull()) previewOn = root[F("nibbles")][F("preview")].as<bool>();
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
       JsonObject sw = root[F("nibbles")][F("finsweep")];
       if (!sw.isNull()) {
@@ -2083,6 +2130,8 @@ class NibblesUsermod : public Usermod {
       top[F("fin_follow")] = finFollowOn;          // fin LEDs follow the fins' angle
       top[F("wire_pin")] = wirePin;                // wire link: TX on the brain, RX on the display; -1 = off
       top[F("wire_baud")] = wireBaud;
+      top[F("preview")] = previewOn;               // preview stream for a preview screen
+      top[F("preview_fps")] = previewFps;
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -2105,6 +2154,8 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("wire_baud")], wireBaud, (uint32_t)NL_PIX_BAUD);
       if (wireBaud < 9600 || wireBaud > 5000000) wireBaud = NL_PIX_BAUD;
       wireRecheck = true;
+      complete &= getJsonValue(top[F("preview")], previewOn, false);
+      complete &= getJsonValue(top[F("preview_fps")], previewFps, (uint8_t)12);
       nl_power_limiter_init(&power, &powerModel);  // new settings: start over (readings arrive several times a second)
       powerApplied = 0;
       return complete;

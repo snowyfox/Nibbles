@@ -19,7 +19,9 @@ replaced with measurements once hardware exists.
 - Plugging and unplugging never makes the lights flicker or reboot anything.
 - At home or in a hotel, everything charges over USB-C PD, through a small
   USB-C to LEMO charging dongle. The totem's only power input is the LEMO.
-- Every battery that travels stays under 100 Wh (airline carry-on limit).
+- Every battery that flies stays under 100 Wh (airline carry-on limit). External
+  batteries that stay on the ground can be larger (2026-11-01), but must be 4S
+  (about 14.8 V, 16.8 V at most): the dock input's TVS starts conducting near 20 V.
 
 ## System overview
 
@@ -431,7 +433,11 @@ the USB-C dongle, charge at the rate the PD source allows, up to 3.5 A.
 - Internal pack BMS and gauge: **decided 2026-10-24: an off-the-shelf 4S
   BMS on the cells, no fuel gauge** (the INA228 and the BQ25798's ADC give
   the data; firmware estimates the charge).
-- USB-C to LEMO dongle: 15 V or 20 V (see Charging), and its design. It has
+- USB-C to LEMO dongle: a 20 V USB-C PD trigger board in a printed case (the
+  user, 2026-11-01; the 140 W charger module expects cells on its output). A
+  20 V dongle needs D2 changed from SMBJ18A to SMBJ22A (same footprint): a
+  SMBJ18A can start conducting at 20 V. The base must also limit lights plus
+  charging to the dongle's 3 A or 5 A. It has
   no processor for the dock's heartbeat (hot-plug rules), so its output is
   live whenever it's plugged in to USB-C: decide whether that's acceptable
   or it waits for dock detect.
@@ -443,7 +449,30 @@ the USB-C dongle, charge at the rate the PD source allows, up to 3.5 A.
 
 ## Travel notes
 
+Festival 2026-11-20 and 21 in Long Beach, CA; the user flies Southwest on the
+evening of 2026-11-18. A friend in Long Beach can receive shipments.
+
+**Southwest (reported from an internal memo; effective 2026-04-20; not read on
+its own site):** one lithium portable charger or power bank per person, at
+most 100 Wh, kept on the person or under the seat, not in an overhead bin, not
+recharged from seat power. Reports don't say whether spare camera batteries
+count. A VB99 has a USB-C output, so plan on one lithium pack in the cabin
+until Southwest confirms otherwise in writing.
+
+- Pole and shark in the checked bag; the base (with the internal pack) in the
+  carry-on. Batteries recharge at the hotel between nights.
+- **Runtime target: 8 hours a night.** External VB99s for that, on estimates
+  of 90 Wh usable each plus 80 Wh from the internal pack: 2 at a 30 W average,
+  4 at 50 W, 6 at 70 W, 8 at 100 W. Measure the real average at rehearsal.
 - Internal pack ~90 Wh, VB99 98.87 Wh: both under 100 Wh.
-- Spares in carry-on only, terminals covered. Label the internal pack's Wh.
-- Many airlines limit spare batteries per passenger; check before flying
-  with many VB99s.
+- Spares in carry-on only, terminals covered, never in checked bags. Label
+  the internal pack's Wh. Check the airline's own count limit before flying:
+  some allow only one or two.
+- **Shipping (USPS Publication 52, Packaging Instruction 9D, read 2026-11-01):**
+  batteries alone go by surface only, at most 100 Wh per battery and 20 Wh per
+  cell, 5 lb per package, with the UN3480 lithium mark and the "Surface Mail
+  Only" wording, and **in their original sealed packaging**. So used VB99s
+  don't clearly qualify. UPS and FedEx rules not confirmed: ask them first.
+- Simplest route: buy new batteries from a retailer that ships them to the
+  destination, or rent there.
+- The home-built internal pack has no UN 38.3 test report, so don't ship it.

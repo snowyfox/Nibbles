@@ -44,6 +44,10 @@ static int64_t fins_us;
 
 static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
+    if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second: straight to the screen
+        display_preview(pl, len);
+        return;
+    }
     if (h->type == NL_MSG_EYE_TELEMETRY && len == sizeof(nl_eye_telemetry_t) && h->role == NL_ROLE_EYE_LEADER) {
         taskENTER_CRITICAL(&lock);
         memcpy(&eyes, pl, sizeof(eyes));
@@ -250,6 +254,15 @@ static void send_preset_both(int n)
     send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, n - 1);
 }
 
+// Toggle the pole's power; it only goes off with a USB-C supply on the LEMO.
+static void pole_power(void)
+{
+    power_status_t p;
+    power_get(&p);
+    if (power_set_pole(!p.pole_off)) display_event("pole power %s", p.pole_off ? "on" : "off");
+    else display_event("pole stays on: no USB-C supply");
+}
+
 static void do_ctl_action(const ctl_action_t *a)
 {
     switch (a->type) {
@@ -271,6 +284,7 @@ static void do_ctl_action(const ctl_action_t *a)
             else slot_start(a->target == TGT_EYES ? SLOT_EYES : SLOT_WLED, a->bump, a->value, 255);
             break;
         case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED); break;
+        case ACT_POLE_POWER: pole_power(); break;
     }
 }
 
@@ -377,7 +391,7 @@ static void buttons_task(void *arg)
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 grid, 2 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
 // "leds on|off" (print the key LED colours when they change),
-// "sim on|off" (made-up power readings), "lights on|off", "power" (log the power board).
+// "sim on|off" (made-up power readings), "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
 static void console_key(const char *args)
 {
     char name[16] = "";
@@ -455,6 +469,9 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "sim on") || !strcmp(line, "sim off")) power_sim(line[5] == 'n');
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
+        else if (!strcmp(line, "pole on") || !strcmp(line, "pole off")) {
+            if (!power_set_pole(line[6] == 'f')) ESP_LOGW(TAG, "pole stays on: no USB-C supply");
+        }
         else if (!strcmp(line, "power")) log_power();
         else if (!strcmp(line, "leds on") || !strcmp(line, "leds off")) leds_echo = line[6] == 'n';
         else if (!strncmp(line, "react ", 6))

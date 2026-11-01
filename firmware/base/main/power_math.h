@@ -22,6 +22,12 @@ int pack_percent(int pack_mv, int current_ma);
 typedef enum { INPUT_NONE = 0, INPUT_BATTERY, INPUT_SUPPLY } input_kind_t;
 input_kind_t input_kind(int vbus_mv);
 
+// The pole's power (the lights' eFuse) can be switched off only while a USB-C
+// supply feeds the LEMO, to charge without lighting the shark. It comes back
+// on by itself as soon as anything else does (unplugged, a battery, the
+// charger not read), so the shark can't be left dark at a festival.
+bool pole_off_stays(bool requested, input_kind_t input);
+
 // How the LEMO input's current divides. The LEMO feeds the charger (its IBUS)
 // and, through its own ideal diode, the light bus (the lights, measured by the
 // INA226, and the base's own small draw); the pack joins the light bus through

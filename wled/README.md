@@ -101,9 +101,18 @@ eyes and base (`shared/nibbles_link`).
 - **Wire link** (`wire_pin`, `wire_baud`): the brain sends every LED down a
   UART wire to the controller, which shows it like a stream; see "Wire link"
   under "Main board and display".
+- **Preview stream** (`preview`, default off; `preview_fps`, default 12; or
+  state `{"nibbles":{"preview":true}}` until the next reboot): broadcasts the
+  LEDs as RGB332 before master brightness for `firmware/preview`
+  (`NL_MSG_PREVIEW`, 5 packets a frame for 1064 LEDs, one packet per loop).
+  WLED's ESP-IDF only sends 250-byte ESP-NOW packets, so `NL_MAX_PAYLOAD` is now
+  232. Tested 2026-11-01 on the bench brain: it stays at 43 fps. Most frames
+  were lost there, but the brain was hopping channels looking for the
+  controller's network (seen on 1-14 within a minute); not yet measured on a
+  stable channel.
 - Settings (WLED Usermods page, `Nibbles`): `enabled`, `anchor`, `audio`
-  (default off), `wire_pin` (default -1, off) and `wire_baud` (default
-  2000000).
+  (default off), `wire_pin` (default -1, off), `wire_baud` (default 2000000),
+  `preview` and `preview_fps`.
 
 ## 2D map
 `wled/ledmap/ledmap.json` (made by `tools/sim/make_ledmap.py` from the

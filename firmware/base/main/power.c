@@ -24,12 +24,22 @@ static i2c_master_bus_handle_t bus;
 static i2c_master_dev_handle_t bq, ina, exp_dev;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static power_status_t st;
-static volatile bool want_lights = true, want_pack = true, sim;
+static volatile bool want_lights = true, want_pack = true, want_pole_off, sim;
 
 i2c_master_bus_handle_t power_bus(void) { return bus; }
 void power_sim(bool on) { sim = on; }
 void power_set_lights(bool on) { want_lights = on; }
 void power_set_pack(bool on) { want_pack = on; }
+
+bool power_set_pole(bool off)
+{
+    taskENTER_CRITICAL(&lock);
+    const bool supply = st.input == INPUT_SUPPLY;
+    taskEXIT_CRITICAL(&lock);
+    if (off && !supply) return false;
+    want_pole_off = off;
+    return true;
+}
 
 void power_get(power_status_t *out)
 {
@@ -50,7 +60,9 @@ static i2c_master_dev_handle_t add_dev(uint8_t addr)
 
 static esp_err_t rd(i2c_master_dev_handle_t d, uint8_t reg, uint8_t *buf, size_t n)
 {
-    return i2c_master_transmit_receive(d, &reg, 1, buf, n, 20);
+    const esp_err_t err = i2c_master_transmit_receive(d, &reg, 1, buf, n, 20);
+    power_bus_after_read();
+    return err;
 }
 
 static esp_err_t rd16(i2c_master_dev_handle_t d, uint8_t reg, uint16_t *v)
@@ -197,6 +209,9 @@ static void power_task(void *arg)
         s.die_c10 = s.cell_c10 = INT16_MIN;
         if (sim) {
             simulate(&s, now);
+            want_pole_off = pole_off_stays(want_pole_off, input_kind(s.vbus_mv));
+            s.lights_off = want_pole_off;
+            if (want_pole_off) s.light_ma = s.light_mw = 0;
         } else {
             if (now >= next_probe) {   // look for anything missing every 2 s
                 next_probe = now + 2000000;
@@ -215,7 +230,8 @@ static void power_task(void *arg)
             if (bq_ok && !(bq_ok = bq_read(&s))) ESP_LOGW(TAG, "charger lost");
             if (ina_ok && !(ina_ok = ina_read(&s))) ESP_LOGW(TAG, "current monitor lost");
             // The pack is only ever switched off while the dock can run the lights.
-            const bool want_lights_off = !want_lights, want_pack_off = !want_pack && s.docked;
+            want_pole_off = pole_off_stays(want_pole_off, bq_ok ? input_kind(s.vbus_mv) : INPUT_NONE);
+            const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = !want_pack && s.docked;
             if (exp_ok) {
                 uint8_t in;
                 if (want_lights_off != lights_off || want_pack_off != pack_off) {
@@ -235,6 +251,7 @@ static void power_task(void *arg)
             s.lights_off = lights_off;
             s.pack_off = pack_off;
         }
+        s.pole_off = want_pole_off;
         // The pack: the charger's battery reading if it's there; otherwise the
         // lights' input when not docked (then it is the pack, less the diode).
         s.pack_mv = s.have_charger ? s.vbat_mv : (!s.docked && s.have_monitor) ? s.light_mv : 0;

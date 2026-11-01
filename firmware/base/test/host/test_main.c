@@ -422,6 +422,23 @@ static void test_fins_and_all(void)
     CHECK(c.live.fins == 4);
 }
 
+static void test_pole_power_key(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    press(&c, KEY_PAGE);
+    CHECK(press(&c, KEY_BLACKOUT) == 1 && acts[0].type == ACT_POLE_POWER);   // no blackout bump
+    CHECK(c.bump_slots == 0);
+    release(&c, KEY_BLACKOUT);
+    int page = c.page;
+    release(&c, KEY_PAGE);
+    CHECK(c.page == page);                    // and no page flip
+    press(&c, KEY_BLACKOUT);                  // alone it's still the bump
+    CHECK(has(ACT_BUMP, TGT_BODY, -10000) && !has(ACT_POLE_POWER, -1, -10000));
+    release(&c, KEY_BLACKOUT);
+}
+
 static void test_flash_blackout(void)
 {
     ctl_t c;
@@ -519,6 +536,10 @@ static void test_power_math(void)
     CHECK(input_kind(16800) == INPUT_BATTERY);
     CHECK(input_kind(20100) == INPUT_SUPPLY);
     CHECK(input_kind(19000) == INPUT_SUPPLY);
+    // the pole's power stays off only on a USB-C supply
+    CHECK(pole_off_stays(true, INPUT_SUPPLY));
+    CHECK(!pole_off_stays(false, INPUT_SUPPLY));
+    CHECK(!pole_off_stays(true, INPUT_BATTERY) && !pole_off_stays(true, INPUT_NONE));
     // temperature levels
     CHECK(cell_temp_level(290) == TEMP_OK && cell_temp_level(450) == TEMP_WARN && cell_temp_level(550) == TEMP_BAD);
     CHECK(cell_temp_level(40) == TEMP_WARN && cell_temp_level(0) == TEMP_BAD && cell_temp_level(INT16_MIN) == TEMP_OK);
@@ -571,6 +592,7 @@ int main(void)
     test_layers();
     test_standby_layers();
     test_fins_and_all();
+    test_pole_power_key();
     test_flash_blackout();
     test_lock();
     test_autolock();

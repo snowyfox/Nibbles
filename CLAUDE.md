@@ -13,6 +13,7 @@ of Nibbles' own code; WLED itself stays upstream.
 | **Eyes** (port + starboard) | 2× Waveshare ESP32-S3-Touch-AMOLED-1.75, back to back | `firmware/eyes/` (ESP-IDF 5.5.5) | Working; linked by a 3-wire cable (starboard leads, port is the ears); leader on the radio: telemetry, preset and brightness commands, bumps |
 | **Lights** | Existing ESP32 running WLED (0.15, to be upgraded to 16.x), external digital mic | `wled/usermod_nibbles/` + `wled/platformio_override.ini` (see `wled/README.md`) | Usermod works on a dev node (WLED 16.0.1): channel anchor, preset/brightness commands, bumps, telemetry, optional AudioReactive features; the real controller (WT32-ETH01) now runs it too. Since 2026-10-28 a **main board** (the bench 3.49 for now) is the brain: it renders the 2D map, fin presets and eye looks and streams every LED to the controller, whose usermod runs in its `display` role (battery readings in, stream reports out); see `wled/README.md` |
 | **Base station** | New ESP32 in the pole base: batteries, status screen(s), buttons | `firmware/base/` (ESP-IDF 5.5.5) | Waveshare ESP32-S3-Touch-LCD-3.49, portrait. Version 2: reads the power board (charger, lights monitor, expander; simulated until it exists), keypads with RGB keys (`hardware/keypad/`) driving Live / Standby like a video switcher, main screen with power, Live, Standby and target; the old touch pages behind it; scans for WLED and anchors the channel itself if WLED is absent |
+| **Preview screen** | Waveshare ESP32-S3-AMOLED-1.91 (RM67162, 536 x 240), MAC 3C:0F:02:D9:7A:08, was the fin sensor node | `firmware/preview/` (ESP-IDF 5.5.5) | Started 2026-11-01: side view of the shark from a brain's radio stream (`NL_MSG_PREVIEW`); test pattern with no stream. Running on the board; loss on a stable channel not measured yet, and it shows the brain's Live until a second brain exists |
 | **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing, radio packets, eye messages, commands, bumps, channel scanning with fallback anchoring, WLED audio conversion; host tests (`make -C shared/nibbles_link`) |
 | **Radio transport** | ESP-IDF boards (eyes, base) | `shared/nibbles_espnow/` | ESP-NOW: anchor or scan, broadcast, commands with ack/retry |
 
@@ -52,7 +53,7 @@ idf.py -C firmware/base build                         # base prototype; flash th
 Testing radio commands without pressing buttons: write commands (plus
 newline) to the base prototype's USB serial port: `next`, `prev`, `set N`,
 `wled next`, `wled set N`, `wled slot look|pal S N`, `bri N`, `wled bri N`, `auto on|off`, `preset N`, `page 0|1|2`,
-`key NAME [down|up]`, `keys`, `sim on|off`, `power`, `lights on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `[eyes|wled] bump
+`key NAME [down|up]`, `keys`, `sim on|off`, `power`, `lights on|off`, `pole on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `[eyes|wled] bump
 flash|black MS`, `[eyes|wled] bump preset N MS`, and `shot` (a screenshot of
 its display as base64 RGB565; see `firmware/base/CLAUDE.md`). WLED builds are
 in `wled/README.md`.

@@ -447,7 +447,10 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         case KEY_FLASH:
         case KEY_BLACKOUT:
-            if (down) bump_target(c, &o, c->target, key == KEY_FLASH ? NL_BUMP_FLASH : NL_BUMP_BLACKOUT, 0);
+            if (down && key == KEY_BLACKOUT && c->down[KEY_PAGE]) {
+                c->page_used = true;
+                emit(&o, ACT_POLE_POWER, 0, 0, 0);
+            } else if (down) bump_target(c, &o, c->target, key == KEY_FLASH ? NL_BUMP_FLASH : NL_BUMP_BLACKOUT, 0);
             else if (!c->take_preview && c->num_bump == KEY_NONE) bumps_off(c, &o);
             break;
         case KEY_FIN_SENSOR:

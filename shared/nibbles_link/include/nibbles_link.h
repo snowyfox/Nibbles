@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #define NL_VERSION          4
-#define NL_MAX_PAYLOAD      128
+#define NL_MAX_PAYLOAD      232 // an ESP-NOW packet (250) less the radio header; preview chunks use it all
 #define NL_HEADER_LEN       4   // type, version, seq
 #define NL_CRC_LEN          2
 #define NL_MAX_RAW          (NL_HEADER_LEN + NL_MAX_PAYLOAD + NL_CRC_LEN)
@@ -38,6 +38,7 @@ typedef enum {
     NL_MSG_EYE_LOOK = 13,   // an eye look from a WLED preset, WLED -> leader eye (radio) -> port eye (cable)
     NL_MSG_WLED_LAYERS = 14, // WLED's layer slots (nl_wled_layers_t), WLED -> radio, 2 Hz
     NL_MSG_PIXELS = 15,     // a chunk of LED colours, brain -> controller over a wire (nl_pix_*)
+    NL_MSG_PREVIEW = 16,    // a reduced picture for a preview screen, brain -> radio (nl_preview_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -47,6 +48,7 @@ typedef enum {
     NL_ROLE_BASE = 3,
     NL_ROLE_WLED = 4,
     NL_ROLE_FINS = 5,       // reads the fins' hinge angle sensors
+    NL_ROLE_PREVIEW = 6,    // shows the brain's picture on its own screen
 } nl_role_t;
 
 typedef enum {
@@ -237,6 +239,21 @@ void nl_bump_rx_init(nl_bump_rx_t *rx);
 nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_t now_ms);
 // Call regularly; returns NL_BUMP_EV_END when the active bump times out.
 nl_bump_event_t nl_bump_rx_tick(nl_bump_rx_t *rx, uint32_t now_ms);
+
+// ---------------------------------------------------------------- preview picture
+// A reduced copy of a brain's LEDs for a preview screen, over the radio: one
+// byte per LED (RGB332), a few packets a frame, before master brightness. A
+// lost packet leaves those LEDs as they were for a frame, which is fine here.
+#define NL_PREVIEW_CHUNK_LEDS   226
+
+typedef struct NL_PACKED {
+    uint8_t frame;
+    uint8_t flags;          // NL_PREVIEW_LAST: the frame's last chunk
+    uint16_t start, total;  // first LED of this chunk, LEDs in the frame
+    uint8_t rgb332[NL_PREVIEW_CHUNK_LEDS];  // as many as the packet has room for
+} nl_preview_t;
+#define NL_PREVIEW_LAST         0x01
+#define NL_PREVIEW_HEADER_LEN   6
 
 // ---------------------------------------------------------------- WLED layer slots
 // WLED 16 stacks overlapping segments; the Nibbles usermod keeps fixed ones as

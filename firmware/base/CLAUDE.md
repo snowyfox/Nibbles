@@ -102,7 +102,10 @@ file. Until the hardware exists, all of it can be driven from USB serial.
       the Standby palette or look green, both amber.
   - LATCH held first, then a number: cue that preset in Standby without
     showing it. LATCH + TAKE: Standby = Live. PAGE + number: brightness in
-    eighths. FLASH and BLACKOUT: bumps while held. FIN SENSOR: fins follow
+    eighths. PAGE + BLACKOUT: pole power off or on, only on a USB-C supply
+    (`pole_off_stays`): the eFuse opens so the pack charges with the shark dark,
+    the status bar shows POLE OFF, and power returns by itself when the supply
+    goes. FLASH and BLACKOUT: bumps while held. FIN SENSOR: fins follow
     on / off, live.
   - Hold UNLOCK 1 s to lock or unlock (`KEYPAD_AUTOLOCK_MS` locks after idle).
   - Key LEDs: the target's Live preset red, Standby green, both amber; the
@@ -154,12 +157,15 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   box (tap = next target), page name, LATCH, lock, links, keypads found, the
   event line. STANDBY has a LOOK row too (as TAKE would leave it: "--"
   where a new preset brings its own palette) and the "hold TAKE" line
-  under it. Positions: card 4, LIVE 72 (157 tall), STANDBY 235 (157 tall),
-  target 398, lock 454, links 476, keys 494, event 516. Page 1 is the
+  under it. Between the power bar and LIVE, a side view of the shark from a
+  brain's preview stream (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
+  `tools/sim/make_preview_map.py`); all dim with no stream. Positions: card 4,
+  shark 70, LIVE 156 (157 tall), STANDBY 319 (157 tall), target 482, lock 538,
+  links 560, keys 578, event 600. Page 1 is the
   preset grid, page 2 the old cards and bump pads.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`,
+  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`,
   `power` (logs the power board), `page 0|1|2`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

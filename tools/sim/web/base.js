@@ -24,7 +24,7 @@ const BASE_NUMPAD = {
   Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4', Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8',
   Numpad0: 'take', NumpadEnter: 'latch', NumpadDivide: 'body', NumpadMultiply: 'eyes', NumpadSubtract: 'all',
   NumpadEqual: 'fins', NumLock: 'fins', NumpadAdd: 'page', NumpadDecimal: 'flash', Numpad9: 'blackout' };
-const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4, SLOT_LOOK: 5, SLOT_PALETTE: 6 };
+const ACT = { PRESET: 0, FINS: 1, BRIGHTNESS: 2, BUMP: 3, BUMP_END: 4, SLOT_LOOK: 5, SLOT_PALETTE: 6, POLE_POWER: 7 };
 const SLOT = { BODY: 0, FINS: 1, BODY_OVER: 2, FINS_OVER: 3 };   // WLED's layer slots (nl_slot_t)
 const LAYER_BASE = 100;   // NL_LAYER_PRESET_BASE
 const TGT = { ALL: 0, BODY: 1, EYES: 2, FINS: 3 };
@@ -242,6 +242,7 @@ function baseActions(list) {
       baseEvent = `palette ${value} on ${target === SLOT.FINS ? 'the fins' : 'the body'}`;
       continue;
     }
+    if (type === ACT.POLE_POWER) { baseEvent = 'pole power: real board only'; continue; }
     if (type === ACT.BUMP && (bump === 4 || bump === 5)) { slotBump(target, bump, value); continue; }
     if (type === ACT.BUMP && bump === BUMP_SCENE) { sceneBump(target, value, extra); continue; }
     if (type === ACT.PRESET && slotBumps[target]) slotBumps[target].newPreset = true;

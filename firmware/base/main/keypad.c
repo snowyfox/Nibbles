@@ -102,6 +102,7 @@ static void keypad_task(void *arg)
             uint8_t reg = 0, in;
             const esp_err_t err = boards[b].chip == KEYPAD_PCF8574 ? i2c_master_receive(devs[b], &in, 1, 10)
                                                                    : i2c_master_transmit_receive(devs[b], &reg, 1, &in, 1, 10);
+            power_bus_after_read();
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "keypad board 0x%02x lost", boards[b].addr);
                 found &= ~(1 << b);

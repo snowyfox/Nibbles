@@ -42,6 +42,17 @@ supply the original, so a rerun switches back on its own when stock returns):
 
 All the same footprint and value; the board files still name the originals.
 
+## Running US order list
+
+`us-order-list.csv` collects parts to buy later from DigiKey or Mouser. Add
+to it as things turn up. `Needed` lines are required; `Confirm` lines depend
+on a decision. Blank part numbers weren't confirmed for that supplier. When
+an order is placed, move its lines to `hardware/inventory/inventory.csv`.
+
+The user confirmed on 2026-11-01 that they already have the other build
+items: switches, XT30 plugs, BMS, cells, D-Tap cable parts, the main power
+switch, screws and standoffs.
+
 ## Side-entry JST-GH (enclosure options)
 
 `SM02B-`, `SM06B-` and `SM08B-GHS-TB` (horizontal) are on the order as

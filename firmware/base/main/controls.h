@@ -23,7 +23,7 @@ typedef enum {
     KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
                      // held first, then a number: cue that preset (palette, layer look) in Standby;
                      // + TAKE: Standby = Live
-    KEY_BLACKOUT,    // bump while held
+    KEY_BLACKOUT,    // bump while held; with PAGE held: toggle the pole's power, on a USB-C supply
     KEY_FIN_SENSOR,  // tap: fin LEDs follow the fins' real angle, or stay at the modelled angle (live)
     KEY_TAKE,        // held: show Standby while held; + a tap of LATCH: swap Standby and Live
     KEY_FLASH,       // bump while held
@@ -57,6 +57,7 @@ typedef enum {
     ACT_BUMP_END,    // slot
     ACT_SLOT_LOOK,   // target = WLED layer slot (nl_slot_t), value = layer preset (0: switch the slot off)
     ACT_SLOT_PALETTE, // target = WLED layer slot, value = palette
+    ACT_POLE_POWER,  // PAGE + BLACKOUT: toggle the pole's power (main checks there's a USB-C supply)
 } ctl_act_type_t;
 
 typedef struct {

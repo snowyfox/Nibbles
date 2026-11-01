@@ -422,6 +422,19 @@ static void test_stream_gaps(void)
     CHECK(sizeof(nl_wled_stream_t) == 15, "stream message is 15 bytes (got %u)", (unsigned)sizeof(nl_wled_stream_t));
 }
 
+static void test_preview(void)
+{
+    CHECK(sizeof(nl_preview_t) == NL_MAX_PAYLOAD, "a full preview chunk fills a packet (%u)", (unsigned)sizeof(nl_preview_t));
+    CHECK(NL_RADIO_MAX <= 250, "and fits ESP-NOW v1 (%u)", (unsigned)NL_RADIO_MAX);
+    uint8_t pkt[NL_RADIO_MAX];
+    nl_preview_t m = { .frame = 7, .flags = NL_PREVIEW_LAST, .start = 904, .total = 1064 };
+    m.rgb332[0] = 0xE0;
+    const size_t n = nl_radio_build(pkt, sizeof(pkt), NL_MSG_PREVIEW, 1, NL_ROLE_WLED, NL_SIDE_NONE, &m, NL_PREVIEW_HEADER_LEN + 160);
+    CHECK(n == sizeof(nl_radio_hdr_t) + NL_PREVIEW_HEADER_LEN + 160, "short last chunk builds (%u)", (unsigned)n);
+    CHECK(((const nl_preview_t *)(pkt + sizeof(nl_radio_hdr_t)))->rgb332[0] == 0xE0, "its first LED is where it should be");
+    CHECK(nl_radio_build(pkt, sizeof(pkt), NL_MSG_PREVIEW, 1, NL_ROLE_WLED, NL_SIDE_NONE, &m, NL_MAX_PAYLOAD + 1) == 0, "too long refused");
+}
+
 static void test_slot_arg(void)
 {
     const int16_t a = nl_slot_arg(NL_SLOT_BODY_OVER, 103);
@@ -513,6 +526,7 @@ int main(void)
     test_stream_gaps();
     test_slot_arg();
     test_pixels();
+    test_preview();
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;
 }

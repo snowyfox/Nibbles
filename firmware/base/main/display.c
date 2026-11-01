@@ -19,7 +19,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "nibbles_link.h"
 #include "power_math.h"
+#include "shark_pos.h"
 
 static const char *TAG = "display";
 
@@ -565,6 +567,65 @@ static lv_obj_t *at(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int
     return l;
 }
 
+// ------------------------------------------------------------------ the shark
+// A side view of the shark between the power bar and LIVE, from a brain's
+// preview stream. Unlit LEDs stay faintly visible, and so does the whole shark
+// with no stream, so its shape is always there.
+#define SHARK_W        164
+#define SHARK_H        82
+#define SHARK_DIM      0x1082   // RGB565
+#define SHARK_LOST_MS  2000
+
+static lv_obj_t *shark_canvas;
+static uint16_t *shark_px;
+static uint8_t shark_leds[LED_POS_COUNT];
+static volatile bool shark_dirty = true;
+static volatile int64_t shark_rx_us;
+static bool shark_blank = false;   // showing the no-stream shark
+static volatile uint32_t shark_rx_frames;
+static uint32_t shark_drawn;
+
+void display_preview(const void *payload, size_t len)
+{
+    if (len <= NL_PREVIEW_HEADER_LEN) return;
+    const nl_preview_t *m = payload;
+    size_t n = len - NL_PREVIEW_HEADER_LEN;
+    if (m->start >= LED_POS_COUNT) return;
+    if (m->start + n > LED_POS_COUNT) n = LED_POS_COUNT - m->start;
+    taskENTER_CRITICAL(&lock);
+    memcpy(shark_leds + m->start, m->rgb332, n);
+    taskEXIT_CRITICAL(&lock);
+    shark_rx_us = esp_timer_get_time();
+    if (m->flags & NL_PREVIEW_LAST) {
+        shark_dirty = true;
+        shark_rx_frames++;
+    }
+}
+
+static void shark_draw(void)
+{
+    if (!shark_canvas) return;
+    const bool stream = shark_rx_us && esp_timer_get_time() - shark_rx_us < SHARK_LOST_MS * 1000LL;
+    if (stream ? !shark_dirty : shark_blank) return;
+    static uint8_t now[LED_POS_COUNT];
+    taskENTER_CRITICAL(&lock);
+    memcpy(now, shark_leds, sizeof(now));
+    shark_dirty = false;
+    taskEXIT_CRITICAL(&lock);
+    memset(shark_px, 0, SHARK_W * SHARK_H * 2);
+    for (int i = 0; i < LED_POS_COUNT; i++) {
+        const uint8_t c = stream ? now[i] : 0;
+        const uint16_t col = !c ? SHARK_DIM : ((c >> 5) * 31 / 7) << 11 | (((c >> 2) & 7) * 63 / 7) << 5 | (c & 3) * 31 / 3;
+        const int x = shark_pos[i][0], y = shark_pos[i][1];
+        for (int dy = 0; dy < 2 && y + dy < SHARK_H; dy++)
+            for (int dx = 0; dx < 2 && x + dx < SHARK_W; dx++)
+                if (col != SHARK_DIM || shark_px[(y + dy) * SHARK_W + x + dx] == 0) shark_px[(y + dy) * SHARK_W + x + dx] = col;
+    }
+    shark_blank = !stream;
+    shark_drawn++;
+    lv_obj_invalidate(shark_canvas);
+}
+
 // The STANDBY panel and the target box work as keys by touch too (TAKE, and the next target).
 static void on_key_touch(lv_event_t *ev)
 {
@@ -787,11 +848,19 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
     m.problem = at(m.power, &font_tab12, COL_BAD, 8, 44, 148);   // in place of row 3 when there is one
 
-    scene_panel(&m.live, 72, "LIVE", COL_LIVE, true);
-    scene_panel(&m.stby, 235, "STANDBY", COL_STANDBY, false);
+    shark_px = heap_caps_malloc(SHARK_W * SHARK_H * 2, MALLOC_CAP_SPIRAM);
+    if (shark_px) {
+        memset(shark_px, 0, SHARK_W * SHARK_H * 2);
+        shark_canvas = lv_canvas_create(pagem);
+        lv_canvas_set_buffer(shark_canvas, shark_px, SHARK_W, SHARK_H, LV_COLOR_FORMAT_RGB565);
+        lv_obj_set_pos(shark_canvas, 4, 70);
+    }
+
+    scene_panel(&m.live, 156, "LIVE", COL_LIVE, true);
+    scene_panel(&m.stby, 319, "STANDBY", COL_STANDBY, false);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 398, 50, 0);
+    m.target = make_panel(pagem, 482, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -799,13 +868,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 454, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 476, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 494, 156);
+    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 538, 156);
+    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 560, 156);
+    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 578, 156);
     event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 516);
+    lv_obj_set_pos(event_labels[2], 8, 600);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -894,7 +963,10 @@ static void main_update(const display_status_t *s)
         lv_label_set_text(m.in_va, "--H--M");
         lv_obj_set_style_text_color(m.in_va, lv_color_hex(COL_DIM), 0);
     }
-    if (p->have_monitor) {
+    if (p->pole_off) {
+        lv_label_set_text(m.out_wa, "POLE OFF");
+        lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_WARN), 0);
+    } else if (p->have_monitor) {
         const int ma = p->light_ma > 0 ? p->light_ma : 0, a10 = (ma + 50) / 100, w = (p->light_mw + 500) / 1000;
         // amps: one digit before the point (100 W at the light bus's 12 V or more is under 10 A)
         lv_label_set_text_fmt(m.out_wa, "%d.%dA %s%s%dW", a10 / 10, a10 % 10, w < 100 ? FIG_SPACE : "", w < 10 ? FIG_SPACE : "", w);
@@ -918,6 +990,7 @@ static void main_update(const display_status_t *s)
     const char *problem = NULL;
     if (!board && !p->sim) problem = "Power board not found";
     else if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
+    else if (p->pole_off) problem = NULL;   // asked for; row 2 shows POLE OFF
     else if (p->lights_off) problem = "LIGHTS SWITCHED OFF";
     else if (p->have_expander && !p->efuse_pg) problem = "eFuse tripped / off";
     else if (p->fault0 || p->fault1) {
@@ -1190,7 +1263,13 @@ static void display_task(void *arg)
             page_wanted = -1;
         }
         if (shot_wanted) lv_obj_invalidate(screen);
+        shark_draw();
         const uint32_t wait = lv_timer_handler();
+        static int64_t shark_log_us;
+        if (esp_timer_get_time() - shark_log_us > 10000000) {
+            shark_log_us = esp_timer_get_time();
+            ESP_LOGI(TAG, "shark: %lu preview frames in, %lu drawn", (unsigned long)shark_rx_frames, (unsigned long)shark_drawn);
+        }
         vTaskDelay(pdMS_TO_TICKS(wait < 10 ? 10 : wait > UPDATE_MS ? UPDATE_MS : wait));
     }
 }

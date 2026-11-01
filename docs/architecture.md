@@ -164,11 +164,11 @@ base's Standby only shows names. Plan:
   layer commands to it the same way it sends Live ones to brain A.
 - **The preview comes down over the radio, reduced**: one byte per LED
   (8-bit colour, ~1 KB a frame), 10-15 fps, about 15 KB/s; dropped frames
-  don't matter for a preview. One ESP-NOW v2 packet per frame (1,470 bytes)
-  if both ends support v2, otherwise 5 packets of 250. The base draws it as
-  a side view of the shark in the Standby panel (172 px wide, about 85 tall),
-  from an LED position table generated from the same positions as the
-  simulator and `make_ledmap.py`. A live side view isn't wanted (look up).
+  don't matter for a preview. WLED's ESP-IDF only has ESP-NOW v1, so 5 packets
+  of 250 bytes a frame. A separate preview screen draws it
+  (`firmware/preview`, a 1.91 AMOLED, about 446 x 224 px for the shark). The
+  base's Standby panel could draw the same stream at about 172 x 85 px. A live
+  side view isn't wanted (look up).
 - **Later, A/B handover**: TAKE makes the controller switch (or crossfade)
   from one brain's stream to the other's, and the roles swap. The next look
   is already running, so effects that grow from black (fire) start warm, and
