@@ -24,10 +24,23 @@ static i2c_master_bus_handle_t bus;
 static i2c_master_dev_handle_t bq, ina, exp_dev;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static power_status_t st;
-static volatile bool want_lights = true, want_pack = true, want_pole_off, sim;
+static volatile bool want_lights = true, want_pack = true, want_pole_off;
+#if CONFIG_NIBBLES_POWER_SIM_FAST
+#define CONFIGURED_SIM SIM_FAST
+#elif CONFIG_NIBBLES_POWER_SIM_REALISTIC
+#define CONFIGURED_SIM SIM_REALISTIC
+#else
+#define CONFIGURED_SIM SIM_OFF
+#endif
+static volatile sim_mode_t sim = CONFIGURED_SIM;
+static volatile bool sim_configured = CONFIGURED_SIM != SIM_OFF;
 
 i2c_master_bus_handle_t power_bus(void) { return bus; }
-void power_sim(bool on) { sim = on; }
+void power_sim(sim_mode_t mode)
+{
+    sim_configured = false;
+    sim = mode;
+}
 void power_set_lights(bool on) { want_lights = on; }
 void power_set_pack(bool on) { want_pack = on; }
 
@@ -173,27 +186,34 @@ static bool exp_write(bool lights_off, bool pack_off)
 }
 
 // ------------------------------------------------------------------ simulation
-static void simulate(power_status_t *s, int64_t now_us)
+static void simulate(power_status_t *s, sim_mode_t mode, double dt_s, double t_s)
 {
-    const double t = now_us / 1e6;
+    static sim_state_t state;
+    static sim_mode_t last;
+    if (mode != last) sim_reset(&state);
+    last = mode;
+    sim_reading_t r;
+    if (mode == SIM_FAST) sim_fast(t_s, &r);
+    else sim_realistic(&state, dt_s, &r);
     s->sim = true;
     s->have_charger = s->have_monitor = s->have_expander = true;
-    s->docked = fmod(t, 120) < 60;                  // a minute on the dock, a minute off
-    s->charger_ok = true;
-    s->vbat_mv = 15000 + (int)(400 * sin(t / 30));
-    s->vbus_mv = !s->docked ? 0 : fmod(t, 240) < 120 ? 15600 : 20100;   // an external battery, then a USB-C supply
-    const bool starved = s->docked && fmod(t, 240) >= 30 && fmod(t, 240) < 60;   // half a minute of a starved pack
-    s->ibat_ma = starved ? 30 : s->docked ? 1850 : 0;   // the charger's current only (the lights bypass it)
-    s->ibus_ma = starved ? 60 : s->docked ? 2000 : 0;
-    s->vsys_mv = s->vbat_mv + 200;
-    s->chg_state = s->docked ? CHG_FAST : CHG_NOT_CHARGING;
-    s->die_c10 = 750 + (int)(350 * sin(t / 25));   // sweeps through the screen's warn and bad levels
-    s->cell_c10 = 400 + (int)(180 * sin(t / 20));
-    s->light_mv = s->docked ? 16400 : s->vbat_mv - 150;
-    s->light_ma = 2500 + (int)(1500 * sin(t * 1.3));
-    s->light_mw = s->light_mv * s->light_ma / 1000;
-    s->efuse_pg = true;
-    s->fault0 = s->fault1 = s->ts_flags = 0;
+    s->docked = r.docked;
+    s->charger_ok = r.charger_ok;
+    s->efuse_pg = r.efuse_pg;
+    s->chg_state = r.chg_state;
+    s->fault0 = r.fault0;
+    s->fault1 = r.fault1;
+    s->ts_flags = r.ts_flags;
+    s->vbus_mv = r.vbus_mv;
+    s->ibus_ma = r.ibus_ma;
+    s->vbat_mv = r.vbat_mv;
+    s->ibat_ma = r.ibat_ma;
+    s->vsys_mv = r.vsys_mv;
+    s->die_c10 = r.die_c10;
+    s->cell_c10 = r.cell_c10;
+    s->light_mv = r.light_mv;
+    s->light_ma = r.light_ma;
+    s->light_mw = r.light_mw;
 }
 
 // ------------------------------------------------------------------ task
@@ -202,13 +222,32 @@ static void power_task(void *arg)
     bool bq_ok = false, ina_ok = false, exp_ok = false, cfg_ok = false;
     int64_t next_probe = 0;
     bool lights_off = false, pack_off = false;
+    int64_t last_us = esp_timer_get_time();
+    int sim_answers = 0;
+    if (sim_configured) ESP_LOGW(TAG, "SIMULATED readings (%s), used as if real", sim == SIM_FAST ? "fast" : "realistic");
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POWER_POLL_MS));
         const int64_t now = esp_timer_get_time();
         power_status_t s = { 0 };
         s.die_c10 = s.cell_c10 = INT16_MIN;
-        if (sim) {
-            simulate(&s, now);
+        // A build's simulation gives way to a real board, until the next restart.
+        // A bare header can fake one answer, so it takes three probes in a row.
+        if (sim_configured && now >= next_probe) {
+            next_probe = now + 2000000;
+            const int who = present(BQ_ADDR) ? BQ_ADDR : present(INA_ADDR) ? INA_ADDR : present(EXP_ADDR) ? EXP_ADDR : 0;
+            sim_answers = who ? sim_answers + 1 : 0;
+            if (who) ESP_LOGW(TAG, "0x%02x answered a probe (%d of 3)", who, sim_answers);
+            if (sim_answers >= 3) {
+                ESP_LOGW(TAG, "a real power board answers: simulated readings off");
+                sim_configured = false;
+                sim = SIM_OFF;
+                next_probe = 0;
+            }
+        }
+        const sim_mode_t mode = sim;
+        if (mode != SIM_OFF) {
+            simulate(&s, mode, (now - last_us) / 1e6, now / 1e6);
+            s.sim_configured = sim_configured;
             want_pole_off = pole_off_stays(want_pole_off, input_kind(s.vbus_mv));
             s.lights_off = want_pole_off;
             if (want_pole_off) s.light_ma = s.light_mw = 0;
@@ -274,6 +313,7 @@ static void power_task(void *arg)
         s.pack_pct = s.pack_mv ? pack_percent(s.pack_mv, -s.pack_ma) : -1;
         s.runtime_min = (!s.docked && s.pack_pct >= 0 && s.have_monitor) ? runtime_minutes(s.pack_pct, s.light_mw + BASE_LOAD_MW) : -1;
 
+        last_us = now;
         taskENTER_CRITICAL(&lock);
         st = s;
         taskEXIT_CRITICAL(&lock);

@@ -149,10 +149,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   With nothing plugged in, the LEMO battery is a dim outline with no
   number. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
-  kerning), so values don't shift as they change. `sim on` alternates a minute on an
-  external battery (15.6 V; starved for half a minute) or a USB-C supply
-  (20.1 V) and a minute on the pack, and sweeps both temperatures through
-  their levels. Under it, a side view of the shark from a brain's preview
+  kerning), so values don't shift as they change. Simulated readings are in the section below. Under it, a side view of the shark from a brain's preview
   stream (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
   `tools/sim/make_preview_map.py`); all dim with no stream. Under that, the fins
   laid flat, seen from above (leading edges up, port on the left, live colours,
@@ -172,6 +169,20 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   under it. Positions: LIVE 4 (157 tall), STANDBY 167 (157 tall), target 330,
   lock 386, links 408, keys 426, event 448. Page 2 is the preset grid, page 3
   the old cards and bump pads, kept for reference and debugging for now.
+- **Simulated power data** (`main/power_sim.c`, host-tested; 2026-11-01). Two
+  kinds: **fast** (every value and problem in 2 minutes) and **realistic**
+  (festival nights in real time: pack, swapped-in VB99s, a USB-C charge at the
+  hotel). Two ways to run them:
+  - **Build setting** `Nibbles base -> Simulated power board data` in `idf.py
+    menuconfig` (`CONFIG_NIBBLES_POWER_SIM_*`, off by default; `sdkconfig` isn't in
+    git, so this is per computer). Used as if real: the log marks rows `sim` 2
+    and the charge graph refills from them. A real power board answering turns it
+    off until the next restart. Never in a festival build: a dead board would
+    look healthy.
+  - **Serial** `sim on|fast|real|off`, for a test: log rows `sim` 1, which the
+    graph never takes.
+  Neither goes to WLED: `NL_MSG_BATTERY` is real readings only, because it sets
+  the current limit on real LEDs. Page 1 shows `SIM` after the log's file name.
 - **Data logger** (`main/logger.c`, `log_format.c`; 2026-11-01): one CSV row a
   second on the TF card (1-bit SD: CLK 41, CMD 39, D0 40), a new file each boot,
   `/nibbles/L00001.CSV` and up, on its own lowest-priority task. Synced every
@@ -196,7 +207,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`,
+  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

@@ -30,7 +30,7 @@ size_t log_row(char *out, size_t cap, const log_sample_t *s)
     return n > 0 && (size_t)n < cap ? (size_t)n : 0;
 }
 
-bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct)
+bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct, bool as_real)
 {
     // t_s,time,sim,pack_mv,pack_pct
     const char *p = strchr(row, ',');
@@ -39,7 +39,7 @@ bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct)
     const unsigned long t = strtoul(p + 1, &end, 10);
     if (end == p + 1 || *end != ',' || !t) return false;
     p = end + 1;
-    if (*p != '0') return false;   // made-up readings
+    if (!(*p == '0' || (*p == '2' && as_real)) || p[1] != ',') return false;   // made-up readings
     p = strchr(p, ',');
     p = p ? strchr(p + 1, ',') : NULL;
     if (!p) return false;

@@ -2,17 +2,20 @@
 // INT 3): the BQ25798 charger (0x6B), the INA226 on the lights' output
 // (0x40), the TCA9534 expander (0x20: P0 LIGHT_OFF, P1 PACK_OFF, P3
 // EFUSE_PG), and the dock detect line (GPIO 5). The keypad boards share the
-// bus (keypad.c). Until the board exists, "sim on" over serial fills in
-// made-up readings for the screen; those are never broadcast.
+// bus (keypad.c). Made-up readings come from power_sim.c: over serial for a test
+// ("sim on|fast|real"), or from the build (CONFIG_NIBBLES_POWER_SIM_*), which uses
+// them as if real and gives way to a real board. They're never broadcast.
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 #include "driver/i2c_master.h"
 #include "esp_err.h"
+#include "power_sim.h"
 
 typedef struct {
-    bool sim;                 // made-up readings ("sim on")
+    bool sim;                 // made-up readings
+    bool sim_configured;      // ... chosen in the build, to use as if real
     bool have_charger, have_monitor, have_expander;
     bool docked;              // dock detect high, or the charger sees VBUS
     // charger (BQ25798)
@@ -45,7 +48,7 @@ esp_err_t power_start(void);
 void power_get(power_status_t *out);
 i2c_master_bus_handle_t power_bus(void);   // shared with the keypads (NULL until started)
 void power_bus_after_read(void);           // call after every read on it (i2c_recover.c)
-void power_sim(bool on);
+void power_sim(sim_mode_t mode);   // from the console: a test, not "as if real"
 // Lights' eFuse on/off (LIGHT_OFF). The pack's ideal diode (PACK_OFF) is
 // only switched off while docked, and comes back on by itself when the dock goes.
 void power_set_lights(bool on);

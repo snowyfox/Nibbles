@@ -402,7 +402,7 @@ static void buttons_task(void *arg)
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 Live and Standby, 2 grid, 3 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
 // "leds on|off" (print the key LED colours when they change),
-// "sim on|off" (made-up power readings), "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
+// "sim off|on|fast|real" (made-up power readings; on = fast), "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
 static void console_key(const char *args)
 {
     char name[16] = "";
@@ -478,7 +478,9 @@ static void console_task(void *arg)
             for (int k = 1; k < KEY_COUNT; k++) printf("%s ", ctl_key_name((ctl_key_t)k));
             printf("\n");
         }
-        else if (!strcmp(line, "sim on") || !strcmp(line, "sim off")) power_sim(line[5] == 'n');
+        else if (!strcmp(line, "sim off")) power_sim(SIM_OFF);
+        else if (!strcmp(line, "sim on") || !strcmp(line, "sim fast")) power_sim(SIM_FAST);
+        else if (!strcmp(line, "sim real")) power_sim(SIM_REALISTIC);
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
         else if (!strcmp(line, "log")) {
             logger_status_t l;
@@ -707,7 +709,7 @@ void app_main(void)
             logger_get(&l);
             if (!l.enabled) snprintf(ds.log_text, sizeof(ds.log_text), "Log off");
             else if (!l.mounted) snprintf(ds.log_text, sizeof(ds.log_text), "No TF card");
-            else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, rtc_time_known() ? "" : " no clock");
+            else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, pw.sim ? " SIM" : rtc_time_known() ? "" : " no clock");
         }
         display_update(&ds);
         if (n % 40) continue;  // log every 2 s
