@@ -41,6 +41,7 @@ typedef struct {
     int in_ma;                // the LEMO's whole current (charger + light bus), worked out
     int in_split;             // per mille of it going to the charger; -1 = nothing comes in
     int pack_ma;              // the pack's whole current, + charging, - discharging, worked out
+    int chg_limit_ma;         // the charger's input limit now (charger_input_limit_ma)
     bool starved;             // plugged in, not full, and the pack gets (almost) nothing
 } power_status_t;
 

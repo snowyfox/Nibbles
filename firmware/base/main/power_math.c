@@ -65,6 +65,14 @@ temp_level_t die_temp_level(int c10)
     return c10 >= DIE_HOT_C10 ? TEMP_BAD : c10 >= DIE_WARM_C10 ? TEMP_WARN : TEMP_OK;
 }
 
+int charger_input_limit_ma(input_kind_t input, int light_peak_ma)
+{
+    if (input != INPUT_SUPPLY) return CHARGER_PIN_MA;
+    const int room = DONGLE_MA - DONGLE_MARGIN_MA - (light_peak_ma > 0 ? light_peak_ma : 0);
+    const int limit = room / 10 * 10;   // 10 mA steps
+    return limit < CHARGER_MIN_MA ? CHARGER_MIN_MA : limit > CHARGER_PIN_MA ? CHARGER_PIN_MA : limit;
+}
+
 int runtime_minutes(int pct, int load_mw)
 {
     if (load_mw < 500) return -1;

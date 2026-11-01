@@ -34,6 +34,12 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   - **TCA9534** (0x20): P0 LIGHT_OFF, P1 PACK_OFF (outputs, written low = on
     before they're made outputs), P3 EFUSE_PG. PACK_OFF is only ever set
     while docked.
+  - **On a USB-C supply, charging gives way to the lights** (2026-11-01,
+    `charger_input_limit_ma`, not yet run on a real charger): the dongle's trigger
+    board gives 5 A at 20 V, so IINDPM (REG06, re-written after a plug-in) = 5 A less
+    400 mA margin less the lights' peak over 3 s, between 100 mA and the ILIM_HIZ pin's
+    2 A. The pin stays the upper limit. Lights alone over 5 A can't be helped from
+    here: see `docs/power.md`. In the log as `chg_limit_ma`.
   - The pack's charge (`pack_percent`: a 21700 resting-voltage curve,
     corrected for sag at 100 mOhm) and the runtime at the present load.
   - Broadcasts `NL_MSG_BATTERY` every 200 ms (the INA226's voltage and

@@ -19,6 +19,7 @@ typedef struct {
     int wled_preset, wled_bri, wled_fps;  // -1: WLED not heard
     int fin_follow;              // 1, 0, -1 not known
     uint32_t dropped;            // rows lost so far (the card fell behind or failed)
+    int chg_limit_ma;            // the charger's input limit
 } log_sample_t;
 
 extern const char LOG_HEADER[];

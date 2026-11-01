@@ -160,7 +160,7 @@ static void sample(log_sample_t *s)
         .vbus_mv = p.vbus_mv, .ibus_ma = p.ibus_ma, .in_ma = p.in_ma, .ibat_ma = p.ibat_ma, .vsys_mv = p.vsys_mv,
         .light_mv = p.light_mv, .light_ma = p.light_ma, .light_mw = p.light_mw, .cell_c10 = p.cell_c10, .die_c10 = p.die_c10,
         .chg_state = p.chg_state, .fault0 = p.fault0, .fault1 = p.fault1, .ts_flags = p.ts_flags,
-        .efuse_pg = p.efuse_pg, .lights_off = p.lights_off, .pole_off = p.pole_off,
+        .efuse_pg = p.efuse_pg, .lights_off = p.lights_off, .pole_off = p.pole_off, .chg_limit_ma = p.chg_limit_ma,
     };
     // Nothing read yet (just booted) or no board: blanks, not zeros.
     if (!p.pack_mv) s->pack_pct = -1;

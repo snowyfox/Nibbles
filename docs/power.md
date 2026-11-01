@@ -109,6 +109,12 @@ Worst case over the dock cable is lights at full plus quick charging, around
 
 ### Charging (dock, or the USB-C dongle)
 
+- **The dongle's 5 A at 20 V (2026-11-01):** the base lowers the charger's input
+  limit so lights plus charging stay under it. It can only give up charging: the
+  lights take the light bus directly, so **lights alone over 5 A still overload a
+  100 W trigger board**. Run full shows from the pack or a VB99, and use the dongle
+  with the pole off or the lights low.
+
 - **One power input: the LEMO.** No USB-C on the totem (decided
   2026-10-25): one sealed connector instead of two. At home, a separate
   **USB-C to LEMO dongle** (a CH224K PD sink and a LEMO plug) feeds the same

@@ -65,6 +65,15 @@ typedef enum { TEMP_OK = 0, TEMP_WARN, TEMP_BAD } temp_level_t;
 temp_level_t cell_temp_level(int c10);   // INT16_MIN (no reading): TEMP_OK
 temp_level_t die_temp_level(int c10);
 
+// What the charger may draw from a USB-C supply (the dongle's trigger board gives
+// DONGLE_MA at 20 V), given the lights' recent peak on the same input: charging
+// gives way to the lights. Not on a supply: the ILIM_HIZ pin's limit, untouched.
+#define DONGLE_MA           5000
+#define DONGLE_MARGIN_MA    400     // the base, and the reading's lag
+#define CHARGER_PIN_MA      2000    // the board's ILIM_HIZ divider, always the upper limit
+#define CHARGER_MIN_MA      100     // the BQ25798's lowest setting
+int charger_input_limit_ma(input_kind_t input, int light_peak_ma);
+
 // Minutes left at load_mw from pct, or -1 when the load is too small to say.
 int runtime_minutes(int pct, int load_mw);
 

@@ -43,18 +43,22 @@ def main():
     for cmd in commands:
         s.write(cmd.encode() + b'\n')
         time.sleep(0.3)
-    s.write(b'shot\n')
-    buf, t0 = b'', time.time()
-    while time.time() - t0 < 20 and b'SHOT END' not in buf:
-        buf += s.read(65536)
-    text = buf.decode(errors='replace')
-    start, end = text.find('SHOT '), text.find('SHOT END')
-    if start < 0 or end < 0 or text[start:].startswith('SHOT failed'):
-        sys.exit('no screenshot received')
-    w, h = map(int, text[start:].splitlines()[0].split()[1:3])
-    lines = text[start:end].splitlines()[1:]
-    data = base64.b64decode(''.join(l.strip() for l in lines if re.fullmatch(r'[A-Za-z0-9+/=]+', l.strip())))
-    if len(data) != w * h * 2:
+    # A status line can land in the middle of the picture and lose a line of it: try again.
+    for attempt in range(3):
+        s.write(b'shot\n')
+        buf, t0 = b'', time.time()
+        while time.time() - t0 < 20 and b'SHOT END' not in buf:
+            buf += s.read(65536)
+        text = buf.decode(errors='replace')
+        start, end = text.find('SHOT '), text.find('SHOT END')
+        if start < 0 or end < 0 or text[start:].startswith('SHOT failed'):
+            sys.exit('no screenshot received')
+        w, h = map(int, text[start:].splitlines()[0].split()[1:3])
+        lines = text[start:end].splitlines()[1:]
+        data = base64.b64decode(''.join(l.strip() for l in lines if re.fullmatch(r'[A-Za-z0-9+/=]+', l.strip())))
+        if len(data) == w * h * 2:
+            break
+    else:
         sys.exit(f'got {len(data)} bytes, expected {w * h * 2}')
     save_png(data, w, h, path)
     print(f'{path}: {w}x{h}')

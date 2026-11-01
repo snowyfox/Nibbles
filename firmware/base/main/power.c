@@ -224,6 +224,8 @@ static void power_task(void *arg)
     bool lights_off = false, pack_off = false;
     int64_t last_us = esp_timer_get_time();
     int sim_answers = 0;
+    int light_peak = 0, chg_limit_set = -1, chg_limit_input = INPUT_NONE;
+    int64_t light_peak_until = 0;
     if (sim_configured) ESP_LOGW(TAG, "SIMULATED readings (%s), used as if real", sim == SIM_FAST ? "fast" : "realistic");
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POWER_POLL_MS));
@@ -310,6 +312,21 @@ static void power_task(void *arg)
             s.pack_ma = s.have_monitor && !s.docked ? -s.light_ma : 0;
             s.starved = false;
         }
+        // A USB-C supply is only good for so much: charging gives way to the lights.
+        // They jump with the music, so the limit follows their peak over the last 3 s:
+        // down at once, up only after that.
+        if (s.light_ma >= light_peak || now >= light_peak_until) {
+            light_peak = s.light_ma;
+            light_peak_until = now + 3000000;
+        }
+        s.chg_limit_ma = charger_input_limit_ma((input_kind_t)s.input, light_peak);
+        if (bq_ok && !s.sim && s.chg_limit_ma != chg_limit_set && wr16(bq, 0x06, s.chg_limit_ma / 10) == ESP_OK) {
+            chg_limit_set = s.chg_limit_ma;
+            ESP_LOGI(TAG, "charger input limit %d mA", chg_limit_set);
+        }
+        // The chip goes back to its default on a plug-in or if it's lost.
+        if (!bq_ok || s.input != chg_limit_input) chg_limit_set = -1;
+        chg_limit_input = s.input;
         s.pack_pct = s.pack_mv ? pack_percent(s.pack_mv, -s.pack_ma) : -1;
         s.runtime_min = (!s.docked && s.pack_pct >= 0 && s.have_monitor) ? runtime_minutes(s.pack_pct, s.light_mw + BASE_LOAD_MW) : -1;
 

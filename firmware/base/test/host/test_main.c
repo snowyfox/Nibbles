@@ -531,11 +531,11 @@ static void test_log_format(void)
     CHECK(log_file_number("L00042.CSV") == 42 && log_file_number("l00001.csv") == 1);
     CHECK(log_file_number("L00042.TXT") == -1 && log_file_number("NOTES.CSV") == -1 && log_file_number("L0042.CSV") == -1);
     log_sample_t s = { .t_s = 12, .unix_time = 1793000000, .sim = true, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
-                       .die_c10 = INT16_MIN, .wled_preset = 230, .wled_bri = 255, .wled_fps = 43, .fin_follow = -1, .dropped = 3 };
+                       .die_c10 = INT16_MIN, .wled_preset = 230, .wled_bri = 255, .wled_fps = 43, .fin_follow = -1, .dropped = 3, .chg_limit_ma = 1500 };
     char row[320];
     const size_t n = log_row(row, sizeof(row), &s);
     CHECK(n > 0 && row[n - 1] == '\n');
-    CHECK(!strcmp(row, "12,1793000000,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3\n"));
+    CHECK(!strcmp(row, "12,1793000000,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3,1500\n"));
     s.cell_c10 = -45;
     log_row(row, sizeof(row), &s);
     CHECK(strstr(row, ",-4.5,,") != NULL);
@@ -647,6 +647,19 @@ static void test_power_sim(void)
     CHECK(hours_to_hotel > 4 && hours_to_hotel < 12);    // a night
     CHECK(charged_at > hours_to_hotel + 1 && charged_at < hours_to_hotel + 8);
     CHECK(max_ma < 5000 && max_die < 850);               // nothing alarming in normal use
+}
+
+static void test_charger_limit(void)
+{
+    CHECK(charger_input_limit_ma(INPUT_NONE, 7000) == CHARGER_PIN_MA);     // not on a supply: untouched
+    CHECK(charger_input_limit_ma(INPUT_BATTERY, 7000) == CHARGER_PIN_MA);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 0) == CHARGER_PIN_MA);      // the pin's limit is the top
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 2000) == CHARGER_PIN_MA);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3000) == 1600);             // lights + charger + margin = 5 A
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 4507) == 90 + 10);          // the chip's lowest setting
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 7000) == CHARGER_MIN_MA);   // lights alone over: as little as it can
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, -50) == CHARGER_PIN_MA);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3333) % 10 == 0);           // the register's steps
 }
 
 static void test_eye_thumb(void)
@@ -768,6 +781,7 @@ int main(void)
     test_log_format();
     test_power_sim();
     test_eye_thumb();
+    test_charger_limit();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;
