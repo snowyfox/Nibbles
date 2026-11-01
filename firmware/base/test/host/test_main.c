@@ -527,12 +527,12 @@ static void test_log_format(void)
 {
     CHECK(log_file_number("L00042.CSV") == 42 && log_file_number("l00001.csv") == 1);
     CHECK(log_file_number("L00042.TXT") == -1 && log_file_number("NOTES.CSV") == -1 && log_file_number("L0042.CSV") == -1);
-    log_sample_t s = { .t_s = 12, .sim = true, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
+    log_sample_t s = { .t_s = 12, .unix_time = 1793000000, .sim = true, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
                        .die_c10 = INT16_MIN, .wled_preset = 230, .wled_bri = 255, .wled_fps = 43, .fin_follow = -1, .dropped = 3 };
     char row[320];
     const size_t n = log_row(row, sizeof(row), &s);
     CHECK(n > 0 && row[n - 1] == '\n');
-    CHECK(!strcmp(row, "12,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3\n"));
+    CHECK(!strcmp(row, "12,1793000000,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3\n"));
     s.cell_c10 = -45;
     log_row(row, sizeof(row), &s);
     CHECK(strstr(row, ",-4.5,,") != NULL);
@@ -541,6 +541,42 @@ static void test_log_format(void)
     for (const char *p = LOG_HEADER; *p; p++) head += *p == ',';
     CHECK(cols == head);                       // a value for every heading
     CHECK(log_row(row, 10, &s) == 0);          // too small: nothing, not half a row
+    // reading the charge back, for the graph after a restart
+    uint32_t t = 0;
+    int pct = 0;
+    s.sim = false;
+    log_row(row, sizeof(row), &s);
+    CHECK(log_parse_charge(row, &t, &pct) && t == 1793000000 && pct == 55);
+    CHECK(!log_parse_charge(LOG_HEADER, &t, &pct));
+    s.sim = true;
+    log_row(row, sizeof(row), &s);
+    CHECK(!log_parse_charge(row, &t, &pct));   // made-up readings don't come back
+    s.sim = false;
+    s.unix_time = 0;
+    log_row(row, sizeof(row), &s);
+    CHECK(!log_parse_charge(row, &t, &pct));   // nor rows with no real time
+    s.unix_time = 1793000000;
+    s.pack_pct = -1;
+    log_row(row, sizeof(row), &s);
+    CHECK(!log_parse_charge(row, &t, &pct));   // nor no reading
+    int8_t hist[4];
+    memset(hist, -1, sizeof(hist));
+    log_history_add(hist, 4, 20.0f, 1000, 1000, 50);   // now: the newest column
+    log_history_add(hist, 4, 20.0f, 1000, 959, 40);    // 41 s ago: two slices back
+    log_history_add(hist, 4, 20.0f, 1000, 900, 30);    // too old
+    log_history_add(hist, 4, 20.0f, 1000, 1100, 20);   // from the future
+    CHECK(hist[3] == 50 && hist[1] == 40 && hist[0] == -1 && hist[2] == -1);
+    // the clock chip's registers
+    uint8_t r[7];
+    rtc_unix_to_regs(1793554700, r);           // 2026-11-01 17:38:20 UTC, a Sunday
+    CHECK(r[0] == 0x20 && r[1] == 0x38 && r[2] == 0x17 && r[3] == 0x01 && r[4] == 0 && r[5] == 0x11 && r[6] == 0x26);
+    CHECK(rtc_regs_to_unix(r) == 1793554700);
+    rtc_unix_to_regs(1835481600, r);           // 2028-03-01: past a leap day
+    CHECK(r[3] == 0x01 && r[5] == 0x03 && r[6] == 0x28 && rtc_regs_to_unix(r) == 1835481600);
+    r[0] |= 0x80;
+    CHECK(rtc_regs_to_unix(r) == 0);           // the oscillator stopped
+    r[0] &= 0x7F; r[5] = 0x13;
+    CHECK(rtc_regs_to_unix(r) == 0);           // not a date
 }
 
 static void test_power_math(void)

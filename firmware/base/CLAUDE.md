@@ -176,11 +176,18 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   second on the TF card (1-bit SD: CLK 41, CMD 39, D0 40), a new file each boot,
   `/nibbles/L00001.CSV` and up, on its own lowest-priority task. Synced every
   10 s; retries every 30 s with no card; deletes the oldest logs below 200 MB
-  free. `t_s` is seconds since boot (no clock set). The `sim` column marks
-  made-up readings. It never formats a card that won't mount.
+  free. `t_s` is seconds since boot, `time` Unix time from the PCF85063 (`main/rtc.c`,
+  software I2C on GPIO 47/48; 0 if it has lost its time). The `sim` column marks
+  made-up readings. It never formats a card that won't mount. At boot, if the
+  clock is good, the last hour of the last five files refills the charge graph
+  (real readings only). The 3.49 has no backup cell fitted as far as we know: if
+  the clock loses its time with the power off, `time` reads 0 and the graph
+  starts empty until `tools/base_log.py PORT time` sets it.
+  `tools/base_log.py` sets the clock and fetches files over USB. Page 1 shows
+  its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`,
+  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX]`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

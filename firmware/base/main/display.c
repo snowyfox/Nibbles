@@ -541,7 +541,7 @@ static struct {
     lv_obj_t *t_cell[2], *t_slash, *t_die[2], *pack_v;   // row 3; [1]: the copy 1 px right that makes bold
     bool flow_pulsing;
     scene_panel_t live, stby;
-    lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys;
+    lv_obj_t *target, *target_name, *page, *latch, *lock, *links, *keys, *log;
 } m;
 
 static lv_obj_t *make_panel(lv_obj_t *parent, int y, int h, uint32_t border)
@@ -705,7 +705,7 @@ static void fins_key_show(void)
 // The bottom of the main page: the pack's charge over the last hour, one
 // pixel-wide column per slice of time, newest on the right, 1 px per percent.
 // Kept in RAM only, so it starts empty after a restart; no reading: no column.
-#define GRAPH_W        172
+#define GRAPH_W        DISPLAY_GRAPH_COLUMNS
 #define GRAPH_H        100
 #define GRAPH_SLICE_MS (3600000 / GRAPH_W)
 #define GRAPH_OK       0x07E0   // RGB565: green
@@ -717,14 +717,30 @@ static uint16_t *graph_px;
 static int8_t graph_pct[GRAPH_W];
 static int64_t graph_next_us;
 
+static int8_t graph_restored[GRAPH_W];
+static volatile bool graph_restore_ready;
+
+void display_graph_restore(const int8_t pct[DISPLAY_GRAPH_COLUMNS])
+{
+    memcpy(graph_restored, pct, GRAPH_W);
+    graph_restore_ready = true;
+}
+
 static void graph_update(int pct)
 {
     if (!graph_canvas) return;
     const int64_t now = esp_timer_get_time();
-    if (now < graph_next_us) return;
-    graph_next_us = now + GRAPH_SLICE_MS * 1000LL;
-    memmove(graph_pct, graph_pct + 1, GRAPH_W - 1);
-    graph_pct[GRAPH_W - 1] = (int8_t)(pct > 100 ? 100 : pct);
+    const bool restore = graph_restore_ready;
+    if (now < graph_next_us && !restore) return;
+    if (restore) {
+        graph_restore_ready = false;
+        for (int x = 0; x < GRAPH_W; x++) if (graph_pct[x] < 0) graph_pct[x] = graph_restored[x];
+    }
+    if (now >= graph_next_us) {
+        graph_next_us = now + GRAPH_SLICE_MS * 1000LL;
+        memmove(graph_pct, graph_pct + 1, GRAPH_W - 1);
+        graph_pct[GRAPH_W - 1] = (int8_t)(pct > 100 ? 100 : pct);
+    }
     memset(graph_px, 0, GRAPH_W * GRAPH_H * 2);
     for (int x = 0; x < GRAPH_W; x++) {
         const int v = graph_pct[x];
@@ -1061,10 +1077,11 @@ static void build_main_page(void)
     m.lock = at(pagek, &lv_font_montserrat_16, COL_BAD, 8, 386, 156);
     m.links = at(pagek, &lv_font_montserrat_14, COL_TITLE, 8, 408, 156);
     m.keys = at(pagek, &lv_font_montserrat_14, COL_TITLE, 8, 426, 156);
+    m.log = at(pagek, &lv_font_montserrat_14, COL_TITLE, 8, 444, 156);
     event_labels[2] = label(pagek, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 448);
+    lv_obj_set_pos(event_labels[2], 8, 466);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -1123,7 +1140,7 @@ static void main_update(const display_status_t *s)
     const chg_state_t cs = (chg_state_t)p->chg_state;
     const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
     set_battery(&batt_pack, p->pack_pct, charging);
-    graph_update(p->pack_pct);
+    graph_update(p->pack_mv ? p->pack_pct : -1);
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
     else lv_label_set_text(m.pct, "");   // no reading: just the dim battery
     lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : COL_TEXT), 0);
@@ -1227,6 +1244,7 @@ static void main_update(const display_status_t *s)
     lv_obj_set_style_text_color(m.links, lv_color_hex(s->eyes_fresh && s->wled_fresh ? COL_TITLE : COL_WARN), 0);
     if (s->keypads_found) lv_label_set_text_fmt(m.keys, "Keypads %d of %d", s->keypads_found, s->keypads_total);
     else lv_label_set_text(m.keys, "No keypads found");
+    lv_label_set_text(m.log, s->log_text);
 }
 
 static void ui_build(void)

@@ -19,6 +19,7 @@
 #include "freertos/task.h"
 #include "keypad.h"
 #include "logger.h"
+#include "rtc.h"
 #include "nibbles_espnow.h"
 #include "nvs_flash.h"
 #include "power.h"
@@ -478,6 +479,10 @@ static void console_task(void *arg)
                    l.mounted ? "card ok" : "no card", l.file_number, (unsigned long)l.rows, (unsigned long)l.dropped,
                    (unsigned long)l.max_write_ms, (unsigned long)l.card_mb, (unsigned long)l.free_mb);
         }
+        else if (!strcmp(line, "log list")) logger_print_list();
+        else if (!strncmp(line, "log get ", 8)) logger_print_file(atoi(line + 8));
+        else if (!strcmp(line, "time")) printf("TIME %lu%s\n", (unsigned long)rtc_now(), rtc_chip_found() ? "" : " no clock chip");
+        else if (!strncmp(line, "time ", 5)) printf("TIME %s %lu\n", rtc_set(strtoul(line + 5, NULL, 10)) ? "set" : "failed", (unsigned long)rtc_now());
         else if (!strcmp(line, "log on") || !strcmp(line, "log off")) logger_enable(line[5] == 'n');
         else if (!strcmp(line, "log tail")) logger_print_tail(8);
         else if (!strcmp(line, "pole on") || !strcmp(line, "pole off")) {
@@ -559,6 +564,7 @@ void app_main(void)
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     if (power_start() != ESP_OK) ESP_LOGE(TAG, "no power board bus");
+    rtc_start();
     if (logger_start() != ESP_OK) ESP_LOGE(TAG, "no logger");
     if (keypad_start(on_key) != ESP_OK) ESP_LOGE(TAG, "no keypad task");
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
@@ -677,6 +683,13 @@ void app_main(void)
         const uint8_t found = keypad_boards_found();
         ds.keypads_found = __builtin_popcount(found);
         ds.keypads_total = keypad_board_count();
+        {
+            logger_status_t l;
+            logger_get(&l);
+            if (!l.enabled) snprintf(ds.log_text, sizeof(ds.log_text), "Log off");
+            else if (!l.mounted) snprintf(ds.log_text, sizeof(ds.log_text), "No TF card");
+            else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, rtc_time_known() ? "" : " no clock");
+        }
         display_update(&ds);
         if (n % 40) continue;  // log every 2 s
         char eyes_s[160] = "no eyes heard", wled_s[200] = "no WLED heard";

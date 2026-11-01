@@ -9,12 +9,15 @@
 #include "driver/sdmmc_host.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_rom_crc.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "log_format.h"
 #include "power.h"
 #include "power_math.h"
+#include "display.h"
+#include "rtc.h"
 #include "sdmmc_cmd.h"
 
 static const char *TAG = "logger";
@@ -54,7 +57,7 @@ void logger_print_tail(int lines) { want_tail = lines; }
 
 static bool mount_card(void)
 {
-    const esp_vfs_fat_sdmmc_mount_config_t mount = { .format_if_mount_failed = false, .max_files = 2, .allocation_unit_size = 16 * 1024 };
+    const esp_vfs_fat_sdmmc_mount_config_t mount = { .format_if_mount_failed = false, .max_files = 4, .allocation_unit_size = 16 * 1024 };
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
     slot.width = 1;
@@ -151,7 +154,7 @@ static void sample(log_sample_t *s)
     power_status_t p;
     power_get(&p);
     *s = (log_sample_t){
-        .t_s = (uint32_t)(esp_timer_get_time() / 1000000), .sim = p.sim,
+        .t_s = (uint32_t)(esp_timer_get_time() / 1000000), .unix_time = rtc_now(), .sim = p.sim,
         .pack_mv = p.pack_mv, .pack_pct = p.pack_pct, .pack_ma = p.pack_ma,
         .input = p.input == INPUT_SUPPLY ? "usb" : p.input == INPUT_BATTERY ? "battery" : "none",
         .vbus_mv = p.vbus_mv, .ibus_ma = p.ibus_ma, .in_ma = p.in_ma, .ibat_ma = p.ibat_ma, .vsys_mv = p.vsys_mv,
@@ -159,6 +162,9 @@ static void sample(log_sample_t *s)
         .chg_state = p.chg_state, .fault0 = p.fault0, .fault1 = p.fault1, .ts_flags = p.ts_flags,
         .efuse_pg = p.efuse_pg, .lights_off = p.lights_off, .pole_off = p.pole_off,
     };
+    // Nothing read yet (just booted) or no board: blanks, not zeros.
+    if (!p.pack_mv) s->pack_pct = -1;
+    if (!p.have_charger) s->cell_c10 = s->die_c10 = INT16_MIN;
     taskENTER_CRITICAL(&lock);
     s->wled_preset = show_preset; s->wled_bri = show_bri; s->wled_fps = show_fps; s->fin_follow = show_fins;
     s->dropped = st.dropped;
@@ -169,6 +175,7 @@ static void print_tail(int lines)
 {
     if (!file) { printf("LOG no file open\n"); return; }
     fflush(file);
+    fsync(fileno(file));      // a second handle only sees what's been synced
     FILE *f = fopen(path, "r");
     if (!f) { printf("LOG can't read %s\n", path); return; }
     fseek(f, 0, SEEK_END);
@@ -182,9 +189,113 @@ static void print_tail(int lines)
     printf("LOG END %s, %ld bytes\n", path, size);
 }
 
+// The charge graph after a restart: the last hour from the last few files (a
+// short run shouldn't hide the one before it), if the clock is good. A file
+// carries about 100 bytes a second, so each read is a bounded tail.
+#define RESTORE_FILES 5
+
+static void restore_graph(int previous)
+{
+    const uint32_t now = rtc_now();
+    if (!now || previous < 1) return;
+    static int8_t cols[DISPLAY_GRAPH_COLUMNS];
+    static char line[256];
+    memset(cols, -1, sizeof(cols));
+    int used = 0;
+    for (int n = previous - RESTORE_FILES + 1; n <= previous; n++) {   // oldest first: newer rows win a column
+        if (n < 1) continue;
+        char name[40];
+        snprintf(name, sizeof(name), DIR_PATH "/L%05d.CSV", n);
+        FILE *f = fopen(name, "r");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        const long from = ftell(f) - 3700L * 130;
+        fseek(f, from > 0 ? from : 0, SEEK_SET);
+        if (from > 0) fgets(line, sizeof(line), f);   // part of a line
+        while (fgets(line, sizeof(line), f)) {
+            uint32_t t;
+            int pct;
+            if (!log_parse_charge(line, &t, &pct)) continue;
+            log_history_add(cols, DISPLAY_GRAPH_COLUMNS, 3600.0f / DISPLAY_GRAPH_COLUMNS, now, t, pct);
+            used++;
+        }
+        fclose(f);
+    }
+    if (used) {
+        display_graph_restore(cols);
+        ESP_LOGI(TAG, "charge graph: %d rows restored", used);
+    }
+}
+
+// ------------------------------------------------------------------ over USB
+static int print_number;   // the file to print, -1 the list
+
+static void print_task(void *arg)
+{
+    static char line[100];
+    if (print_number < 0) {
+        DIR *d = opendir(DIR_PATH);
+        if (d) {
+            for (struct dirent *e; (e = readdir(d));) {
+                if (log_file_number(e->d_name) < 0) continue;
+                struct stat s;
+                snprintf(line, sizeof(line), DIR_PATH "/%.12s", e->d_name);   // a log's name is 10 long
+                printf("LOGLIST %s %ld\n", e->d_name, stat(line, &s) == 0 ? (long)s.st_size : -1L);
+            }
+            closedir(d);
+        }
+        printf("LOGLIST END\n");
+        vTaskDelete(NULL);
+    }
+    snprintf(line, sizeof(line), DIR_PATH "/L%05d.CSV", print_number);
+    FILE *f = fopen(line, "r");
+    if (!f) {
+        printf("LOGFILE none\n");
+        vTaskDelete(NULL);
+    }
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);   // what's there now: the file being written may grow
+    rewind(f);
+    printf("LOGFILE L%05d.CSV %ld\n", print_number, size);
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t in[57];
+    uint32_t crc = 0;
+    for (long left = size; left > 0;) {
+        const size_t n = fread(in, 1, left < (long)sizeof(in) ? (size_t)left : sizeof(in), f);
+        if (!n) break;
+        left -= (long)n;
+        crc = esp_rom_crc32_le(crc, in, n);
+        int k = snprintf(line, sizeof(line), "LOGD ");
+        for (size_t i = 0; i < n; i += 3) {
+            const uint32_t v = in[i] << 16 | (i + 1 < n ? in[i + 1] << 8 : 0) | (i + 2 < n ? in[i + 2] : 0);
+            line[k++] = b64[(v >> 18) & 63];
+            line[k++] = b64[(v >> 12) & 63];
+            line[k++] = i + 1 < n ? b64[(v >> 6) & 63] : '=';
+            line[k++] = i + 2 < n ? b64[v & 63] : '=';
+        }
+        line[k++] = '\n';
+        line[k] = 0;
+        fputs(line, stdout);
+    }
+    fclose(f);
+    printf("LOGFILE END %08lx\n", (unsigned long)crc);
+    vTaskDelete(NULL);
+}
+
+static void start_print(int number)
+{
+    if (!card) { printf("LOGFILE none\nLOGLIST END\n"); return; }
+    print_number = number;
+    xTaskCreate(print_task, "logprint", 4096, NULL, 1, NULL);
+}
+
+void logger_print_list(void) { start_print(-1); }
+void logger_print_file(int number) { start_print(number); }
+
 static void logger_task(void *arg)
 {
     static char row[320];
+    bool restored = false;
     int64_t next_row = esp_timer_get_time(), next_try = 0, next_sync = 0, next_space = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -202,7 +313,12 @@ static void logger_task(void *arg)
                 taskENTER_CRITICAL(&lock);
                 st.mounted = true;
                 taskEXIT_CRITICAL(&lock);
-                if (!open_log()) close_all();
+                if (open_log()) {
+                    if (!restored) restore_graph(st.file_number - 1);
+                    restored = true;
+                } else {
+                    close_all();
+                }
             }
         }
         if (want_tail) {

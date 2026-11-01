@@ -6,7 +6,8 @@
 #include <stdint.h>
 
 typedef struct {
-    uint32_t t_s;                // since this boot (the base has no clock set)
+    uint32_t t_s;                // since this boot
+    uint32_t unix_time;          // real time, 0 if the clock isn't set
     bool sim;                    // made-up readings ("sim on")
     int pack_mv, pack_pct, pack_ma;
     const char *input;           // none, battery, usb
@@ -24,6 +25,18 @@ extern const char LOG_HEADER[];
 
 // One CSV row with its newline. Returns its length, or 0 if it doesn't fit.
 size_t log_row(char *out, size_t cap, const log_sample_t *s);
+
+// A row's real time and the pack's charge. False for the header, a row with no
+// real time or no charge reading, and made-up readings.
+bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct);
+
+// A past reading into a history of n columns, newest at n - 1, slice_s seconds each.
+void log_history_add(int8_t *cols, int n, float slice_s, uint32_t now, uint32_t t, int pct);
+
+// The PCF85063's seven time registers (BCD; year from 2000). 0 from the
+// registers if its oscillator stopped or they aren't a real date.
+uint32_t rtc_regs_to_unix(const uint8_t r[7]);
+void rtc_unix_to_regs(uint32_t t, uint8_t r[7]);
 
 // The number in a log file's name (L00042.CSV: 42), or -1 if it isn't one.
 int log_file_number(const char *name);

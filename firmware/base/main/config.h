@@ -39,6 +39,10 @@
 #define PIN_SD_CLK           41
 #define PIN_SD_CMD           39
 #define PIN_SD_D0            40
+
+// The PCF85063 clock (with the board's IMU and other sensors, which we don't use).
+#define PIN_RTC_SDA          47
+#define PIN_RTC_SCL          48
 #define POWER_I2C_HZ         100000
 #define POWER_POLL_MS        200
 #define BASE_LOAD_MW         2000    // the base itself, for the runtime estimate (estimate)

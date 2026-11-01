@@ -23,3 +23,6 @@ typedef struct {
 void logger_get(logger_status_t *out);
 void logger_enable(bool on);    // "log on|off": closes the file and unmounts when off
 void logger_print_tail(int lines);   // the current file's last lines, to the console
+// To the console, on a task of their own so logging carries on (tools/base_log.py):
+void logger_print_list(void);        // LOGLIST <name> <bytes> ..., LOGLIST END
+void logger_print_file(int number);  // LOGFILE <name> <bytes>, LOGD <base64> ..., LOGFILE END <crc32>
