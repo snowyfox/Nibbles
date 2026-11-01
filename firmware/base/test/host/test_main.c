@@ -9,6 +9,7 @@
 #include "power_math.h"
 #include "log_format.h"
 #include "power_sim.h"
+#include "eye_thumb.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -648,6 +649,42 @@ static void test_power_sim(void)
     CHECK(max_ma < 5000 && max_die < 850);               // nothing alarming in normal use
 }
 
+static void test_eye_thumb(void)
+{
+    enum { S = EYE_THUMB_SIZE };
+    static uint16_t a[S * S], b[S * S];
+    #define AT(buf, x, y) (buf)[(y) * S + (x)]
+    for (int i = 0; i < preset_count; i++) {
+        eye_thumb_draw(a, S, &presets[i], 1.0f, false);
+        CHECK((AT(a, S / 2, S / 2) >> 11) <= 2 && ((AT(a, S / 2, S / 2) >> 5) & 63) <= 4);   // the pupil: dark (Aurora's wide glow just reaches it)
+        CHECK(AT(a, 0, 0) == 0);               // outside the round screen
+        int lit = 0;
+        for (int k = 0; k < S * S; k++) lit += a[k] != 0;
+        CHECK(lit > S * S / 8);
+        // Spirals are mirrored on the port eye; rings look the same on both.
+        eye_thumb_draw(b, S, &presets[i], 1.0f, true);
+        int differ = 0;   // (rounding moves the odd pixel over a bin)
+        for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) differ += AT(a, x, y) != AT(b, S - 1 - x, y);
+        CHECK(differ < S * S / 50);
+        if (presets[i].spiral_arms) CHECK(memcmp(a, b, sizeof(a)) != 0);
+    }
+    // Lids: open, drowsy and asleep cover more and more.
+    int lit[3];
+    for (int s = 0; s < 3; s++) {
+        eye_thumb_draw(a, S, &presets[0], eye_thumb_lid(s), false);
+        lit[s] = 0;
+        for (int k = 0; k < S * S; k++) lit[s] += a[k] != 0;
+    }
+    CHECK(lit[0] > lit[1] && lit[1] > lit[2] && lit[2] > 0);   // asleep still shows the lid line
+    eye_thumb_draw(a, S, &presets[0], eye_thumb_lid(3), false);
+    eye_thumb_draw(b, S, &presets[0], 1.0f, false);
+    CHECK(memcmp(a, b, sizeof(a)) == 0);       // waking: wide open
+    eye_thumb_unlit(a, S, 0x18C3);
+    int grey = 0;
+    for (int k = 0; k < S * S; k++) { CHECK(a[k] == 0 || a[k] == 0x18C3); grey += a[k] != 0; }
+    CHECK(grey > 0);
+}
+
 static void test_power_math(void)
 {
     CHECK(pack_percent(16800, 0) == 100);
@@ -730,6 +767,7 @@ int main(void)
     test_power_math();
     test_log_format();
     test_power_sim();
+    test_eye_thumb();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;

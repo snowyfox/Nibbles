@@ -23,6 +23,7 @@
 #include "nibbles_link.h"
 #include "power_math.h"
 #include "fin_pos.h"
+#include "eye_thumb.h"
 #include "shark_pos.h"
 
 static const char *TAG = "display";
@@ -717,6 +718,76 @@ static uint16_t *graph_px;
 static int8_t graph_pct[GRAPH_W];
 static int64_t graph_next_us;
 
+// ------------------------------------------------------------------ the eyes
+// Stills of what the eyes show (eye_thumb.c), port on the left as with the fins,
+// redrawn only when the preset, a look or the eyes' state changes.
+#define EYE_Y   242
+#define EYE_GAP 6
+static lv_obj_t *eye_canvas[2];
+static uint16_t *eye_px[2];
+static nl_eye_look_t eye_look_in;
+static volatile bool eye_look_ready;
+static volatile int eye_test_preset = -1, eye_test_state;
+static uint32_t eye_look_gen;
+
+void display_eye_look(const nl_eye_look_t *look)
+{
+    taskENTER_CRITICAL(&lock);
+    eye_look_in = *look;
+    eye_look_ready = true;
+    taskEXIT_CRITICAL(&lock);
+}
+
+void display_eye_test(int preset, int state)
+{
+    eye_test_state = state;
+    eye_test_preset = preset;
+}
+
+static void eyes_create(lv_obj_t *page)
+{
+    const int x[2] = { (172 - 2 * EYE_THUMB_SIZE - EYE_GAP) / 2, (172 + EYE_GAP) / 2 };
+    for (int i = 0; i < 2; i++) {
+        eye_px[i] = heap_caps_malloc(EYE_THUMB_SIZE * EYE_THUMB_SIZE * 2, MALLOC_CAP_SPIRAM);
+        if (!eye_px[i]) return;
+        eye_thumb_unlit(eye_px[i], EYE_THUMB_SIZE, SHARK_DIM);
+        eye_canvas[i] = lv_canvas_create(page);
+        lv_canvas_set_buffer(eye_canvas[i], eye_px[i], EYE_THUMB_SIZE, EYE_THUMB_SIZE, LV_COLOR_FORMAT_RGB565);
+        lv_obj_set_pos(eye_canvas[i], x[i], EYE_Y);
+    }
+}
+
+static void eyes_update(const nl_eye_telemetry_t *e, bool fresh)
+{
+    if (!eye_canvas[1]) return;
+    if (eye_look_ready) {
+        static nl_eye_look_t look;
+        taskENTER_CRITICAL(&lock);
+        look = eye_look_in;
+        eye_look_ready = false;
+        taskEXIT_CRITICAL(&lock);
+        if (preset_set_look(&look, -1) >= 0) eye_look_gen++;
+    }
+    const int test = eye_test_preset;
+    const int want = test >= 0 ? test : fresh ? e->preset : -1;
+    const int state = test >= 0 ? eye_test_state : e->state;
+    // Past the built-in presets is a look: the newest we've heard, if any.
+    const int index = want < preset_count ? want : preset_look_index();
+    static int shown_index = -2, shown_state;
+    static uint32_t shown_gen;
+    if (index == shown_index && state == shown_state && (index < preset_count || eye_look_gen == shown_gen)) return;
+    shown_index = index;
+    shown_state = state;
+    shown_gen = eye_look_gen;
+    const int64_t t0 = esp_timer_get_time();
+    for (int i = 0; i < 2; i++) {
+        if (index < 0) eye_thumb_unlit(eye_px[i], EYE_THUMB_SIZE, SHARK_DIM);
+        else eye_thumb_draw(eye_px[i], EYE_THUMB_SIZE, preset_get(index), eye_thumb_lid(state), i == 0);
+        lv_obj_invalidate(eye_canvas[i]);
+    }
+    ESP_LOGI(TAG, "eyes: preset %d state %d drawn in %d ms", index, state, (int)((esp_timer_get_time() - t0) / 1000));
+}
+
 static int8_t graph_restored[GRAPH_W];
 static volatile bool graph_restore_ready;
 
@@ -1050,6 +1121,7 @@ static void build_main_page(void)
     lv_obj_set_style_text_opa(m.no_board, LV_OPA_20, 0);         // the colour of the dim battery outlines
     lv_label_set_text(m.no_board, "???");
 
+    eyes_create(pagem);
     shark_px = heap_caps_malloc(SHARK_W * SHARK_H * 2, MALLOC_CAP_SPIRAM);
     if (shark_px) {
         memset(shark_px, 0, SHARK_W * SHARK_H * 2);
@@ -1141,6 +1213,7 @@ static void main_update(const display_status_t *s)
     const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
     set_battery(&batt_pack, p->pack_pct, charging);
     graph_update(p->pack_mv ? p->pack_pct : -1);
+    eyes_update(&s->eyes, s->eyes_fresh);
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
     else lv_label_set_text(m.pct, "");   // no reading: just the dim battery
     lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : COL_TEXT), 0);

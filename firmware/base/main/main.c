@@ -77,6 +77,10 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         memcpy(&wled_stream, pl, sizeof(wled_stream));
         wled_stream_us = esp_timer_get_time();
         taskEXIT_CRITICAL(&lock);
+    } else if (h->type == NL_MSG_EYE_LOOK && len == sizeof(nl_eye_look_t) && h->role == NL_ROLE_WLED) {
+        nl_eye_look_t look;
+        memcpy(&look, pl, sizeof(look));
+        display_eye_look(&look);
     } else if (h->type == NL_MSG_WLED_LAYERS && len == sizeof(nl_wled_layers_t) && h->role == NL_ROLE_WLED) {
         taskENTER_CRITICAL(&lock);
         memcpy(&wled_layers, pl, sizeof(wled_layers));
@@ -491,6 +495,12 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "log list")) logger_print_list();
         else if (!strncmp(line, "log get ", 8)) logger_print_file(atoi(line + 8));
+        else if (!strcmp(line, "eyepic off")) display_eye_test(-1, 0);
+        else if (!strncmp(line, "eyepic ", 7)) {
+            int preset = 0, state = 0;
+            sscanf(line + 7, "%d %d", &preset, &state);
+            display_eye_test(preset, state);
+        }
         else if (!strcmp(line, "time")) printf("TIME %lu%s\n", (unsigned long)rtc_now(), rtc_chip_found() ? "" : " no clock chip");
         else if (!strcmp(line, "time forget")) rtc_forget();
         else if (!strncmp(line, "time ", 5)) printf("TIME %s %lu\n", rtc_set(strtoul(line + 5, NULL, 10)) ? "set" : "failed", (unsigned long)rtc_now());

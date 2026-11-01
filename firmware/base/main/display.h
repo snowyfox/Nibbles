@@ -85,6 +85,10 @@ void display_update(const display_status_t *s);
 void display_preview(const void *payload, size_t len);
 // The fin lock key is down (or its touch area is): lights up the area around the fins.
 void display_fin_key(bool down);
+// A look from a WLED preset, as the eyes get it (any task; NL_MSG_EYE_LOOK).
+void display_eye_look(const nl_eye_look_t *look);
+// For a test without the eyes: show this preset and state as if heard (preset -1: stop).
+void display_eye_test(int preset, int state);
 // The charge graph's earlier columns, after a restart (-1: nothing for that slice).
 #define DISPLAY_GRAPH_COLUMNS 172
 void display_graph_restore(const int8_t pct[DISPLAY_GRAPH_COLUMNS]);

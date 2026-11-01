@@ -157,10 +157,16 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   (grey shackle, amber body; unlocked: shackle lifted with its right end clear,
   all at 25% opacity; dim body when not known), and an invisible touch key for FIN SENSOR across the whole band; a
   card shows behind the fins only while that key is down (`display_fin_key`).
+  Under the fins, the **eyes** at y 242, 80 px each, port on the left: stills of
+  the preset on screen (`eye_thumb.c`, the rings, spiral arms, colours and lids of
+  the eyes' `render_core.c` with no music or motion; it builds in the eyes'
+  `presets.c`, so new presets just appear). Redrawn only when the telemetry's preset
+  or state changes, or a look arrives (`NL_MSG_EYE_LOOK`); nothing spins and colours
+  don't drift. Unlit grey when the eyes aren't heard. Test: `eyepic N [STATE]`, `eyepic off`.
   At the bottom, edge to edge, the pack's charge over the last hour at 25%
   opacity: 172 one-pixel columns (about 21 s each, newest on the right), 1 px per
   percent, green, orange at 35% or less, red at 20% or less; RAM only.
-  That's all of page 0 (2026-11-01; card 0, shark 70, fins 154, 84 tall, graph 540). Page 1, swipe left: LIVE (red; a fifth row, LOOK: the body's palette, by
+  That's all of page 0 (2026-11-01; card 0, shark 70, fins 154, 84 tall, eyes 242, graph 540). Page 1, swipe left: LIVE (red; a fifth row, LOOK: the body's palette, by
   name if it's one of the palette page's, and "+ Ln" for a layer over it),
   STANDBY (green; rows that differ bright; tap it = TAKE), and the target
   box (tap = next target), page name, LATCH, lock, links, keypads found, the
@@ -207,7 +213,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`,
+  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).
