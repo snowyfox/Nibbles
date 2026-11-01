@@ -6,6 +6,8 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "log_format.h"
 
 static const char *TAG = "rtc";
@@ -15,6 +17,7 @@ static const char *TAG = "rtc";
 #define HALF_US    5       // 100 kHz
 
 static bool known, found;
+static SemaphoreHandle_t bus;   // the console's "time" and the main loop
 
 static void line(int pin, int level) { gpio_set_level(pin, level); esp_rom_delay_us(HALF_US); }
 
@@ -87,6 +90,7 @@ static void set_system(uint32_t t)
 
 bool rtc_start(void)
 {
+    bus = xSemaphoreCreateMutex();
     const gpio_config_t io = { .pin_bit_mask = 1ULL << PIN_RTC_SDA | 1ULL << PIN_RTC_SCL, .mode = GPIO_MODE_INPUT_OUTPUT_OD,
                                .pull_up_en = GPIO_PULLUP_ENABLE };
     gpio_config(&io);
@@ -118,8 +122,13 @@ bool rtc_set(uint32_t t)
 {
     uint8_t r[7];
     rtc_unix_to_regs(t, r);
-    if (!write_regs(REG_TIME, r, sizeof(r))) return false;
+    xSemaphoreTake(bus, portMAX_DELAY);
+    const bool ok = write_regs(REG_TIME, r, sizeof(r));
+    xSemaphoreGive(bus);
+    // The system time still counts if the chip didn't take it: this boot's logs are right.
     set_system(t);
     known = true;
-    return true;
+    return ok;
 }
+
+void rtc_forget(void) { known = false; }

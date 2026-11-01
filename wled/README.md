@@ -611,3 +611,12 @@ Wi-Fi reboots every 15–20 min". Soak test 2026-09-24: the dev node (16.0.1 +
 usermod, no Wi-Fi network configured so on its own AP, ESP-NOW anchoring and
 receiving eye telemetry) ran 35 min with no reboot. Repeat on the real
 controller after upgrading.
+
+## The time
+
+Nothing in the shark has a network clock. Open `http://<brain>/time` on a phone
+once after power-up (a bookmark; `http://4.3.2.2/time` on the bench): the page
+tells that WLED the phone's time. A main board then broadcasts it every 10 s
+(`NL_MSG_TIME`) and the base sets its clock from it, for its logs and charge graph.
+Any change in WLED's own UI sends the time too. A controller in the `display`
+role doesn't pass it on, so use the brain's address.

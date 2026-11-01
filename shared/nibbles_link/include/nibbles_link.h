@@ -39,6 +39,7 @@ typedef enum {
     NL_MSG_WLED_LAYERS = 14, // WLED's layer slots (nl_wled_layers_t), WLED -> radio, 2 Hz
     NL_MSG_PIXELS = 15,     // a chunk of LED colours, brain -> controller over a wire (nl_pix_*)
     NL_MSG_PREVIEW = 16,    // a reduced picture for a preview screen, brain -> radio (nl_preview_t)
+    NL_MSG_TIME = 17,       // the real time, from a board that knows it, every 10 s (nl_time_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -379,6 +380,16 @@ void nl_power_limiter_reading(nl_power_limiter_t *l, const nl_battery_t *b, uint
 // The limit to apply now, or 0 while no reading has been heard. Without new
 // readings the last limit holds (the pack only empties), it never jumps back up.
 uint32_t nl_power_limiter_tick(nl_power_limiter_t *l, uint32_t now_ms);
+
+// ---------------------------------------------------------------- the time
+// Nothing here has a network clock. A phone opening WLED's /time page tells that
+// WLED the time; it passes it on so the base can timestamp its logs.
+typedef struct __attribute__((packed)) {
+    uint32_t unix_time;
+} nl_time_t;
+#define NL_TIME_MS   10000
+#define NL_TIME_MIN  1767225600u   // 2026-01-01: anything earlier isn't a real time
+static inline bool nl_time_valid(uint32_t t) { return t >= NL_TIME_MIN; }
 
 // ---------------------------------------------------------------- fin hinge angles
 // Each fin swings ~180 degrees on its hinge, from straight up to straight

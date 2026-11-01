@@ -78,6 +78,8 @@
 //   can point at 0.0.0.0 (nothing sent) or stay on the display as a Wi-Fi
 //   backup. Counters on the Info page ("Nibbles wire").
 // - Preview stream (setting "preview", or state {"nibbles":{"preview":true}}):
+// - The time: /time on a phone sets WLED's clock; it broadcasts that every 10 s
+//   (NL_MSG_TIME) for the base's logs.
 //   broadcasts a reduced copy of the LEDs for a preview screen (NL_MSG_PREVIEW,
 //   firmware/preview), RGB332 before master brightness, "preview_fps" a second,
 //   one packet per loop so it doesn't hold up rendering.
@@ -186,6 +188,7 @@ class NibblesUsermod : public Usermod {
     bool anchor = true;
     bool display = false;   // the display of a main board / display pair: battery readings in, stream reports out
     bool audio = false;  // publish AudioReactive's analysis for the eyes
+    unsigned long lastTime = 0;
     unsigned long lastHeartbeat = 0, lastTelemetry = 0, lastDebug = 0, lastAudio = 0, lastStream = 0;
     nl_stream_gaps_t streamGaps;
     unsigned long seenRealtimeTimeout = 0;  // WLED moves realtimeTimeout on every stream packet
@@ -1818,6 +1821,16 @@ class NibblesUsermod : public Usermod {
 
   public:
     void setup() override {
+      // A phone bookmark: nothing here has a network clock, but a phone does.
+      server.on("/time", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/html",
+          F("<!doctype html><meta name=viewport content='width=device-width'>"
+            "<body style='background:#000;color:#fff;font:20px sans-serif'><p id=s>Setting the time...</p><script>"
+            "fetch('/json/state',{method:'POST',headers:{'Content-Type':'application/json'},"
+            "body:JSON.stringify({time:Math.floor(Date.now()/1000)})})"
+            ".then(r=>{s.textContent=r.ok?'Time set: '+new Date().toLocaleString():'Failed'})"
+            ".catch(()=>{s.textContent='Failed'})</script>"));
+      });
       nl_power_limiter_init(&power, &powerModel);
       nl_bump_rx_init(&bumps);
       nl_bump_rx_init(&finBumps);
@@ -1878,6 +1891,15 @@ class NibblesUsermod : public Usermod {
       if (now - lastHeartbeat >= ANCHOR_HEARTBEAT_MS) {
         lastHeartbeat = now;
         sendHeartbeat();
+      }
+      // The real time, for the base's logs, once a phone has told us (the /time page).
+      if (now - lastTime >= NL_TIME_MS) {
+        lastTime = now;
+        const uint32_t t = toki.second();
+        if (toki.getTimeSource() >= TOKI_TS_SEC && nl_time_valid(t)) {
+          const nl_time_t m = { t };
+          send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_TIME, &m, sizeof(m));
+        }
       }
       if (now - lastTelemetry >= TELEMETRY_MS) {
         lastTelemetry = now;

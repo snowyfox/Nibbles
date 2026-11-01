@@ -12,3 +12,4 @@ bool rtc_time_known(void);
 uint32_t rtc_now(void);           // Unix time, 0 if not known
 bool rtc_set(uint32_t unix_time); // sets the chip and the system time
 bool rtc_chip_found(void);
+void rtc_forget(void);            // as if the chip had lost its time, until it's set ("time forget")

@@ -44,10 +44,18 @@ static int64_t wled_layers_us;
 static bool have_fins;
 static int64_t fins_us;
 
+static volatile uint32_t heard_time;
+
 static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
     if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second: straight to the screen
         display_preview(pl, len);
+        return;
+    }
+    if (h->type == NL_MSG_TIME && len == sizeof(nl_time_t)) {
+        nl_time_t t;
+        memcpy(&t, pl, sizeof(t));
+        if (nl_time_valid(t.unix_time)) heard_time = t.unix_time;   // the main loop sets the clock
         return;
     }
     if (h->type == NL_MSG_EYE_TELEMETRY && len == sizeof(nl_eye_telemetry_t) && h->role == NL_ROLE_EYE_LEADER) {
@@ -482,6 +490,7 @@ static void console_task(void *arg)
         else if (!strcmp(line, "log list")) logger_print_list();
         else if (!strncmp(line, "log get ", 8)) logger_print_file(atoi(line + 8));
         else if (!strcmp(line, "time")) printf("TIME %lu%s\n", (unsigned long)rtc_now(), rtc_chip_found() ? "" : " no clock chip");
+        else if (!strcmp(line, "time forget")) rtc_forget();
         else if (!strncmp(line, "time ", 5)) printf("TIME %s %lu\n", rtc_set(strtoul(line + 5, NULL, 10)) ? "set" : "failed", (unsigned long)rtc_now());
         else if (!strcmp(line, "log on") || !strcmp(line, "log off")) logger_enable(line[5] == 'n');
         else if (!strcmp(line, "log tail")) logger_print_tail(8);
@@ -624,6 +633,16 @@ void app_main(void)
         }
         echo_was = leds_echo;
 
+        // The time from the radio. A few seconds' difference isn't worth a write.
+        const uint32_t heard = heard_time;
+        if (heard) {
+            heard_time = 0;
+            const uint32_t have = rtc_now();
+            if (!have || (have > heard ? have - heard : heard - have) > 5) {
+                ESP_LOGI(TAG, "time from the radio: %lu", (unsigned long)heard);
+                rtc_set(heard);
+            }
+        }
         power_status_t pw;
         power_get(&pw);
         // WLED's battery-aware current limit wants the voltage feeding the

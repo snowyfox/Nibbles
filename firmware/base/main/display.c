@@ -575,7 +575,7 @@ static lv_obj_t *at(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int
 // with no stream, so its shape is always there.
 #define SHARK_W        164
 #define SHARK_H        82
-#define SHARK_DIM      0x1082   // RGB565
+#define SHARK_DIM      0x18C3   // RGB565, the same grey as FIN_UNLIT
 #define SHARK_LOST_MS  2000
 
 static lv_obj_t *shark_canvas;
@@ -638,7 +638,7 @@ static void shark_draw(void)
 // key for KEY_FIN_SENSOR; a card appears behind the fins only while that key is down.
 #define FINS_Y         154
 #define FINS_BAND_H    84
-#define FIN_UNLIT      0xFF20262Au   // ARGB8888
+#define FIN_UNLIT      0xFF181B1Du   // ARGB8888
 #define COL_FIN_CARD   0x2A2E33
 #define COL_FIN_BORDER 0x6A7076
 #define COL_LOCKED     0xFFA000

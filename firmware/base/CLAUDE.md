@@ -185,7 +185,9 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   with the power off (tested, a 30 s+ unplug). The final build has no 18650 (user,
   2026-11-01), so it loses the time within seconds of power off unless something
   else backs it up: `time` reads 0, `Log ... no clock` on the page, the graph
-  starts empty; the user accepts that. Don't put a tiny LiPo on J1: its ETA6098
+  starts empty; the user accepts that. A WLED that knows the time broadcasts it
+  every 10 s (`NL_MSG_TIME`), and the base sets its clock from that, then refills
+  the graph: open `http://<WLED>/time` on a phone once after power-up. Don't put a tiny LiPo on J1: its ETA6098
   charger is set to 1.2 A (R13 150K) and it charges whenever VBUS is up. A coin
   cell would go through a series Schottky to C15's non-ground side, not on J1.
   Pulling the card and putting it back was tested too: a new file, the gap
@@ -194,7 +196,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX]`,
+  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

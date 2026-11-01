@@ -221,10 +221,8 @@ static void restore_graph(int previous)
         }
         fclose(f);
     }
-    if (used) {
-        display_graph_restore(cols);
-        ESP_LOGI(TAG, "charge graph: %d rows restored", used);
-    }
+    if (used) display_graph_restore(cols);
+    ESP_LOGI(TAG, "charge graph: %d rows restored", used);
 }
 
 // ------------------------------------------------------------------ over USB
@@ -313,13 +311,13 @@ static void logger_task(void *arg)
                 taskENTER_CRITICAL(&lock);
                 st.mounted = true;
                 taskEXIT_CRITICAL(&lock);
-                if (open_log()) {
-                    if (!restored) restore_graph(st.file_number - 1);
-                    restored = true;
-                } else {
-                    close_all();
-                }
+                if (!open_log()) close_all();
             }
+        }
+        // The graph's history needs the time, which may only arrive later (NL_MSG_TIME).
+        if (!restored && file && rtc_now()) {
+            restored = true;
+            restore_graph(st.file_number - 1);
         }
         if (want_tail) {
             print_tail(want_tail);
