@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "config.h"
 #include "driver/gpio.h"
@@ -21,6 +22,7 @@
 #include "lvgl.h"
 #include "nibbles_link.h"
 #include "power_math.h"
+#include "fin_pos.h"
 #include "shark_pos.h"
 
 static const char *TAG = "display";
@@ -302,7 +304,7 @@ typedef struct {
 } card_t;
 
 static card_t eyes_card, wled_card, radio_card;
-static lv_obj_t *screen, *pages, *pagem, *page0, *page1, *pad_flash, *pad_black;  // main, details, presets
+static lv_obj_t *screen, *pages, *pagem, *pagek, *page0, *page1, *pad_flash, *pad_black;  // main, Live and Standby, details, presets
 static lv_obj_t *event_labels[3];  // one per page
 #define event_label event_labels[0]
 static volatile int page_wanted = -1;  // page change asked for over serial
@@ -535,7 +537,7 @@ typedef struct {
 } scene_panel_t;
 
 static struct {
-    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *problem;
+    lv_obj_t *power, *pct, *in_pct, *in_usb, *flow_in, *flow_out, *in_va, *out_wa, *problem, *no_board;
     lv_obj_t *t_cell[2], *t_slash, *t_die[2], *pack_v;   // row 3; [1]: the copy 1 px right that makes bold
     bool flow_pulsing;
     scene_panel_t live, stby;
@@ -602,6 +604,8 @@ void display_preview(const void *payload, size_t len)
     }
 }
 
+static void fins_paint(const uint8_t *leds);
+
 static void shark_draw(void)
 {
     if (!shark_canvas) return;
@@ -624,6 +628,123 @@ static void shark_draw(void)
     shark_blank = !stream;
     shark_drawn++;
     lv_obj_invalidate(shark_canvas);
+    fins_paint(stream ? now : NULL);
+}
+
+// ------------------------------------------------------------------ the fins
+// Under the shark: the fins laid flat, seen from above, with a padlock between
+// them showing whether they're locked at the modelled angle or follow their
+// angle sensors. The whole band, screen edge to screen edge, is a hidden touch
+// key for KEY_FIN_SENSOR; a card appears behind the fins only while that key is down.
+#define FINS_Y         154
+#define FINS_BAND_H    84
+#define FIN_UNLIT      0xFF20262Au   // ARGB8888
+#define COL_FIN_CARD   0x2A2E33
+#define COL_FIN_BORDER 0x6A7076
+#define COL_LOCKED     0xFFA000
+#define COL_SHACKLE    0xA0A6AC
+
+static struct {
+    lv_obj_t *card, *canvas, *lock_body, *lock_shackle, *lock_leg;
+    uint32_t *px;          // ARGB8888
+    int8_t shown;          // the padlock's state now (fin_sensor; -2: not drawn yet)
+    bool lit;
+} fin = { .shown = -2 };
+static volatile bool fin_key_down;
+
+void display_fin_key(bool down) { fin_key_down = down; }
+
+// One frame of the fin LEDs (RGB332), or all unlit with no stream, through the
+// fins' shape: each pixel takes its nearest LED (fin_pos.h).
+static void fins_paint(const uint8_t *leds)
+{
+    if (!fin.canvas) return;
+    uint32_t cols[256];
+    if (leds) for (int i = 0; i < 256; i++) cols[i] = i ? 0xFF000000u | ((i >> 5) * 255 / 7) << 16 | (((i >> 2) & 7) * 255 / 7) << 8 | (i & 3) * 255 / 3 : FIN_UNLIT;
+    for (int i = 0; i < FIN_PIXELS; i++) fin.px[fin_mask[i].at] = leds ? cols[leds[FIN_FIRST_LED + fin_mask[i].led]] : FIN_UNLIT;
+    lv_obj_invalidate(fin.canvas);
+}
+
+// Locked: the grey shackle closed into the amber body. Unlocked: the shackle
+// lifted straight up, its right end clear of the body and its left leg still
+// in it, the whole padlock faded.
+static void fins_lock_show(int state)
+{
+    if (state == fin.shown) return;
+    fin.shown = (int8_t)state;
+    const bool open = state > 0;
+    const lv_opa_t opa = open ? 64 : LV_OPA_COVER;   // about 25%
+    lv_obj_set_style_bg_color(fin.lock_body, lv_color_hex(state < 0 ? COL_DIM : COL_LOCKED), 0);
+    lv_obj_set_pos(fin.lock_shackle, 80, open ? 13 : 19);
+    lv_obj_set_height(fin.lock_shackle, open ? 14 : 20);
+    if (open) lv_obj_remove_flag(fin.lock_leg, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(fin.lock_leg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(fin.lock_body, opa, 0);
+    lv_obj_set_style_opa(fin.lock_shackle, opa, 0);
+    lv_obj_set_style_opa(fin.lock_leg, opa, 0);
+}
+
+static void fins_build(void);
+
+// Straight from the key, not the 250 ms status update, so it tracks the press.
+static void fins_key_show(void)
+{
+    if (!fin.card) return;
+    if (fin_key_down != fin.lit) {
+        fin.lit = fin_key_down;
+        if (fin.lit) lv_obj_remove_flag(fin.card, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(fin.card, LV_OBJ_FLAG_HIDDEN);
+    }
+    taskENTER_CRITICAL(&lock);
+    const int state = status.fin_sensor;
+    taskEXIT_CRITICAL(&lock);
+    fins_lock_show(state);
+}
+
+// ------------------------------------------------------------------ charge graph
+// The bottom of the main page: the pack's charge over the last hour, one
+// pixel-wide column per slice of time, newest on the right, 1 px per percent.
+// Kept in RAM only, so it starts empty after a restart; no reading: no column.
+#define GRAPH_W        172
+#define GRAPH_H        100
+#define GRAPH_SLICE_MS (3600000 / GRAPH_W)
+#define GRAPH_OK       0x07E0   // RGB565: green
+#define GRAPH_LOW      0xFD20   // orange
+#define GRAPH_CRITICAL 0xF800   // red
+
+static lv_obj_t *graph_canvas;
+static uint16_t *graph_px;
+static int8_t graph_pct[GRAPH_W];
+static int64_t graph_next_us;
+
+static void graph_update(int pct)
+{
+    if (!graph_canvas) return;
+    const int64_t now = esp_timer_get_time();
+    if (now < graph_next_us) return;
+    graph_next_us = now + GRAPH_SLICE_MS * 1000LL;
+    memmove(graph_pct, graph_pct + 1, GRAPH_W - 1);
+    graph_pct[GRAPH_W - 1] = (int8_t)(pct > 100 ? 100 : pct);
+    memset(graph_px, 0, GRAPH_W * GRAPH_H * 2);
+    for (int x = 0; x < GRAPH_W; x++) {
+        const int v = graph_pct[x];
+        if (v <= 0) continue;
+        const pack_level_t level = pack_level(v);
+        const uint16_t col = level == PACK_CRITICAL ? GRAPH_CRITICAL : level == PACK_LOW ? GRAPH_LOW : GRAPH_OK;
+        for (int y = GRAPH_H - v; y < GRAPH_H; y++) graph_px[y * GRAPH_W + x] = col;
+    }
+    lv_obj_invalidate(graph_canvas);
+}
+
+static void graph_build(void)
+{
+    graph_px = heap_caps_calloc(GRAPH_W * GRAPH_H, 2, MALLOC_CAP_SPIRAM);
+    if (!graph_px) return;
+    memset(graph_pct, -1, sizeof(graph_pct));
+    graph_canvas = lv_canvas_create(pagem);
+    lv_canvas_set_buffer(graph_canvas, graph_px, GRAPH_W, GRAPH_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(graph_canvas, 0, 640 - GRAPH_H);
+    lv_obj_set_style_opa(graph_canvas, 64, 0);   // about 25%
 }
 
 // The STANDBY panel and the target box work as keys by touch too (TAKE, and the next target).
@@ -653,7 +774,7 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
     const char *const *keys = live ? live_keys : stby_keys;
     const uint32_t *key_cols = live ? live_cols : stby_cols;
     const int rows = 5;
-    sp->panel = make_panel(pagem, y, 157, color);
+    sp->panel = make_panel(pagek, y, 157, color);
     sp->title = at(sp->panel, &lv_font_montserrat_16, color, 8, 5, 0);
     lv_label_set_text(sp->title, title);
     sp->note = at(sp->panel, &lv_font_montserrat_14, COL_TITLE, 82, 7, 76);
@@ -665,6 +786,63 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
     }
 }
 
+static void fins_build(void)
+{
+    lv_obj_t *band = lv_obj_create(pagem);   // the hidden touch area
+    lv_obj_remove_style_all(band);
+    lv_obj_set_pos(band, 0, FINS_Y);
+    lv_obj_set_size(band, 172, FINS_BAND_H);
+    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+    touch_key(band, KEY_FIN_SENSOR);
+
+    fin.card = lv_obj_create(band);
+    lv_obj_remove_flag(fin.card, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(fin.card, 4, 0);
+    lv_obj_set_size(fin.card, 164, FINS_BAND_H);
+    lv_obj_set_style_bg_color(fin.card, lv_color_hex(COL_FIN_CARD), 0);
+    lv_obj_set_style_radius(fin.card, 10, 0);
+    lv_obj_set_style_pad_all(fin.card, 0, 0);
+    lv_obj_set_style_border_color(fin.card, lv_color_hex(COL_FIN_BORDER), 0);
+    lv_obj_set_style_border_width(fin.card, 2, 0);
+    lv_obj_add_flag(fin.card, LV_OBJ_FLAG_HIDDEN);
+
+    fin.px = heap_caps_calloc(FIN_W * FIN_H, 4, MALLOC_CAP_SPIRAM);
+    if (fin.px) {
+        fin.canvas = lv_canvas_create(band);
+        lv_canvas_set_buffer(fin.canvas, fin.px, FIN_W, FIN_H, LV_COLOR_FORMAT_ARGB8888);
+        lv_obj_set_pos(fin.canvas, (172 - FIN_W) / 2, (FINS_BAND_H - FIN_H) / 2);
+        lv_obj_remove_flag(fin.canvas, LV_OBJ_FLAG_CLICKABLE);
+        fins_paint(NULL);
+    }
+
+    fin.lock_shackle = lv_obj_create(band);   // behind the body: a rounded loop
+    lv_obj_remove_style_all(fin.lock_shackle);
+    lv_obj_remove_flag(fin.lock_shackle, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_width(fin.lock_shackle, 12);
+    lv_obj_set_style_radius(fin.lock_shackle, 6, 0);
+    lv_obj_set_style_border_width(fin.lock_shackle, 3, 0);
+    lv_obj_set_style_border_side(fin.lock_shackle, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT, 0);
+    lv_obj_set_style_border_color(fin.lock_shackle, lv_color_hex(COL_SHACKLE), 0);
+    lv_obj_set_style_border_opa(fin.lock_shackle, LV_OPA_COVER, 0);
+
+    fin.lock_leg = lv_obj_create(band);       // unlocked: the left leg down to the body
+    lv_obj_remove_style_all(fin.lock_leg);
+    lv_obj_remove_flag(fin.lock_leg, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(fin.lock_leg, 80, 27);
+    lv_obj_set_size(fin.lock_leg, 3, 4);
+    lv_obj_set_style_bg_color(fin.lock_leg, lv_color_hex(COL_SHACKLE), 0);
+    lv_obj_set_style_bg_opa(fin.lock_leg, LV_OPA_COVER, 0);
+
+    fin.lock_body = lv_obj_create(band);
+    lv_obj_remove_style_all(fin.lock_body);
+    lv_obj_remove_flag(fin.lock_body, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(fin.lock_body, 77, 31);   // the closed padlock centred on the fins' roots
+    lv_obj_set_size(fin.lock_body, 18, 15);
+    lv_obj_set_style_radius(fin.lock_body, 3, 0);
+    lv_obj_set_style_bg_opa(fin.lock_body, LV_OPA_COVER, 0);
+    fins_lock_show(-1);
+}
+
 // An iOS-style battery: a thin translucent outline with round corners and a
 // small cap, the fill inset inside it: white, green while charging (with a
 // bolt), red at 20 % or less.
@@ -673,7 +851,7 @@ static void scene_panel(scene_panel_t *sp, int y, const char *title, uint32_t co
 #define COL_IOS_GREEN 0x34c759
 #define COL_IOS_RED   0xff3b30
 #define COL_IOS_BLUE  0x0a84ff
-#define FLOW_W        148       // the flow line under the batteries
+#define FLOW_W        172       // the flow line under the batteries
 
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, int radius)
 {
@@ -795,7 +973,7 @@ static void set_flow(int split_permille, bool starved)
     lv_obj_set_width(m.flow_in, w);
     lv_obj_set_style_bg_color(m.flow_in, lv_color_hex(COL_IOS_GREEN), 0);
     lv_obj_remove_flag(m.flow_out, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(m.flow_out, 8 + w);
+    lv_obj_set_x(m.flow_out, w);
     lv_obj_set_width(m.flow_out, FLOW_W - w);
     lv_obj_set_style_bg_color(m.flow_out, lv_color_hex(COL_IOS_BLUE), 0);
 }
@@ -804,10 +982,10 @@ static void set_flow(int split_permille, bool starved)
 static void set_temp(lv_obj_t *l[2], int c10, temp_level_t level)
 {
     char text[24];
-    if (c10 == INT16_MIN) snprintf(text, sizeof(text), "--\xc2\xb0" "C");
+    if (c10 == INT16_MIN) snprintf(text, sizeof(text), "--\xc2\xb0");
     else {
         const int c = (c10 + (c10 < 0 ? -5 : 5)) / 10;
-        snprintf(text, sizeof(text), "%s%d\xc2\xb0" "C", c >= 0 && c < 10 ? FIG_SPACE : "", c);
+        snprintf(text, sizeof(text), "%s%d\xc2\xb0", c >= 0 && c < 10 ? FIG_SPACE : "", c);
     }
     const uint32_t col = level == TEMP_BAD ? COL_IOS_RED : level == TEMP_WARN ? COL_WARN : COL_TITLE;
     for (int i = 0; i < 2; i++) {
@@ -824,29 +1002,37 @@ static void build_main_page(void)
     // USB-C supply), the internal pack right; the flow line (the LEMO's current:
     // green to the pack, blue to the lights); the LEMO's volts and amps left,
     // the lights' watts and amps right; small lines below.
-    m.power = make_panel(pagem, 4, 62, 0);
+    m.power = make_panel(pagem, 4, 62, 0);    // edge to edge, no side padding
+    lv_obj_set_x(m.power, 0);
+    lv_obj_set_width(m.power, 172);
+    lv_obj_set_style_radius(m.power, 0, 0);
+    lv_obj_set_style_bg_color(m.power, lv_color_hex(0x000000), 0);
     tab_font_init();   // every number in the bar: Montserrat 12 with fixed-width digits
-    build_battery(&batt_in, m.power, 8, 7);
-    m.in_pct = at(m.power, &font_tab12, COL_TEXT, 42, 7, 44);   // the same small font as the lines below
-    m.in_usb = at(m.power, &font_tab12, COL_TEXT, 8, 7, 78);
-    m.pct = at(m.power, &font_tab12, COL_TEXT, 82, 7, 38);
+    build_battery(&batt_in, m.power, 0, 7);
+    m.in_pct = at(m.power, &font_tab12, COL_TEXT, 34, 7, 44);   // the same small font as the lines below
+    m.in_usb = at(m.power, &font_tab12, COL_TEXT, 0, 7, 78);
+    m.pct = at(m.power, &font_tab12, COL_TEXT, 100, 7, 38);
     lv_obj_set_style_text_align(m.pct, LV_TEXT_ALIGN_RIGHT, 0);
-    build_battery(&batt_pack, m.power, 124, 7);
-    m.flow_in = box(m.power, 8, 24, 0, 2, 0);
-    m.flow_out = box(m.power, 8, 24, FLOW_W, 2, 0);
-    m.in_va = at(m.power, &font_tab12, COL_TEXT, 8, 29, 80);
-    m.out_wa = at(m.power, &font_tab12, COL_TEXT, 86, 29, 70);
+    build_battery(&batt_pack, m.power, 142, 7);
+    m.flow_in = box(m.power, 0, 24, 0, 2, 0);
+    m.flow_out = box(m.power, 0, 24, FLOW_W, 2, 0);
+    m.in_va = at(m.power, &font_tab12, COL_TEXT, 0, 29, 84);
+    m.out_wa = at(m.power, &font_tab12, COL_TEXT, 102, 29, 70);
     lv_obj_set_style_text_align(m.out_wa, LV_TEXT_ALIGN_RIGHT, 0);
     // row 3: the cells' and the charger's temperatures left, the pack's voltage right
     for (int i = 0; i < 2; i++) {
-        m.t_cell[i] = at(m.power, &font_tab12, COL_TITLE, 8 + i, 44, 0);
-        m.t_die[i] = at(m.power, &font_tab12, COL_TITLE, 56 + i, 44, 0);
+        m.t_cell[i] = at(m.power, &font_tab12, COL_TITLE, i, 44, 0);
+        m.t_die[i] = at(m.power, &font_tab12, COL_TITLE, 28 + i, 44, 0);
     }
-    m.t_slash = at(m.power, &font_tab12, COL_TITLE, 44, 44, 0);
+    m.t_slash = at(m.power, &font_tab12, COL_TITLE, 22, 44, 0);
     lv_label_set_text(m.t_slash, "/");
-    m.pack_v = at(m.power, &font_tab12, COL_TITLE, 96, 44, 60);
+    m.pack_v = at(m.power, &font_tab12, COL_TITLE, 112, 44, 60);
     lv_obj_set_style_text_align(m.pack_v, LV_TEXT_ALIGN_RIGHT, 0);
-    m.problem = at(m.power, &font_tab12, COL_BAD, 8, 44, 148);   // in place of row 3 when there is one
+    m.problem = at(m.power, &font_tab12, COL_BAD, 0, 44, 172);   // in place of row 3 when there is one
+    m.no_board = at(m.power, &font_tab12, COL_TEXT, 0, 7, 172);  // no power board: top row, centred
+    lv_obj_set_style_text_align(m.no_board, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_opa(m.no_board, LV_OPA_20, 0);         // the colour of the dim battery outlines
+    lv_label_set_text(m.no_board, "???");
 
     shark_px = heap_caps_malloc(SHARK_W * SHARK_H * 2, MALLOC_CAP_SPIRAM);
     if (shark_px) {
@@ -856,11 +1042,15 @@ static void build_main_page(void)
         lv_obj_set_pos(shark_canvas, 4, 70);
     }
 
-    scene_panel(&m.live, 156, "LIVE", COL_LIVE, true);
-    scene_panel(&m.stby, 319, "STANDBY", COL_STANDBY, false);
+    fins_build();
+    graph_build();
+
+    // The next page: Live, Standby and the keypad's state.
+    scene_panel(&m.live, 4, "LIVE", COL_LIVE, true);
+    scene_panel(&m.stby, 167, "STANDBY", COL_STANDBY, false);
     touch_key(m.stby.panel, KEY_TAKE);
 
-    m.target = make_panel(pagem, 482, 50, 0);
+    m.target = make_panel(pagek, 330, 50, 0);
     m.target_name = at(m.target, &lv_font_montserrat_28, COL_BG, 8, 10, 0);
     m.page = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 6, 56);
     m.latch = at(m.target, &lv_font_montserrat_14, COL_BG, 100, 26, 56);
@@ -868,13 +1058,13 @@ static void build_main_page(void)
     lv_obj_set_style_text_align(m.latch, LV_TEXT_ALIGN_RIGHT, 0);
     touch_key(m.target, KEY_NONE);   // the callback turns KEY_NONE into "next target"
 
-    m.lock = at(pagem, &lv_font_montserrat_16, COL_BAD, 8, 538, 156);
-    m.links = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 560, 156);
-    m.keys = at(pagem, &lv_font_montserrat_14, COL_TITLE, 8, 578, 156);
-    event_labels[2] = label(pagem, &lv_font_montserrat_14, COL_TITLE);
+    m.lock = at(pagek, &lv_font_montserrat_16, COL_BAD, 8, 386, 156);
+    m.links = at(pagek, &lv_font_montserrat_14, COL_TITLE, 8, 408, 156);
+    m.keys = at(pagek, &lv_font_montserrat_14, COL_TITLE, 8, 426, 156);
+    event_labels[2] = label(pagek, &lv_font_montserrat_14, COL_TITLE);
     lv_obj_set_width(event_labels[2], 156);
     lv_label_set_long_mode(event_labels[2], LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(event_labels[2], 8, 600);
+    lv_obj_set_pos(event_labels[2], 8, 448);
     lv_label_set_text(event_labels[2], "Nibbles base");
 }
 
@@ -933,8 +1123,9 @@ static void main_update(const display_status_t *s)
     const chg_state_t cs = (chg_state_t)p->chg_state;
     const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
     set_battery(&batt_pack, p->pack_pct, charging);
+    graph_update(p->pack_pct);
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pct, "%d%%", p->pack_pct);
-    else lv_label_set_text(m.pct, "--");
+    else lv_label_set_text(m.pct, "");   // no reading: just the dim battery
     lv_obj_set_style_text_color(m.pct, lv_color_hex(p->pack_pct < 0 ? COL_DIM : COL_TEXT), 0);
     if (p->input == INPUT_SUPPLY) {   // a USB-C charger: its voltage, no charge to show
         show_battery(&batt_in, false);
@@ -969,7 +1160,7 @@ static void main_update(const display_status_t *s)
     } else if (p->have_monitor) {
         const int ma = p->light_ma > 0 ? p->light_ma : 0, a10 = (ma + 50) / 100, w = (p->light_mw + 500) / 1000;
         // amps: one digit before the point (100 W at the light bus's 12 V or more is under 10 A)
-        lv_label_set_text_fmt(m.out_wa, "%d.%dA %s%s%dW", a10 / 10, a10 % 10, w < 100 ? FIG_SPACE : "", w < 10 ? FIG_SPACE : "", w);
+        lv_label_set_text_fmt(m.out_wa, "%d.%dA %dW", a10 / 10, a10 % 10, w);
         lv_obj_set_style_text_color(m.out_wa, lv_color_hex(COL_TEXT), 0);
     } else {
         lv_label_set_text(m.out_wa, "-.-A --W");
@@ -985,11 +1176,12 @@ static void main_update(const display_status_t *s)
     }
     if (p->pack_pct >= 0) lv_label_set_text_fmt(m.pack_v, "%s%d.%02dV", p->pack_mv < 10000 ? FIG_SPACE : "", p->pack_mv / 1000, p->pack_mv % 1000 / 10);
     else lv_label_set_text(m.pack_v, "--.--V");
-    // A problem, worst first, takes row 3's place in red, with a red border;
-    // made-up readings ("sim on") give the card a thin magenta border.
+    // A problem, worst first, takes row 3's place in red, with a red border.
     const char *problem = NULL;
-    if (!board && !p->sim) problem = "Power board not found";
-    else if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
+    const bool no_board = !board && !p->sim;   // quiet: "???", no border
+    if (no_board) lv_obj_remove_flag(m.no_board, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(m.no_board, LV_OBJ_FLAG_HIDDEN);
+    if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
     else if (p->pole_off) problem = NULL;   // asked for; row 2 shows POLE OFF
     else if (p->lights_off) problem = "LIGHTS SWITCHED OFF";
     else if (p->have_expander && !p->efuse_pg) problem = "eFuse tripped / off";
@@ -1006,8 +1198,10 @@ static void main_update(const display_status_t *s)
         lv_label_set_text(m.problem, problem);
         lv_obj_remove_flag(m.problem, LV_OBJ_FLAG_HIDDEN);
     } else lv_obj_add_flag(m.problem, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_border_width(m.power, problem ? 2 : p->sim ? 1 : 0, 0);
-    lv_obj_set_style_border_color(m.power, lv_color_hex(problem ? COL_BAD : COL_WLED), 0);
+    // Drawn inside the card, so a problem doesn't push the contents off the screen edge.
+    lv_obj_set_style_outline_width(m.power, problem ? 2 : 0, 0);
+    lv_obj_set_style_outline_pad(m.power, -2, 0);
+    lv_obj_set_style_outline_color(m.power, lv_color_hex(COL_BAD), 0);
 
     // LIVE and STANDBY
     fill_scene(&m.live, &s->live, s->live_body, s->live_eyes, s->live_fins, s->wled_fresh ? s->brightness : -1, 0xff);
@@ -1044,14 +1238,17 @@ static void ui_build(void)
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_post(screen, true, 0);  // the bump outline goes over the pages
 
-    // Three pages side by side: the main page, swipe left for the preset
-    // grid, again for the details (the radio cards and bump pads).
+    // Four pages side by side: the main page (power and the shark), swipe left
+    // for Live and Standby, again for the preset grid, again for the details
+    // (the radio cards and bump pads). The last two are kept for reference and
+    // debugging while the rest of the UI gets built.
     pages = lv_tileview_create(screen);
     lv_obj_set_style_bg_opa(pages, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(pages, LV_SCROLLBAR_MODE_OFF);
     pagem = lv_tileview_add_tile(pages, 0, 0, LV_DIR_RIGHT);
-    page1 = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    page0 = lv_tileview_add_tile(pages, 2, 0, LV_DIR_LEFT);
+    pagek = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    page1 = lv_tileview_add_tile(pages, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    page0 = lv_tileview_add_tile(pages, 3, 0, LV_DIR_LEFT);
     build_main_page();
 
     lv_obj_t *row = lv_obj_create(page0);
@@ -1258,12 +1455,13 @@ static void display_task(void *arg)
             last_bump = s.bump_action;
         }
         if (page_wanted >= 0) {
-            // pages: 0 main, 1 presets, 2 details (tiles in that order)
+            // pages: 0 main, 1 Live and Standby, 2 presets, 3 details (tiles in that order)
             lv_tileview_set_tile_by_index(pages, page_wanted, 0, LV_ANIM_OFF);
             page_wanted = -1;
         }
         if (shot_wanted) lv_obj_invalidate(screen);
         shark_draw();
+        fins_key_show();
         const uint32_t wait = lv_timer_handler();
         static int64_t shark_log_us;
         if (esp_timer_get_time() - shark_log_us > 10000000) {

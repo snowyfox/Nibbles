@@ -28,6 +28,13 @@ input_kind_t input_kind(int vbus_mv);
 // charger not read), so the shark can't be left dark at a festival.
 bool pole_off_stays(bool requested, input_kind_t input);
 
+// The pack's charge in the history graph: orange at PACK_LOW_PCT or less, red
+// at PACK_CRITICAL_PCT or less (where the battery icon goes red).
+#define PACK_LOW_PCT        35
+#define PACK_CRITICAL_PCT   20
+typedef enum { PACK_OK = 0, PACK_LOW, PACK_CRITICAL } pack_level_t;
+pack_level_t pack_level(int pct);
+
 // How the LEMO input's current divides. The LEMO feeds the charger (its IBUS)
 // and, through its own ideal diode, the light bus (the lights, measured by the
 // INA226, and the base's own small draw); the pack joins the light bus through

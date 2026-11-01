@@ -6,6 +6,7 @@
 #include "controls.h"
 #include "nibbles_link.h"
 #include "power_math.h"
+#include "log_format.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -522,6 +523,26 @@ static void test_names(void)
     CHECK(ctl_key_by_name("nope") == KEY_NONE);
 }
 
+static void test_log_format(void)
+{
+    CHECK(log_file_number("L00042.CSV") == 42 && log_file_number("l00001.csv") == 1);
+    CHECK(log_file_number("L00042.TXT") == -1 && log_file_number("NOTES.CSV") == -1 && log_file_number("L0042.CSV") == -1);
+    log_sample_t s = { .t_s = 12, .sim = true, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
+                       .die_c10 = INT16_MIN, .wled_preset = 230, .wled_bri = 255, .wled_fps = 43, .fin_follow = -1, .dropped = 3 };
+    char row[320];
+    const size_t n = log_row(row, sizeof(row), &s);
+    CHECK(n > 0 && row[n - 1] == '\n');
+    CHECK(!strcmp(row, "12,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3\n"));
+    s.cell_c10 = -45;
+    log_row(row, sizeof(row), &s);
+    CHECK(strstr(row, ",-4.5,,") != NULL);
+    int cols = 1, head = 1;
+    for (const char *p = row; *p; p++) cols += *p == ',';
+    for (const char *p = LOG_HEADER; *p; p++) head += *p == ',';
+    CHECK(cols == head);                       // a value for every heading
+    CHECK(log_row(row, 10, &s) == 0);          // too small: nothing, not half a row
+}
+
 static void test_power_math(void)
 {
     CHECK(pack_percent(16800, 0) == 100);
@@ -536,6 +557,9 @@ static void test_power_math(void)
     CHECK(input_kind(16800) == INPUT_BATTERY);
     CHECK(input_kind(20100) == INPUT_SUPPLY);
     CHECK(input_kind(19000) == INPUT_SUPPLY);
+    // the charge graph's colours
+    CHECK(pack_level(100) == PACK_OK && pack_level(36) == PACK_OK && pack_level(35) == PACK_LOW);
+    CHECK(pack_level(21) == PACK_LOW && pack_level(20) == PACK_CRITICAL && pack_level(0) == PACK_CRITICAL);
     // the pole's power stays off only on a USB-C supply
     CHECK(pole_off_stays(true, INPUT_SUPPLY));
     CHECK(!pole_off_stays(false, INPUT_SUPPLY));
@@ -599,6 +623,7 @@ int main(void)
     test_leds();
     test_names();
     test_power_math();
+    test_log_format();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;

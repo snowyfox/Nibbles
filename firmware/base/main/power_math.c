@@ -32,6 +32,8 @@ input_kind_t input_kind(int vbus_mv)
     return vbus_mv > INPUT_SUPPLY_MV ? INPUT_SUPPLY : INPUT_BATTERY;
 }
 
+pack_level_t pack_level(int pct) { return pct <= PACK_CRITICAL_PCT ? PACK_CRITICAL : pct <= PACK_LOW_PCT ? PACK_LOW : PACK_OK; }
+
 bool pole_off_stays(bool requested, input_kind_t input) { return requested && input == INPUT_SUPPLY; }
 
 power_flow_t power_flow(input_kind_t input, int vbus_mv, int ibus_ma, int pack_mv, int ibat_ma,

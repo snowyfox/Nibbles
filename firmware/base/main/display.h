@@ -82,5 +82,7 @@ void display_screenshot(bool rle);   // rle: run-length encoded ("SHOT w h rle56
 void display_update(const display_status_t *s);
 // A brain's preview picture (NL_MSG_PREVIEW payload), for the shark on the main page.
 void display_preview(const void *payload, size_t len);
+// The fin lock key is down (or its touch area is): lights up the area around the fins.
+void display_fin_key(bool down);
 // A one-line message for the event strip (the last command's result, etc.).
 void display_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

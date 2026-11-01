@@ -34,6 +34,11 @@
 #define PIN_PWR_SCL          2
 #define PIN_PWR_INT          3
 #define PIN_DOCK_DET         5
+
+// The TF card, in 1-bit SD mode (Waveshare's schematic and factory demo).
+#define PIN_SD_CLK           41
+#define PIN_SD_CMD           39
+#define PIN_SD_D0            40
 #define POWER_I2C_HZ         100000
 #define POWER_POLL_MS        200
 #define BASE_LOAD_MW         2000    // the base itself, for the runtime estimate (estimate)

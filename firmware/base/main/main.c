@@ -18,6 +18,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "keypad.h"
+#include "logger.h"
 #include "nibbles_espnow.h"
 #include "nvs_flash.h"
 #include "power.h"
@@ -217,6 +218,7 @@ static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 static void on_key(ctl_key_t key, bool down)
 {
     ctl_action_t a[CTL_MAX_ACTIONS];
+    if (key == KEY_FIN_SENSOR) display_fin_key(down);
     xSemaphoreTake(ctl_mutex, portMAX_DELAY);
     const int n = ctl_key(&ctl, key, down, now_ms(), a);
     xSemaphoreGive(ctl_mutex);
@@ -388,7 +390,7 @@ static void buttons_task(void *arg)
 // "[eyes|wled] bump flash|black|preset N ms" (hold a bump for ms; without a
 // prefix it goes to both; preset numbers are 1-based on both),
 // "wled slot look S N" / "wled slot pal S N" (WLED layer slot S: layer preset N, 0 off; palette N),
-// "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 grid, 2 details),
+// "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 Live and Standby, 2 grid, 3 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
 // "leds on|off" (print the key LED colours when they change),
 // "sim on|off" (made-up power readings), "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
@@ -469,6 +471,15 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "sim on") || !strcmp(line, "sim off")) power_sim(line[5] == 'n');
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
+        else if (!strcmp(line, "log")) {
+            logger_status_t l;
+            logger_get(&l);
+            printf("LOG %s, %s, file L%05d, %lu rows, %lu dropped, slowest write %lu ms, card %lu MB, %lu MB free\n", l.enabled ? "on" : "off",
+                   l.mounted ? "card ok" : "no card", l.file_number, (unsigned long)l.rows, (unsigned long)l.dropped,
+                   (unsigned long)l.max_write_ms, (unsigned long)l.card_mb, (unsigned long)l.free_mb);
+        }
+        else if (!strcmp(line, "log on") || !strcmp(line, "log off")) logger_enable(line[5] == 'n');
+        else if (!strcmp(line, "log tail")) logger_print_tail(8);
         else if (!strcmp(line, "pole on") || !strcmp(line, "pole off")) {
             if (!power_set_pole(line[6] == 'f')) ESP_LOGW(TAG, "pole stays on: no USB-C supply");
         }
@@ -548,6 +559,7 @@ void app_main(void)
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     if (power_start() != ESP_OK) ESP_LOGE(TAG, "no power board bus");
+    if (logger_start() != ESP_OK) ESP_LOGE(TAG, "no logger");
     if (keypad_start(on_key) != ESP_OK) ESP_LOGE(TAG, "no keypad task");
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
     xTaskCreate(actions_task, "actions", 4096, NULL, 4, NULL);
@@ -654,6 +666,7 @@ void app_main(void)
         name_of(ds.live_fins, wled_names, 256, c.live.fins > 0 ? NL_FIN_PRESET_BASE + c.live.fins : 0);
         name_of(ds.stby_fins, wled_names, 256, c.standby.fins > 0 ? NL_FIN_PRESET_BASE + c.standby.fins : 0);
         ds.fin_sensor = c.fin_sensor;
+        logger_set_show(wfresh ? w.preset : -1, wfresh ? w.bri : -1, wfresh ? w.fps : -1, c.fin_sensor);
         {
             const char *pn = ctl_palette_name(&c, c.layers.body_pal);
             snprintf(ds.live_pal_name, sizeof(ds.live_pal_name), "%s", pn ? pn : "");

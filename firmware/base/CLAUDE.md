@@ -141,32 +141,47 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   pack's whole current is measured (the light bus bypasses the charger):
   `power_flow` (power_math.c, host-tested) works them out from IBUS, IBAT
   and the INA226, plus `BASE_LOAD_MW` for the base. The card is just those
-  three rows (62 px). A problem (power board not found, charger not set
+  three rows (62 px). The card's background is black. With no power board it has "???" centred on the top row
+  and no border. A problem (charger not set
   up, lights switched off, eFuse tripped, a charger fault, cells too hot or
   cold to charge) replaces row 3 with its message in red and gives the card
-  a red border; made-up readings (`sim on`) give it a thin magenta border.
+  a red border. Made-up readings (`sim on`) look just like real ones.
   With nothing plugged in, the LEMO battery is a dim outline with no
   number. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
   kerning), so values don't shift as they change. `sim on` alternates a minute on an
   external battery (15.6 V; starved for half a minute) or a USB-C supply
   (20.1 V) and a minute on the pack, and sweeps both temperatures through
-  their levels. Then LIVE (red; a fifth row, LOOK: the body's palette, by
+  their levels. Under it, a side view of the shark from a brain's preview
+  stream (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
+  `tools/sim/make_preview_map.py`); all dim with no stream. Under that, the fins
+  laid flat, seen from above (leading edges up, port on the left, live colours,
+  `fin_pos.h`: a 4 px band like the shark's line, both strands side by side, each pixel taking its nearest LED), a padlock between them
+  (grey shackle, amber body; unlocked: shackle lifted with its right end clear,
+  all at 25% opacity; dim body when not known), and an invisible touch key for FIN SENSOR across the whole band; a
+  card shows behind the fins only while that key is down (`display_fin_key`).
+  At the bottom, edge to edge, the pack's charge over the last hour at 25%
+  opacity: 172 one-pixel columns (about 21 s each, newest on the right), 1 px per
+  percent, green, orange at 35% or less, red at 20% or less; RAM only.
+  That's all of page 0 (2026-11-01; card 0, shark 70, fins 154, 84 tall, graph 540). Page 1, swipe left: LIVE (red; a fifth row, LOOK: the body's palette, by
   name if it's one of the palette page's, and "+ Ln" for a layer over it),
   STANDBY (green; rows that differ bright; tap it = TAKE), and the target
   box (tap = next target), page name, LATCH, lock, links, keypads found, the
   event line. STANDBY has a LOOK row too (as TAKE would leave it: "--"
   where a new preset brings its own palette) and the "hold TAKE" line
-  under it. Between the power bar and LIVE, a side view of the shark from a
-  brain's preview stream (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
-  `tools/sim/make_preview_map.py`); all dim with no stream. Positions: card 4,
-  shark 70, LIVE 156 (157 tall), STANDBY 319 (157 tall), target 482, lock 538,
-  links 560, keys 578, event 600. Page 1 is the
-  preset grid, page 2 the old cards and bump pads.
+  under it. Positions: LIVE 4 (157 tall), STANDBY 167 (157 tall), target 330,
+  lock 386, links 408, keys 426, event 448. Page 2 is the preset grid, page 3
+  the old cards and bump pads, kept for reference and debugging for now.
+- **Data logger** (`main/logger.c`, `log_format.c`; 2026-11-01): one CSV row a
+  second on the TF card (1-bit SD: CLK 41, CMD 39, D0 40), a new file each boot,
+  `/nibbles/L00001.CSV` and up, on its own lowest-priority task. Synced every
+  10 s; retries every 30 s with no card; deletes the oldest logs below 200 MB
+  free. `t_s` is seconds since boot (no clock set). The `sim` column marks
+  made-up readings. It never formats a card that won't mount.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`,
-  `power` (logs the power board), `page 0|1|2`, `leds on|off` (prints
+  finsensor, take, flash, unlock, latch), `sim on|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`,
+  `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).
 - Host tests: `make -C firmware/base/test/host`.
