@@ -662,6 +662,107 @@ static void test_charger_limit(void)
     CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3333) % 10 == 0);           // the register's steps
 }
 
+static bool has_act(ctl_act_type_t t, int value)
+{
+    for (int i = 0; i < nacts; i++) if (acts[i].type == t && acts[i].value == value) return true;
+    return false;
+}
+
+static void test_ab_take(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    ctl_action_t out[CTL_MAX_ACTIONS];
+    const ctl_scene_t live = { .body = 1, .eyes = 2, .fins = 0 };
+    ctl_set_live(&c, &live, 200, 1);
+    ctl_layers_t l = { 6, -1, 0, 0 };
+    ctl_set_layers(&c, &l);
+    CHECK(ctl_set_ab(&c, true, out) == 0 && c.ab);
+    // Without a difference nothing's owed to the Standby brain.
+    ctl_layers_t rl = { 6, -1, 0, 0 };
+    ctl_scene_t rep = { .body = 1, .eyes = 0, .fins = 0 };
+    CHECK(ctl_standby_sync(&c, &rep, &rl, out) == 0);
+
+    // Cueing a preset (LATCH first, then a number) goes to the Standby brain, not Live.
+    press(&c, KEY_LATCH);
+    press(&c, KEY_NUM3);
+    release(&c, KEY_NUM3);
+    release(&c, KEY_LATCH);
+    CHECK(c.standby.body == 3 && c.live.body == 1);
+    int n = ctl_standby_sync(&c, &rep, &rl, out);
+    CHECK(n == 1 && out[0].type == ACT_PRESET && out[0].target == TGT_BODY && out[0].value == 3 && out[0].standby);
+    rep.body = 3;
+    rl.body_pal = 11;                         // the new preset's own palette: leave it
+    CHECK(ctl_standby_sync(&c, &rep, &rl, out) == 0);
+
+    // TAKE held: the Standby brain on the LEDs, no preset bumps; back on release.
+    press(&c, KEY_TAKE);
+    CHECK(has_act(ACT_AB_HOLD, 1) && c.ab_holding);
+    for (int i = 0; i < nacts; i++) CHECK(!(acts[i].type == ACT_BUMP && acts[i].target == TGT_BODY));
+    release(&c, KEY_TAKE);
+    CHECK(has_act(ACT_AB_HOLD, 0) && !c.ab_holding && c.live.body == 1 && c.standby.body == 3);
+
+    // TAKE + LATCH: the controller swaps; they trade places without a preset sent.
+    press(&c, KEY_TAKE);
+    press(&c, KEY_LATCH);
+    CHECK(has_act(ACT_AB_TAKE, 0) && has_act(ACT_AB_HOLD, 0));
+    for (int i = 0; i < nacts; i++) CHECK(!(acts[i].type == ACT_PRESET && acts[i].target != TGT_EYES));
+    CHECK(c.live.body == 3 && c.standby.body == 1);
+    CHECK(c.standby_layers.body_pal == 6);    // Standby: Live as it was
+    release(&c, KEY_LATCH);
+    CHECK(release(&c, KEY_TAKE) == 0);        // nothing more to do on the way up
+
+    // And the telemetry from the new Live brain agrees; the other reports what it runs.
+    const ctl_scene_t live2 = { .body = 3, .eyes = c.live.eyes, .fins = 0 };
+    ctl_set_live(&c, &live2, 200, 1);
+    ctl_layers_t l2 = { 11, -1, 0, 0 };
+    ctl_set_layers(&c, &l2);
+    rep = (ctl_scene_t){ .body = 1, .eyes = 0, .fins = 0 };
+    rl = (ctl_layers_t){ 6, -1, 0, 0 };
+    CHECK(ctl_standby_sync(&c, &rep, &rl, out) == 0);
+
+    // A wrong palette on the Standby brain, and a wrong layer, get put right.
+    rl.body_pal = 9;
+    rl.body_layer = 3;
+    n = ctl_standby_sync(&c, &rep, &rl, out);
+    CHECK(n == 2 && out[0].type == ACT_SLOT_PALETTE && out[0].value == 6 && out[0].standby &&
+          out[1].type == ACT_SLOT_LOOK && out[1].value == 0);
+
+    // Eyes have no second brain: they change with TAKE by command, as ever.
+    ctl_t e;
+    ctl_init(&e, 0);
+    ctl_set_live(&e, &live, 200, 1);
+    ctl_set_ab(&e, true, out);
+    e.standby.eyes = 7;
+    press(&e, KEY_TAKE);
+    bool eye_bump = false;
+    for (int i = 0; i < nacts; i++) eye_bump |= acts[i].type == ACT_BUMP && acts[i].target == TGT_EYES && acts[i].value == 7;
+    CHECK(eye_bump);
+    press(&e, KEY_LATCH);
+    bool eye_cmd = false;
+    for (int i = 0; i < nacts; i++) eye_cmd |= acts[i].type == ACT_PRESET && acts[i].target == TGT_EYES && acts[i].value == 7;
+    CHECK(eye_cmd && e.live.eyes == 7 && e.standby.eyes == 2);
+
+    // A brain dies during a hold: let go of everything, then the old way works.
+    ctl_t d;
+    ctl_init(&d, 0);
+    ctl_set_live(&d, &live, 200, 1);
+    ctl_set_ab(&d, true, out);
+    press(&d, KEY_TAKE);
+    n = ctl_set_ab(&d, false, out);
+    CHECK(n >= 1 && out[0].type == ACT_AB_HOLD && out[0].value == 0 && !d.take_preview && !d.ab_holding);
+    CHECK(ctl_standby_sync(&d, &rep, &rl, out) == 0);    // one brain: nothing to sync
+    // Locking during a hold lets go too.
+    ctl_t k;
+    ctl_init(&k, 0);
+    ctl_set_live(&k, &live, 200, 1);
+    ctl_set_ab(&k, true, out);
+    press(&k, KEY_TAKE);
+    k.locked = true;
+    release(&k, KEY_TAKE);
+    CHECK(has_act(ACT_AB_HOLD, 0));
+}
+
 static void test_eye_thumb(void)
 {
     enum { S = EYE_THUMB_SIZE };
@@ -782,6 +883,7 @@ int main(void)
     test_power_sim();
     test_eye_thumb();
     test_charger_limit();
+    test_ab_take();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;

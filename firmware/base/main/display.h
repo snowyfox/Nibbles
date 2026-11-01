@@ -49,6 +49,7 @@ typedef struct {
     uint8_t diff;             // ctl_standby_diff()
     bool keys_locked, take_preview, latch;
     uint8_t keypads_found, keypads_total;
+    int8_t ab_live;           // two brains: which is Live, 0 A, 1 B; -1 one brain
     char log_text[32];        // the TF card log, for the page with Live and Standby
 } display_status_t;
 

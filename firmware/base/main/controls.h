@@ -58,6 +58,9 @@ typedef enum {
     ACT_SLOT_LOOK,   // target = WLED layer slot (nl_slot_t), value = layer preset (0: switch the slot off)
     ACT_SLOT_PALETTE, // target = WLED layer slot, value = palette
     ACT_POLE_POWER,  // PAGE + BLACKOUT: toggle the pole's power (main checks there's a USB-C supply)
+    ACT_AB_HOLD,     // two brains: value 1 show the Standby brain on the LEDs while held, 0 back
+    ACT_AB_TAKE,     // two brains: swap Live and Standby on the controller
+    ACT_BRIGHTNESS_STANDBY, // two brains: value = 0..255, the Standby brain only (from main)
 } ctl_act_type_t;
 
 typedef struct {
@@ -66,6 +69,7 @@ typedef struct {
     uint8_t bump;
     int16_t value;
     uint8_t extra;   // NL_BUMP_SCENE: palette + 1 (0: leave it), the bump's intensity
+    bool standby;    // two brains: for the Standby brain, not the Live one
 } ctl_action_t;
 
 #define CTL_MAX_ACTIONS      8
@@ -118,6 +122,8 @@ typedef struct {
     bool take_preview;               // TAKE is down and the Standby bumps are on
     ctl_layers_t take_layers;        // the layers when TAKE went down (WLED reports its preview as live)
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on
+    bool ab;                         // two brains up: Standby runs on the other brain, TAKE switches to it
+    bool ab_holding;                 // TAKE is showing the Standby brain
 } ctl_t;
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms);
@@ -125,6 +131,15 @@ void ctl_init(ctl_t *c, uint32_t autolock_ms);
 // Telemetry: what the shark shows now (fields 0 / -1 where not known yet).
 // The first complete picture also fills Standby.
 void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness, int fin_sensor);
+
+// Two brains are up (ctl_set_ab true): Standby's body and fins run on the Standby
+// brain, which ctl_standby_sync keeps in step, and TAKE just switches to it. Eyes
+// have no second brain, so they work as ever. Returns any actions for letting go.
+int ctl_set_ab(ctl_t *c, bool on, ctl_action_t *out);
+// What it takes to make the Standby brain match Standby, given what it reports:
+// actions with standby set. A preset first, its palette and looks once it's reported
+// (a new preset brings its own), so call again after the next report.
+int ctl_standby_sync(const ctl_t *c, const ctl_scene_t *reported, const ctl_layers_t *reported_layers, ctl_action_t *out);
 
 // A key went down or up. Returns how many actions it wrote to out (at most CTL_MAX_ACTIONS).
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out);

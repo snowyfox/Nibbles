@@ -46,8 +46,53 @@ static int64_t fins_us;
 
 static volatile uint32_t heard_time;
 
+// Two brains: the controller's A/B switch, and the brain that's Standby just now.
+static nl_ab_state_t ab_state;
+static uint8_t ab_mac[6];
+static int64_t ab_us;
+static nl_wled_telemetry_t stby_wled;
+static uint8_t stby_mac[6];
+static int64_t stby_wled_us;
+static nl_fin_state_t stby_fin;
+static int64_t stby_fin_us;
+static nl_wled_layers_t stby_layers;
+static int64_t stby_layers_us;
+static volatile int64_t stby_sync_after;   // not until the roles have settled after a swap
+static volatile bool ab_in_use;            // both brains up: Standby runs on the other one
+
 static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
+    if (h->type == NL_MSG_AB && len == sizeof(nl_ab_state_t)) {
+        nl_ab_state_t st;
+        memcpy(&st, pl, sizeof(st));
+        taskENTER_CRITICAL(&lock);
+        if (ab_us && st.live != ab_state.live) {   // what we heard from Standby is out of date
+            stby_wled_us = stby_fin_us = stby_layers_us = 0;
+            stby_sync_after = esp_timer_get_time() + 2000000;
+        }
+        ab_state = st;
+        memcpy(ab_mac, mac, 6);
+        ab_us = esp_timer_get_time();
+        taskEXIT_CRITICAL(&lock);
+        return;
+    }
+    if (h->role == NL_ROLE_WLED_STANDBY) {
+        const int64_t t = esp_timer_get_time();
+        taskENTER_CRITICAL(&lock);
+        if (h->type == NL_MSG_WLED_TELEMETRY && len == sizeof(stby_wled)) {
+            memcpy(&stby_wled, pl, len);
+            memcpy(stby_mac, mac, 6);
+            stby_wled_us = t;
+        } else if (h->type == NL_MSG_FIN_STATE && len == sizeof(stby_fin)) {
+            memcpy(&stby_fin, pl, len);
+            stby_fin_us = t;
+        } else if (h->type == NL_MSG_WLED_LAYERS && len == sizeof(stby_layers)) {
+            memcpy(&stby_layers, pl, len);
+            stby_layers_us = t;
+        }
+        taskEXIT_CRITICAL(&lock);
+        if (h->type != NL_MSG_PREVIEW && h->type != NL_MSG_TIME) return;   // the preview is what a Standby brain is for
+    }
     if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second: straight to the screen
         display_preview(pl, len);
         return;
@@ -95,14 +140,8 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
     }
 }
 
-static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
+static void send_cmd_mac(const char *who, bool known, const uint8_t mac[6], nl_target_t target, nl_op_t op, int arg)
 {
-    const char *who = target == NL_TARGET_WLED ? "wled" : "eyes";
-    uint8_t mac[6];
-    taskENTER_CRITICAL(&lock);
-    const bool known = target == NL_TARGET_WLED ? have_wled : have_eyes;
-    memcpy(mac, target == NL_TARGET_WLED ? wled_mac : eyes_mac, 6);
-    taskEXIT_CRITICAL(&lock);
     if (!known) {
         ESP_LOGW(TAG, "%s not heard yet; command not sent", who);
         display_event("%s not heard yet", who);
@@ -115,7 +154,7 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
                                  "auto presets", "reactivity", "fin following", "set layer", "set palette" };
-    const char *what = op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
+    const char *what = op == NL_OP_AB_TAKE ? "take" : op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
@@ -127,6 +166,51 @@ static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
     }
 }
 
+static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
+{
+    uint8_t mac[6];
+    taskENTER_CRITICAL(&lock);
+    const bool known = target == NL_TARGET_WLED ? have_wled : have_eyes;
+    memcpy(mac, target == NL_TARGET_WLED ? wled_mac : eyes_mac, 6);
+    taskEXIT_CRITICAL(&lock);
+    send_cmd_mac(target == NL_TARGET_WLED ? "wled" : "eyes", known, mac, target, op, arg);
+}
+
+// To the brain that's Standby just now.
+static void send_cmd_standby(nl_op_t op, int arg)
+{
+    uint8_t mac[6];
+    taskENTER_CRITICAL(&lock);
+    const bool known = stby_wled_us != 0;
+    memcpy(mac, stby_mac, 6);
+    taskEXIT_CRITICAL(&lock);
+    send_cmd_mac("standby", known, mac, NL_TARGET_WLED, op, arg);
+}
+
+static void send_wled(bool standby, nl_op_t op, int arg)
+{
+    if (standby) send_cmd_standby(op, arg);
+    else send_cmd_to(NL_TARGET_WLED, op, arg);
+}
+
+// Both brains: the same brightness and fin following, whichever is on the LEDs.
+static void send_wled_both(nl_op_t op, int arg)
+{
+    send_cmd_to(NL_TARGET_WLED, op, arg);
+    if (ab_in_use) send_cmd_standby(op, arg);
+}
+
+static void ab_take(int fade_ms)
+{
+    uint8_t mac[6];
+    taskENTER_CRITICAL(&lock);
+    const bool known = ab_us != 0;
+    memcpy(mac, ab_mac, 6);
+    stby_sync_after = esp_timer_get_time() + 2000000;
+    taskEXIT_CRITICAL(&lock);
+    send_cmd_mac("controller", known, mac, NL_TARGET_AB, NL_OP_AB_TAKE, fade_ms);
+}
+
 static void send_preset(nl_op_t op) { send_cmd_to(NL_TARGET_EYES, op, 0); }
 static void send_preset_index(int index) { send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, index); }
 
@@ -135,14 +219,14 @@ static void send_preset_index(int index) { send_cmd_to(NL_TARGET_EYES, NL_OP_PRE
 // STOP. One slot per receiver (the eyes and WLED each filter on their own
 // target bit), so the two can show different things at once, as TAKE's
 // preview does. Keys, pads, the bump button and serial all use the slots.
-enum { SLOT_EYES = 0, SLOT_WLED = 1, SLOT_FINS = 2, SLOTS };
+enum { SLOT_EYES = 0, SLOT_WLED = 1, SLOT_FINS = 2, SLOT_AB = 3, SLOTS };
 typedef struct {
     nl_bump_t b;
     bool on;
     int64_t next_hold;
 } bump_slot_t;
 static bump_slot_t slots[SLOTS];
-static const uint8_t slot_target[SLOTS] = { NL_TARGET_EYES, NL_TARGET_WLED, NL_TARGET_FINS };
+static const uint8_t slot_target[SLOTS] = { NL_TARGET_EYES, NL_TARGET_WLED, NL_TARGET_FINS, NL_TARGET_AB };
 static uint16_t bump_id;
 static SemaphoreHandle_t bump_mutex;
 
@@ -278,20 +362,35 @@ static void pole_power(void)
     else display_event("pole stays on: no USB-C supply");
 }
 
+// WLED's slots as the keypad's logic sees them (-1: that slot is off).
+static void layers_from(const nl_wled_layers_t *wl, ctl_layers_t *out)
+{
+    out->body_pal = wl->slot[NL_SLOT_BODY].on ? wl->slot[NL_SLOT_BODY].palette : -1;
+    out->fins_pal = wl->slot[NL_SLOT_FINS].on ? wl->slot[NL_SLOT_FINS].palette : -1;
+    out->body_layer = wl->slot[NL_SLOT_BODY_OVER].on ? wl->slot[NL_SLOT_BODY_OVER].look : 0;
+    out->fins_layer = wl->slot[NL_SLOT_FINS_OVER].on ? wl->slot[NL_SLOT_FINS_OVER].look : 0;
+}
+
 static void do_ctl_action(const ctl_action_t *a)
 {
     switch (a->type) {
         case ACT_PRESET:
             // BODY: the WLED preset without its eye settings; ALL lets them through
-            if (a->target == TGT_BODY) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, a->value | (a->bump ? 0 : NL_PRESET_NO_EYES));
-            else if (a->target == TGT_FINS) send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_SET, NL_FIN_PRESET_BASE + a->value);
+            if (a->target == TGT_BODY) send_wled(a->standby, NL_OP_PRESET_SET, a->value | (a->bump ? 0 : NL_PRESET_NO_EYES));
+            else if (a->target == TGT_FINS) send_wled(a->standby, NL_OP_PRESET_SET, NL_FIN_PRESET_BASE + a->value);
             else send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, a->value - 1);
             break;
-        case ACT_FINS:       send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, a->value); break;
+        case ACT_FINS:       send_wled_both(NL_OP_FIN_FOLLOW, a->value); break;
         // Fin presets are WLED presets NL_FIN_PRESET_BASE + n (the base itself: follow the body).
-        case ACT_BRIGHTNESS: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a->value); break;
-        case ACT_SLOT_LOOK:    send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_LOOK, nl_slot_arg(a->target, (uint8_t)a->value)); break;
-        case ACT_SLOT_PALETTE: send_cmd_to(NL_TARGET_WLED, NL_OP_SLOT_PALETTE, nl_slot_arg(a->target, (uint8_t)a->value)); break;
+        case ACT_BRIGHTNESS: send_wled_both(NL_OP_BRIGHTNESS_SET, a->value); break;
+        case ACT_SLOT_LOOK:    send_wled(a->standby, NL_OP_SLOT_LOOK, nl_slot_arg(a->target, (uint8_t)a->value)); break;
+        case ACT_SLOT_PALETTE: send_wled(a->standby, NL_OP_SLOT_PALETTE, nl_slot_arg(a->target, (uint8_t)a->value)); break;
+        case ACT_AB_HOLD:
+            if (a->value) slot_start(SLOT_AB, NL_BUMP_AB, 0, 255);
+            else slot_stop(SLOT_AB);
+            break;
+        case ACT_AB_TAKE:    ab_take(TAKE_FADE_MS); break;
+        case ACT_BRIGHTNESS_STANDBY: send_cmd_standby(NL_OP_BRIGHTNESS_SET, a->value); break;
         case ACT_BUMP:
             if (a->target == TGT_FINS && a->bump == NL_BUMP_PRESET) slot_start(SLOT_FINS, a->bump, NL_FIN_PRESET_BASE + a->value, 255);
             else if (a->bump == NL_BUMP_SCENE) slot_start(a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED, a->bump, a->value, a->extra);
@@ -495,6 +594,20 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "log list")) logger_print_list();
         else if (!strncmp(line, "log get ", 8)) logger_print_file(atoi(line + 8));
+        else if (!strcmp(line, "ab")) {
+            taskENTER_CRITICAL(&lock);
+            const nl_ab_state_t st = ab_state;
+            const int64_t age = ab_us ? esp_timer_get_time() - ab_us : -1;
+            const int64_t stby_age = stby_wled_us ? esp_timer_get_time() - stby_wled_us : -1;
+            taskEXIT_CRITICAL(&lock);
+            if (age < 0 || age > 3000000) printf("AB controller not heard\n");
+            else printf("AB %c Live, %c on the LEDs, A %s %d fps, B %s %d fps, %d takes, %d failovers, standby brain %s, %s\n", 'A' + st.live, 'A' + st.showing,
+                        st.flags & NL_AB_A_UP ? "up" : "down", st.fps[0], st.flags & NL_AB_B_UP ? "up" : "down", st.fps[1], st.takes, st.failovers,
+                        stby_age >= 0 && stby_age < 2000000 ? "heard" : "not heard", ab_in_use ? "in use" : "not in use");
+        }
+        else if (!strcmp(line, "ab hold on")) slot_start(SLOT_AB, NL_BUMP_AB, 0, 255);
+        else if (!strcmp(line, "ab hold off")) slot_stop(SLOT_AB);
+        else if (!strncmp(line, "ab take", 7)) ab_take(atoi(line + 7));
         else if (!strcmp(line, "eyepic off")) display_eye_test(-1, 0);
         else if (!strncmp(line, "eyepic ", 7)) {
             int preset = 0, state = 0;
@@ -611,28 +724,54 @@ void app_main(void)
         taskEXIT_CRITICAL(&lock);
         // The layers' palettes and looks, for the keys' LEDs and the screen (-1: not known)
         ctl_layers_t layers = { -1, -1, -1, -1 };
-        if (lfresh) {
-            layers.body_pal = wl.slot[NL_SLOT_BODY].on ? wl.slot[NL_SLOT_BODY].palette : -1;
-            layers.fins_pal = wl.slot[NL_SLOT_FINS].on ? wl.slot[NL_SLOT_FINS].palette : -1;
-            layers.body_layer = wl.slot[NL_SLOT_BODY_OVER].on ? wl.slot[NL_SLOT_BODY_OVER].look : 0;
-            layers.fins_layer = wl.slot[NL_SLOT_FINS_OVER].on ? wl.slot[NL_SLOT_FINS_OVER].look : 0;
-        }
+        if (lfresh) layers_from(&wl, &layers);
 
         // What the shark shows, for Live; remember the names that come with it.
         const ctl_scene_t live = { .body = wfresh ? w.preset : 0, .eyes = fresh ? e.preset + 1 : 0,
                                    .fins = ffresh ? fs.fin_preset : -1 };
         if (wfresh && w.preset && w.name[0]) memcpy(wled_names[w.preset], w.name, NL_NAME_LEN);
         if (fresh && e.preset + 1 < 64 && e.name[0]) memcpy(eye_names[e.preset + 1], e.name, NL_NAME_LEN);
+        // Two brains, while both are up and the Standby one is heard.
+        taskENTER_CRITICAL(&lock);
+        const nl_ab_state_t abs = ab_state;
+        const bool ab_fresh = ab_us && now - ab_us < 2000000;
+        const bool stby_fresh = stby_wled_us && now - stby_wled_us < 2000000;
+        const nl_wled_telemetry_t sw = stby_wled;
+        const bool stby_all = stby_fresh && stby_fin_us && now - stby_fin_us < 2000000 && stby_layers_us && now - stby_layers_us < 2000000;
+        const nl_fin_state_t sf = stby_fin;
+        const nl_wled_layers_t sl = stby_layers;
+        taskEXIT_CRITICAL(&lock);
+        const bool ab_on = ab_fresh && stby_fresh && (abs.flags & NL_AB_ENABLED) && (abs.flags & NL_AB_A_UP) && (abs.flags & NL_AB_B_UP);
+        if (stby_fresh && sw.preset && sw.name[0]) memcpy(wled_names[sw.preset], sw.name, NL_NAME_LEN);
+        ctl_action_t ab_acts[CTL_MAX_ACTIONS];
+        int nab = 0;
         ctl_action_t acts[CTL_MAX_ACTIONS];
         uint32_t rgb[KEY_COUNT];
         xSemaphoreTake(ctl_mutex, portMAX_DELAY);
+        nab = ctl_set_ab(&ctl, ab_on, ab_acts);
+        ab_in_use = ab_on;
         ctl_set_live(&ctl, &live, wfresh ? w.bri : 0, ffresh ? fs.follow : -1);
         ctl_set_layers(&ctl, &layers);
         const int nacts = ctl_tick(&ctl, now_ms(), acts);
+        // Standby's looks onto the Standby brain, once a second (ctl_standby_sync).
+        ctl_action_t sync_acts[CTL_MAX_ACTIONS];
+        int nsync = 0;
+        static int64_t next_sync;
+        if (ab_on && stby_all && now >= next_sync && now >= stby_sync_after) {
+            next_sync = now + 1000000;
+            const ctl_scene_t rep = { .body = sw.preset, .eyes = 0, .fins = sf.fin_preset };
+            ctl_layers_t rl;
+            layers_from(&sl, &rl);
+            nsync = ctl_standby_sync(&ctl, &rep, &rl, sync_acts);
+            if (wfresh && sw.bri != w.bri && nsync < CTL_MAX_ACTIONS)
+                sync_acts[nsync++] = (ctl_action_t){ .type = ACT_BRIGHTNESS_STANDBY, .value = w.bri };
+        }
         ctl_led_colors(&ctl, now_ms(), rgb);
         const ctl_t c = ctl;
         xSemaphoreGive(ctl_mutex);
+        run_ctl_actions(ab_acts, nab);
         run_ctl_actions(acts, nacts);
+        run_ctl_actions(sync_acts, nsync);
         keypad_set_leds(rgb);
         static uint32_t echoed[KEY_COUNT];
         static bool echo_was;
@@ -721,6 +860,7 @@ void app_main(void)
             else if (!l.mounted) snprintf(ds.log_text, sizeof(ds.log_text), "No TF card");
             else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, pw.sim ? " SIM" : rtc_time_known() ? "" : " no clock");
         }
+        ds.ab_live = ab_on ? abs.live : -1;
         display_update(&ds);
         if (n % 40) continue;  // log every 2 s
         char eyes_s[160] = "no eyes heard", wled_s[200] = "no WLED heard";

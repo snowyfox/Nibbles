@@ -181,6 +181,16 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   under it. Positions: LIVE 4 (157 tall), STANDBY 167 (157 tall), target 330,
   lock 386, links 408, keys 426, event 448. Page 2 is the preset grid, page 3
   the old cards and bump pads, kept for reference and debugging for now.
+- **Two brains** (2026-11-01, host-tested, not on real boards yet; `wled/README.md`,
+  "A/B brains"): when the controller's `NL_MSG_AB` says both wires are up and the
+  Standby brain (`NL_ROLE_WLED_STANDBY`) is heard, `ctl.ab` is on. TAKE held then
+  shows the Standby brain (a bump to `NL_TARGET_AB`), LATCH keeps it (`NL_OP_AB_TAKE`,
+  `TAKE_FADE_MS`), and Live and Standby just trade places. Eyes have no second
+  brain, so they're bumped and commanded as ever. `ctl_standby_sync` keeps the brain
+  on Standby's preset, fin preset, palette and looks once a second, and main its
+  brightness; it waits 2 s after a swap. Panels read LIVE A / STANDBY B. If a brain
+  goes down, everything falls back to the one-brain behaviour. Serial: `ab`, `ab take
+  [MS]`, `ab hold on|off`.
 - **Simulated power data** (`main/power_sim.c`, host-tested; 2026-11-01). Two
   kinds: **fast** (every value and problem in 2 minutes) and **realistic**
   (festival nights in real time: pack, swapped-in VB99s, a USB-C charge at the
@@ -219,7 +229,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`,
+  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

@@ -394,6 +394,32 @@ Access point notes:
   (REVERT.md: ledmap back), `20261023-2323-pre-ap-test/` (both boards'
   Wi-Fi), `20261023-*-pre-stream-gaps/` (before the stall counter build).
 
+### A/B brains (built 2026-11-01; host-tested, not yet on real boards)
+Two brains each send the controller a full picture; TAKE on the keypad switches
+which reaches the LEDs. Settings (`{"um":{"Nibbles":{...}}}`):
+
+| Board | Settings |
+|---|---|
+| Controller (`nibbles_shark`) | `display` on, `wire_pin` brain A's wire (39), `wire_pin_b` brain B's (32 or 33, once the mic has moved) |
+| Brain A (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 0 |
+| Brain B (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 1 |
+
+- **Wiring:** each brain's TX and a GND to the controller. Never 3.3 V or 5 V between
+  boards. An input-only pin such as 39 needs a 10 kOhm pull-up to the header's 3.3 V.
+- **The presets must match on both brains**, by number: copy `presets.json`, the
+  ledmap and the settings across.
+- **On the Info page:** "Nibbles wire" shows both wires, which brain is Live, takes and
+  failovers on the controller, and "Brain A, Live" or similar on a brain.
+- **Testing without the base:** `{"nibbles":{"abtake":0}}` (a value in ms is a
+  crossfade) and `{"nibbles":{"abhold":true}}` to the controller's `/json/state`.
+  From the base's USB serial: `ab`, `ab take [MS]`, `ab hold on|off`.
+- **Not carried across yet:**
+  - eye settings in a preset on the Standby brain (the base sends it with
+    `NL_PRESET_NO_EYES`; Standby's eye preset still changes with TAKE);
+  - audio: each brain needs sound, from its own mic or WLED's audio sync.
+- **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
+- A controller reboot starts with brain A Live.
+
 ### Wire link (built 2026-10-30; sending tested, receiving not yet)
 The plan (`docs/architecture.md`, "Two brains and the Standby preview") puts
 the brains in the controller's box on top of the pole, each wired to the

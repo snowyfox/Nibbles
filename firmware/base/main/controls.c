@@ -110,7 +110,7 @@ typedef struct {
 
 static void emit(out_t *o, ctl_act_type_t type, uint8_t target, uint8_t bump, int value)
 {
-    if (o->n < CTL_MAX_ACTIONS) o->a[o->n++] = (ctl_action_t){ type, target, bump, (int16_t)value, 0 };
+    if (o->n < CTL_MAX_ACTIONS) o->a[o->n++] = (ctl_action_t){ .type = type, .target = target, .bump = bump, .value = (int16_t)value };
 }
 
 static void bump_on(ctl_t *c, out_t *o, uint8_t slot, uint8_t action, int arg)
@@ -139,6 +139,8 @@ static void bumps_off(ctl_t *c, out_t *o)
     for (uint8_t slot = TGT_BODY; slot <= TGT_FINS; slot++)
         if (c->bump_slots & SLOT_BIT(slot)) emit(o, ACT_BUMP_END, slot, 0, 0);
     c->bump_slots = 0;
+    if (c->ab_holding) emit(o, ACT_AB_HOLD, 0, 0, 0);
+    c->ab_holding = false;
 }
 
 // A bump on the target's slots. A preset on ALL is the whole shark on that
@@ -306,6 +308,13 @@ static void take_press(ctl_t *c, out_t *o)
     const uint8_t diff = ctl_standby_diff(c);
     const ctl_layers_t *q = &c->standby_layers, *l = &c->layers;
     c->take_layers = *l;
+    if (c->ab) {   // Two brains: Standby's body and fins are already running; just show them.
+        emit(o, ACT_AB_HOLD, 0, 0, 1);
+        c->ab_holding = true;
+        if (diff & SLOT_BIT(TGT_EYES)) bump_on(c, o, TGT_EYES, NL_BUMP_PRESET, c->standby.eyes);
+        c->take_preview = true;
+        return;
+    }
     if (diff & SLOT_BIT(TGT_BODY)) {
         const bool f = body_fresh(c);
         if (!body_cued(c)) bump_on(c, o, TGT_BODY, NL_BUMP_PRESET, c->standby.body);
@@ -353,9 +362,32 @@ static void take_side(ctl_t *c, out_t *o, bool fins)
     }
 }
 
+// Two brains: the controller swaps them. Each keeps what it runs, so Standby is
+// simply Live as it was.
+static void take_ab(ctl_t *c, out_t *o)
+{
+    ctl_layers_t now_standby;
+    ctl_standby_layers(c, &now_standby);
+    const ctl_scene_t old = c->live;
+    emit(o, ACT_AB_TAKE, 0, 0, 0);
+    if (c->standby.eyes > 0 && c->standby.eyes != old.eyes) {
+        emit(o, ACT_PRESET, TGT_EYES, 0, c->standby.eyes);
+        c->live.eyes = c->standby.eyes;
+        if (old.eyes > 0) c->standby.eyes = old.eyes;
+    }
+    c->live.body = c->standby.body;
+    c->live.fins = c->standby.fins;
+    if (old.body > 0) c->standby.body = old.body;
+    if (old.fins >= 0) c->standby.fins = old.fins;
+    c->standby_layers = c->layers;
+    c->layers = now_standby;
+}
+
 static void take_release(ctl_t *c, out_t *o, bool commit)
 {
-    if (commit) {
+    if (commit && c->ab) {
+        take_ab(c, o);
+    } else if (commit) {
         // Compared with Live as it was before the preview (WLED reports its bumps as live).
         const ctl_layers_t reported = c->layers;
         c->layers = c->take_layers;
@@ -471,6 +503,45 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         default:
             break;
+    }
+    return o.n;
+}
+
+int ctl_set_ab(ctl_t *c, bool on, ctl_action_t *out)
+{
+    out_t o = { out, 0 };
+    if (on == c->ab) return 0;
+    if (c->take_preview) {   // whatever TAKE was showing, it can't carry on
+        bumps_off(c, &o);
+        c->take_preview = false;
+    }
+    c->ab = on;
+    return o.n;
+}
+
+static void sync_emit(out_t *o, ctl_act_type_t type, uint8_t target, int value)
+{
+    emit(o, type, target, 0, value);
+    if (o->n) o->a[o->n - 1].standby = true;
+}
+
+int ctl_standby_sync(const ctl_t *c, const ctl_scene_t *rep, const ctl_layers_t *rl, ctl_action_t *out)
+{
+    out_t o = { out, 0 };
+    if (!c->ab) return 0;
+    ctl_layers_t want;
+    ctl_standby_layers(c, &want);
+    const bool body_right = c->standby.body <= 0 || rep->body == c->standby.body;
+    const bool fins_right = c->standby.fins < 0 || rep->fins == c->standby.fins;
+    if (!body_right) sync_emit(&o, ACT_PRESET, TGT_BODY, c->standby.body);
+    else {
+        if (want.body_pal >= 0 && rl->body_pal >= 0 && rl->body_pal != want.body_pal) sync_emit(&o, ACT_SLOT_PALETTE, NL_SLOT_BODY, want.body_pal);
+        if (want.body_layer >= 0 && rl->body_layer >= 0 && rl->body_layer != want.body_layer) sync_emit(&o, ACT_SLOT_LOOK, NL_SLOT_BODY_OVER, want.body_layer);
+    }
+    if (!fins_right) sync_emit(&o, ACT_PRESET, TGT_FINS, c->standby.fins);
+    else if (c->standby.fins > 0) {   // the fins' layers only show on a fin preset of their own
+        if (want.fins_pal >= 0 && rl->fins_pal >= 0 && rl->fins_pal != want.fins_pal) sync_emit(&o, ACT_SLOT_PALETTE, NL_SLOT_FINS, want.fins_pal);
+        if (want.fins_layer >= 0 && rl->fins_layer >= 0 && rl->fins_layer != want.fins_layer) sync_emit(&o, ACT_SLOT_LOOK, NL_SLOT_FINS_OVER, want.fins_layer);
     }
     return o.n;
 }

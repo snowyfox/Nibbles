@@ -40,6 +40,7 @@ typedef enum {
     NL_MSG_PIXELS = 15,     // a chunk of LED colours, brain -> controller over a wire (nl_pix_*)
     NL_MSG_PREVIEW = 16,    // a reduced picture for a preview screen, brain -> radio (nl_preview_t)
     NL_MSG_TIME = 17,       // the real time, from a board that knows it, every 10 s (nl_time_t)
+    NL_MSG_AB = 18,         // which brain is Live, controller -> radio, 2 Hz and on a change (nl_ab_state_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -50,6 +51,8 @@ typedef enum {
     NL_ROLE_WLED = 4,
     NL_ROLE_FINS = 5,       // reads the fins' hinge angle sensors
     NL_ROLE_PREVIEW = 6,    // shows the brain's picture on its own screen
+    NL_ROLE_WLED_STANDBY = 7, // a brain that isn't on the LEDs now (nl_ab_*): the same messages as
+                            // a WLED's, which the eyes and anything else after Live's ignore
 } nl_role_t;
 
 typedef enum {
@@ -144,6 +147,7 @@ typedef struct NL_PACKED {
 typedef enum {
     NL_TARGET_EYES = 1,
     NL_TARGET_WLED = 2,
+    NL_TARGET_AB = 8,       // the controller's A/B switch: NL_OP_AB_TAKE, NL_BUMP_AB
     NL_TARGET_FINS = 4,     // bumps only: WLED's fin segment (fin presets, see NL_FIN_PRESET_BASE)
 } nl_target_t;
 
@@ -157,6 +161,7 @@ typedef enum {
     NL_OP_REACTIVITY = 7,       // eyes: arg = nl_react_t
     NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
     NL_OP_SLOT_LOOK = 9,        // WLED: arg = nl_slot_arg(slot, preset): the slot takes that preset's look and comes on; preset 0 switches it off
+    NL_OP_AB_TAKE = 11,         // controller: swap Live and Standby; arg = crossfade in ms (0: cut)
     NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
 } nl_op_t;
 
@@ -176,6 +181,7 @@ typedef enum {
     NL_ACK_OK = 0,
     NL_ACK_UNSUPPORTED = 1,
     NL_ACK_BAD_ARG = 2,
+    NL_ACK_BUSY = 3,        // can't now (A/B: the other brain is down)
 } nl_ack_status_t;
 
 typedef struct NL_PACKED {
@@ -198,6 +204,7 @@ typedef enum {
                             // receiver (WLED preset id; eye preset index + 1)
     NL_BUMP_PALETTE = 4,    // WLED: arg = nl_slot_arg(slot, palette): that palette while held
     NL_BUMP_LAYER = 5,      // WLED: arg = nl_slot_arg(slot, preset): the slot shows that preset's look while held
+    NL_BUMP_AB = 7,         // controller (NL_TARGET_AB): show the Standby brain while held
     NL_BUMP_SCENE = 6,      // WLED: a preset, a palette and a layer look together while held (TAKE's
                             // preview of Standby): arg = nl_scene_arg(preset, layer), intensity =
                             // palette + 1 (0: leave it). NL_TARGET_WLED: the body (a body preset, the
@@ -591,6 +598,67 @@ uint16_t nl_crc16(const uint8_t *data, size_t len);
 // bytes of out; decode returns the decoded length, or 0 if malformed.
 size_t nl_cobs_encode(const uint8_t *in, size_t len, uint8_t *out);
 size_t nl_cobs_decode(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
+
+// ---------------------------------------------------------------- A/B brains
+// Two brains each send the controller a full picture over a wire (nl_pix_*), one
+// Live, one Standby with the next look already running. The controller decides
+// which reaches the LEDs. This is its switch: a cut or a crossfade on TAKE, Standby
+// shown while TAKE is held, and the other brain taking over if the Live one's
+// stream stops. Pure logic; the usermod feeds it frames and shows what it says.
+
+#define NL_AB_LOST_MS       500     // no frame for this long: that brain is down
+#define NL_AB_STATE_MS      500
+
+#define NL_AB_ENABLED       0x01    // the controller has two wires set up
+#define NL_AB_A_UP          0x02
+#define NL_AB_B_UP          0x04
+#define NL_AB_HOLDING       0x08    // Standby on the LEDs while TAKE is held
+
+typedef struct NL_PACKED {
+    uint8_t live;           // 0 brain A, 1 brain B
+    uint8_t showing;        // the brain on the LEDs now: Live, or Standby during a hold or a fade's end
+    uint8_t flags;          // NL_AB_*
+    uint8_t fps[2];         // frames a second on each wire
+    uint16_t takes, failovers;  // since the controller started
+} nl_ab_state_t;
+
+typedef struct {
+    uint8_t live;
+    bool hold, fading;
+    bool seen[2];
+    uint32_t frame_ms[2];
+    uint32_t fade_start_ms, fade_ms;
+    uint16_t takes, failovers;
+} nl_ab_t;
+
+typedef struct {
+    uint8_t show;           // the brain whose frame triggers a redraw
+    uint8_t from;           // during a crossfade: the brain it's fading from
+    uint8_t weight;         // how much of show: 255 no fade (ignore from)
+} nl_ab_output_t;
+
+void nl_ab_init(nl_ab_t *ab);
+void nl_ab_frame(nl_ab_t *ab, int brain, uint32_t now_ms);   // a whole frame arrived on that wire
+bool nl_ab_up(const nl_ab_t *ab, int brain, uint32_t now_ms);
+// Swap Live and Standby. False if the other brain is down (nothing changes). From a
+// hold there's no fade: Standby is already showing.
+bool nl_ab_take(nl_ab_t *ab, uint32_t fade_ms, uint32_t now_ms);
+// Show Standby while on (ignored if that brain is down).
+void nl_ab_hold(nl_ab_t *ab, bool on, uint32_t now_ms);
+// Call regularly: ends fades, drops a hold on a lost brain, fails over from a lost
+// Live brain. Returns true if what's Live or showing changed.
+bool nl_ab_tick(nl_ab_t *ab, uint32_t now_ms);
+nl_ab_output_t nl_ab_output(const nl_ab_t *ab, uint32_t now_ms);
+void nl_ab_state(const nl_ab_t *ab, uint32_t now_ms, const uint8_t fps[2], nl_ab_state_t *out);
+// dst = a * (255 - weight) + b * weight; n bytes. dst may be a or b.
+void nl_ab_mix(uint8_t *dst, const uint8_t *a, const uint8_t *b, size_t n, uint8_t weight);
+
+// Is this brain Standby, given its side (0 A, 1 B) and the last state heard? Before
+// any state is heard brain A acts as Live, brain B as Standby.
+static inline bool nl_ab_is_standby(int side, bool heard, const nl_ab_state_t *s)
+{
+    return heard ? s->live != side : side != 0;
+}
 
 // ---------------------------------------------------------------- wired pixels
 // The brain sends every LED, as the LEDs show it (brightness applied), to the

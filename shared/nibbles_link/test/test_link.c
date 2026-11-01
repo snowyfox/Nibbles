@@ -422,6 +422,76 @@ static void test_stream_gaps(void)
     CHECK(sizeof(nl_wled_stream_t) == 15, "stream message is 15 bytes (got %u)", (unsigned)sizeof(nl_wled_stream_t));
 }
 
+static void test_ab(void)
+{
+    nl_ab_t ab;
+    nl_ab_init(&ab);
+    CHECK(!nl_ab_take(&ab, 0, 100), "take: nothing to take to");
+    nl_ab_frame(&ab, 0, 100);
+    CHECK(nl_ab_up(&ab, 0, 100) && !nl_ab_up(&ab, 1, 100), "A up, B not");
+    CHECK(!nl_ab_take(&ab, 0, 100) && ab.live == 0, "take refused with B down");
+    nl_ab_hold(&ab, true, 100);
+    CHECK(!ab.hold, "hold refused with B down");
+    nl_ab_frame(&ab, 1, 110);
+    CHECK(nl_ab_output(&ab, 110).show == 0 && nl_ab_output(&ab, 110).weight == 255, "A on the LEDs");
+
+    // Hold: Standby while held, back after.
+    nl_ab_hold(&ab, true, 110);
+    CHECK(nl_ab_output(&ab, 110).show == 1, "hold shows B");
+    nl_ab_state_t st;
+    const uint8_t fps[2] = { 42, 41 };
+    nl_ab_state(&ab, 110, fps, &st);
+    CHECK(st.live == 0 && st.showing == 1 && (st.flags & NL_AB_HOLDING) && (st.flags & NL_AB_A_UP) && (st.flags & NL_AB_B_UP) && st.fps[1] == 41, "state in a hold");
+    nl_ab_hold(&ab, false, 120);
+    CHECK(nl_ab_output(&ab, 120).show == 0, "release: back to A");
+
+    // Take from a hold: no fade, Live is now B.
+    nl_ab_hold(&ab, true, 120);
+    CHECK(nl_ab_take(&ab, 500, 120) && ab.live == 1 && !ab.hold && !ab.fading && ab.takes == 1, "take from a hold is a cut");
+    CHECK(nl_ab_output(&ab, 120).show == 1 && nl_ab_output(&ab, 120).weight == 255, "B on the LEDs");
+
+    // Take with a crossfade.
+    nl_ab_frame(&ab, 0, 130);
+    nl_ab_frame(&ab, 1, 130);
+    CHECK(nl_ab_take(&ab, 400, 130) && ab.live == 0, "fade to A");
+    nl_ab_output_t o = nl_ab_output(&ab, 330);
+    CHECK(o.show == 0 && o.from == 1 && o.weight > 120 && o.weight < 135, "half way");
+    o = nl_ab_output(&ab, 130);
+    CHECK(o.weight == 0, "starts all B");
+    nl_ab_frame(&ab, 0, 530);
+    nl_ab_frame(&ab, 1, 530);
+    CHECK(!nl_ab_tick(&ab, 530) && !ab.fading && nl_ab_output(&ab, 530).weight == 255, "fade ends");
+
+    // Failover: Live's stream stops, the other takes over; a hold is dropped first.
+    nl_ab_hold(&ab, true, 530);
+    nl_ab_frame(&ab, 0, 1000);
+    CHECK(nl_ab_tick(&ab, 1100) && !ab.hold && ab.live == 0, "Standby lost in a hold: back to Live");
+    nl_ab_frame(&ab, 1, 1500);
+    CHECK(!nl_ab_tick(&ab, 1400), "Live still fresh");
+    CHECK(nl_ab_tick(&ab, 1600) && ab.live == 1 && ab.failovers == 1, "Live lost: B takes over");
+    CHECK(!nl_ab_tick(&ab, 1700), "and stays");
+    CHECK(!nl_ab_tick(&ab, 5000) && ab.live == 1, "both lost: nothing to do");
+    nl_ab_frame(&ab, 0, 6000);
+    CHECK(nl_ab_tick(&ab, 6000) && ab.live == 0 && ab.failovers == 2, "only A comes back: A");
+
+    // A clock wrap doesn't confuse it.
+    nl_ab_init(&ab);
+    nl_ab_frame(&ab, 0, 0xFFFFFFF0u);
+    CHECK(nl_ab_up(&ab, 0, 10), "up across the wrap");
+
+    uint8_t a[3] = { 0, 255, 100 }, b[3] = { 255, 0, 100 }, m[3];
+    nl_ab_mix(m, a, b, 3, 0);
+    CHECK(!memcmp(m, a, 3), "mix 0: all a");
+    nl_ab_mix(m, a, b, 3, 255);
+    CHECK(!memcmp(m, b, 3), "mix 255: all b");
+    nl_ab_mix(m, a, b, 3, 128);
+    CHECK(m[0] == 128 && m[1] == 127 && m[2] == 100, "mix half way");
+
+    nl_ab_state_t s = { .live = 1 };
+    CHECK(!nl_ab_is_standby(0, false, &s) && nl_ab_is_standby(1, false, &s), "before a state: A Live, B Standby");
+    CHECK(nl_ab_is_standby(0, true, &s) && !nl_ab_is_standby(1, true, &s), "state says B Live");
+}
+
 static void test_preview(void)
 {
     CHECK(sizeof(nl_preview_t) == NL_MAX_PAYLOAD, "a full preview chunk fills a packet (%u)", (unsigned)sizeof(nl_preview_t));
@@ -527,6 +597,7 @@ int main(void)
     test_slot_arg();
     test_pixels();
     test_preview();
+    test_ab();
     CHECK(sizeof(nl_time_t) == 4 && !nl_time_valid(0) && !nl_time_valid(12345) && nl_time_valid(1793566000), "the time packet");
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

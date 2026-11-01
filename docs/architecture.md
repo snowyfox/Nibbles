@@ -176,6 +176,15 @@ base's Standby only shows names. Plan:
   The controller mixes two 1,064-LED streams, which is cheap. Presets must
   stay in sync on both brains. Audio: one brain has the mic and sends WLED's
   audio sync to the other (or each has its own mic).
+- **Built 2026-11-01, not yet on real boards** (`wled/README.md`, "A/B brains"):
+  the controller takes both wires and keeps each brain's latest frame (`nl_ab_*`):
+  a cut or crossfade on a take, Standby shown while TAKE is held, and failover if
+  the Live brain's stream stops for 500 ms. The brain not on the LEDs sends as
+  `NL_ROLE_WLED_STANDBY`, so the eyes (which filter on `NL_ROLE_WLED`) need no
+  change. It keeps its eye settings until taken, ignores bumps and sends the
+  preview, so **the side view shows Standby, not Live**. The base keeps the Standby
+  brain matching its Standby scene (`ctl_standby_sync`, once a second). With one
+  brain up, everything works as before.
 - **Order**: (1) the wired brain-to-controller link (usermod and protocol
   built 2026-10-30, `wled/README.md` "Wire link"; sending and decoding tested
   on the bench, the controller receiving over a real wire not yet),

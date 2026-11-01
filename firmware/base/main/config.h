@@ -26,6 +26,7 @@
 
 #define CMD_TRIES            3
 #define CMD_TIMEOUT_MS       60
+#define TAKE_FADE_MS         0       // two brains: LATCH on a held TAKE is a cut; a fade would need a separate key
 
 // ---------------------------------------------------------------- power board
 // Its own I2C bus on the 3.49's header (J6 A2-A4 on the power board), dock

@@ -1318,6 +1318,8 @@ static void main_update(const display_status_t *s)
     if (s->keypads_found) lv_label_set_text_fmt(m.keys, "Keypads %d of %d", s->keypads_found, s->keypads_total);
     else lv_label_set_text(m.keys, "No keypads found");
     lv_label_set_text(m.log, s->log_text);
+    lv_label_set_text(m.live.title, s->ab_live < 0 ? "LIVE" : s->ab_live ? "LIVE B" : "LIVE A");
+    lv_label_set_text(m.stby.title, s->ab_live < 0 ? "STANDBY" : s->ab_live ? "STANDBY A" : "STANDBY B");
 }
 
 static void ui_build(void)
