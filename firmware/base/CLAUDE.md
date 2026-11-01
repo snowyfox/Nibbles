@@ -181,10 +181,13 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   made-up readings. It never formats a card that won't mount. At boot, if the
   clock is good, the last hour of the last five files refills the charge graph
   (real readings only). The clock chip's VDD is 3V3 and the board's VBAT through
-  two diodes, plus 1 uF (schematic): a cell on the battery connector keeps it
-  going with the power off, tested over a 30 s+ unplug with the prototype's
-  18650. With no cell it loses the time within seconds of power off: `time`
-  reads 0 and the graph starts empty until `tools/base_log.py PORT time` sets it.
+  two diodes, plus 1 uF (schematic): the prototype's 18650 on J1 keeps it going
+  with the power off (tested, a 30 s+ unplug). The final build has no 18650 (user,
+  2026-11-01), so it loses the time within seconds of power off unless something
+  else backs it up: `time` reads 0, `Log ... no clock` on the page, the graph
+  starts empty; the user accepts that. Don't put a tiny LiPo on J1: its ETA6098
+  charger is set to 1.2 A (R13 150K) and it charges whenever VBUS is up. A coin
+  cell would go through a series Schottky to C15's non-ground side, not on J1.
   Pulling the card and putting it back was tested too: a new file, the gap
   counted in `dropped`, up to 10 s of unsynced rows lost, no crash.
   `tools/base_log.py` sets the clock and fetches files over USB. Page 1 shows
