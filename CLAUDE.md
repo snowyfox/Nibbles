@@ -58,7 +58,8 @@ newline) to the base prototype's USB serial port: `next`, `prev`, `set N`,
 `key NAME [down|up]`, `keys`, `wled wifi on|off` (the controller joins `Nibbles` until it restarts), `sim on|fast|real|off`, `power`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `[eyes|wled] bump
 flash|black MS`, `[eyes|wled] bump preset N MS`, and `shot` (a screenshot of
 its display as base64 RGB565; see `firmware/base/CLAUDE.md`). WLED builds are
-in `wled/README.md`.
+in `wled/README.md`. To play the base's keys from a MIDI keyboard:
+`tools/midi_keys/` (`python3 tools/midi_keys/server.py`, then Chrome).
 
 ## Conventions
 

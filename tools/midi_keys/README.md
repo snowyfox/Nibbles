@@ -1,0 +1,60 @@
+# Base keys from a MIDI keyboard
+
+Plays the real base station's keypad from a MIDI keyboard (an M-Audio
+KeyStudio here), for testing before the keypads exist. No screen: a status
+page shows whether the keyboard and the base are connected, every base key
+with the MIDI keys mapped to it, and lets you remap them.
+
+```
+python3 tools/midi_keys/server.py        # then open http://localhost:8090/ in Chrome
+```
+
+Chrome asks once to allow MIDI. The tab must stay open (it can sit in the
+background): the page reads the keyboard through Web MIDI, which Safari
+doesn't have.
+
+## How it works
+
+- **The page** (`web/index.html`) reads the keyboard. A key press on a mapped
+  key sends that base key down, its release sends it up, so holding works
+  (bumps, TAKE, holding a number and tapping LATCH, holding UNLOCK). Requests
+  go one at a time so downs and ups arrive in order.
+- **`server.py`** (Python standard library only) writes `key NAME down|up` to
+  the base's USB serial console, the same command the simulator's "real base"
+  mode uses (see `CLAUDE.md`). It finds the base by its USB serial number
+  (`BASE_SERIAL`, its MAC) through `ioreg`, and again after a restart or a
+  replug; or give the port with `--base /dev/cu.usbmodemNNN`. Opening the
+  port can restart the base: give it ~15 s to find the radio channel.
+- The key names come from the firmware (`key_names` in
+  `firmware/base/main/controls.c`), so a new key appears on the page by itself.
+- The page shows each key's LED colour as the base lights it (`leds on`) and
+  the end of the base's log, where every key shows as `key NAME down|up`.
+- Closing the page, a base that goes away, or **Release all keys** lets go of
+  every key the bridge holds down.
+
+## Mapping
+
+- `mapping.default.json` is the default; your changes save to `mapping.json`
+  (not committed). **Reset to default mapping** goes back.
+- **Add key**, then press a piano key (or the sustain pedal) to map it; Esc
+  cancels. A MIDI key maps to one base key (mapping it again moves it). A
+  base key can have several MIDI keys: by default LATCH is on A3 and the
+  sustain pedal, and stays down while either is.
+- Notes are numbered as MIDI notes (60 = middle C, shown as C4). The
+  KeyStudio's octave buttons shift the notes it sends, so leave it at the
+  centre octave (or remap).
+- Sustain pedal: down at value 64 and above. A pedal with the opposite
+  polarity reads backwards (plug it in before powering the keyboard and most
+  keyboards detect that).
+
+Default layout (left hand targets and the switcher keys, right hand numbers):
+
+| MIDI | Key | | MIDI | Key |
+|---|---|---|---|---|
+| C3 (48) | ALL | | C4 (60) … C5 (72), white keys | 1 … 8 |
+| D3 (50) | BODY | | D5 (74) | FLASH |
+| E3 (52) | EYES | | E5 (76) | BLACKOUT |
+| F3 (53) | FINS | | F5 (77) | FINSENSOR |
+| G3 (55) | PAGE | | G5 (79) | UNLOCK |
+| A3 (57), sustain pedal | LATCH | | | |
+| B3 (59) | TAKE | | | |

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Base MIDI Keys</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --line: #dde2e8;
+  --ok: #1f8a4c; --bad: #c0392b; --warn: #b7791f; --accent: #6d4aff; --chip: #eef0f4; --press: #ffd84d;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a; --card: #1d2026; --text: #e7eaee; --muted: #9aa4b1; --line: #2e333b;
+    --ok: #3cc27a; --bad: #ff6b5b; --warn: #e0a83a; --accent: #9b85ff; --chip: #2a2e36; --press: #c9a400;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 0 0 12px; }
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+.state { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+.sub { color: var(--muted); font-size: 13px; margin-top: 4px; word-break: break-word; }
+select, button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.learning { background: var(--accent); color: #fff; border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+tr.pressed td { background: color-mix(in srgb, var(--press) 30%, transparent); }
+.name { font-weight: 700; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+.what { color: var(--muted); font-size: 13px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 9px; margin: 2px 4px 2px 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; white-space: nowrap; }
+.chip button { border: none; background: none; padding: 0 5px; color: var(--muted); line-height: 1; }
+.chip button:hover { color: var(--bad); }
+.none { color: var(--muted); font-style: italic; font-size: 13px; }
+.led { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); display: inline-block; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.toolbar .sub { margin: 0; }
+pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 12px; overflow-x: auto; max-height: 260px; overflow-y: auto; margin: 0; }
+.tablewrap { overflow-x: auto; }
+@media (max-width: 640px) { .what { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Base MIDI keys</h1>
+
+  <div class="status">
+    <div class="card">
+      <h2>MIDI keyboard</h2>
+      <div class="state"><span class="dot" id="midiDot"></span><span id="midiState">Starting…</span></div>
+      <div class="sub"><select id="midiIn" hidden></select></div>
+      <div class="sub" id="lastMidi">Last: nothing yet</div>
+    </div>
+    <div class="card">
+      <h2>Base station</h2>
+      <div class="state"><span class="dot" id="baseDot"></span><span id="baseState">Asking the bridge…</span></div>
+      <div class="sub" id="baseSub"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button id="allUp" title="Send key up for every key held on the base">Release all keys</button>
+    <button id="reset">Reset to default mapping</button>
+    <span class="sub" id="saveState"></span>
+  </div>
+
+  <div class="card tablewrap">
+    <table>
+      <thead><tr><th>Button</th><th>What it does</th><th>Keys</th><th></th><th>LED</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:16px 0 6px">Base log</h2>
+  <pre id="log"></pre>
+</main>
+
+<script>
+"use strict";
+// What each base key does (firmware/base/main/controls.h).
+const WHAT = {
+  "1": "Preset / palette / layer 1 (bump while held)", "2": "Number 2", "3": "Number 3", "4": "Number 4",
+  "5": "Number 5", "6": "Number 6", "7": "Number 7", "8": "Number 8",
+  all: "Target: the whole shark", body: "Target: body (WLED)", eyes: "Target: eyes", fins: "Target: fins",
+  page: "Tap: next page (1-8, 9-16, palettes, layers); hold + number: brightness",
+  latch: "Tap while a number or TAKE is held: keep it; held first + number: cue in Standby; + TAKE: Standby = Live",
+  blackout: "Blackout while held; with PAGE held: pole power (on USB-C)",
+  finsensor: "Tap: fins follow their real angle, or stay at the modelled angle",
+  take: "Held: show Standby; + tap LATCH: swap Standby and Live",
+  flash: "Flash while held",
+  unlock: "Hold 1 s: lock or unlock the keypad",
+};
+const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const CC_NAMES = { 1: "mod wheel", 64: "sustain pedal", 66: "sostenuto pedal", 67: "soft pedal" };
+
+let keys = [];               // the base's key names, in its order
+let mapping = { buttons: {} };
+let learning = null;         // key name waiting for a MIDI key
+let pressed = new Set();     // key names held down from MIDI
+let triggerDown = new Set(); // MIDI triggers held ("note:60")
+let midi = null, input = null;
+
+const $ = id => document.getElementById(id);
+const label = t => {
+  const [kind, n] = t.split(":"); const v = +n;
+  if (kind === "note") return `${NOTE[v % 12]}${Math.floor(v / 12) - 1} (${v})`;
+  return `${CC_NAMES[v] || "CC " + v}`;
+};
+
+// --- talking to the bridge, one request at a time so downs and ups stay in order
+let chain = Promise.resolve();
+function post(path, body) {
+  chain = chain.then(() => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) }).catch(() => null));
+  return chain;
+}
+
+function buttonsFor(trigger) {
+  return keys.filter(k => (mapping.buttons[k] || []).includes(trigger));
+}
+
+function setKey(name, down) {
+  if (down === pressed.has(name)) return;
+  down ? pressed.add(name) : pressed.delete(name);
+  post("/api/key", { name, down });
+  const row = document.querySelector(`tr[data-key="${CSS.escape(name)}"]`);
+  if (row) row.classList.toggle("pressed", down);
+}
+
+// A trigger went down or up: every button it is mapped to follows, but a
+// button with two triggers (a key and the pedal) stays down while either is.
+function trigger(t, down) {
+  $("lastMidi").textContent = `Last: ${label(t)} ${down ? "down" : "up"}` +
+    (buttonsFor(t).length ? ` → ${buttonsFor(t).join(", ")}` : " (not mapped)");
+  if (learning && down) {
+    for (const k of keys) mapping.buttons[k] = (mapping.buttons[k] || []).filter(x => x !== t);
+    (mapping.buttons[learning] = mapping.buttons[learning] || []).push(t);
+    learning = null;
+    save(); render();
+    return;
+  }
+  down ? triggerDown.add(t) : triggerDown.delete(t);
+  for (const k of buttonsFor(t)) {
+    const held = (mapping.buttons[k] || []).some(x => triggerDown.has(x));
+    setKey(k, held);
+  }
+}
+
+function onMidi(e) {
+  const [st, d1, d2] = e.data;
+  const type = st & 0xf0;
+  if (type === 0x90 && d2 > 0) trigger(`note:${d1}`, true);
+  else if (type === 0x80 || (type === 0x90 && d2 === 0)) trigger(`note:${d1}`, false);
+  else if (type === 0xb0) {
+    const t = `cc:${d1}`, down = d2 >= 64;
+    if (down !== triggerDown.has(t)) trigger(t, down);
+  }
+}
+
+function releaseAll() {
+  triggerDown.clear();
+  for (const k of [...pressed]) setKey(k, false);
+  post("/api/allup", {});
+}
+
+// --- the MIDI keyboard
+function pickInput() {
+  const sel = $("midiIn");
+  const inputs = midi ? [...midi.inputs.values()] : [];
+  if (input) input.onmidimessage = null;
+  input = null;
+  sel.innerHTML = "";
+  for (const i of inputs) {
+    const o = document.createElement("option");
+    o.value = i.id; o.textContent = i.name; sel.appendChild(o);
+  }
+  sel.hidden = inputs.length < 2;
+  if (!inputs.length) {
+    $("midiDot").className = "dot bad";
+    $("midiState").textContent = "No MIDI keyboard found";
+    releaseAll();
+    return;
+  }
+  let want = null;
+  try { want = localStorage.getItem("midiInput"); } catch (_) {}
+  input = inputs.find(i => i.id === sel.value && i.id === want) || inputs.find(i => i.id === want) ||
+          inputs.find(i => /keystudio|m-audio/i.test(i.name)) || inputs[0];
+  sel.value = input.id;
+  input.onmidimessage = onMidi;
+  $("midiDot").className = "dot ok";
+  $("midiState").textContent = `${input.name} connected`;
+}
+
+$("midiIn").onchange = () => {
+  try { localStorage.setItem("midiInput", $("midiIn").value); } catch (_) {}
+  releaseAll(); pickInput();
+};
+
+async function startMidi() {
+  if (!navigator.requestMIDIAccess) {
+    $("midiDot").className = "dot bad";
+    $("midiState").textContent = "This browser has no Web MIDI: use Chrome";
+    return;
+  }
+  try {
+    midi = await navigator.requestMIDIAccess();
+  } catch (e) {
+    $("midiDot").className = "dot bad";
+    $("midiState").textContent = "MIDI not allowed (allow it in the address bar, then reload)";
+    return;
+  }
+  midi.onstatechange = () => pickInput();
+  pickInput();
+}
+
+// --- the mapping table
+function render() {
+  const rows = $("rows");
+  rows.innerHTML = "";
+  for (const k of keys) {
+    const tr = document.createElement("tr");
+    tr.dataset.key = k;
+    if (pressed.has(k)) tr.classList.add("pressed");
+    const trig = mapping.buttons[k] || [];
+    tr.innerHTML = `<td class="name">${k.toUpperCase()}</td><td class="what"></td><td class="trig"></td>` +
+      `<td><button class="learn"></button></td><td><span class="led"></span></td>`;
+    tr.querySelector(".what").textContent = WHAT[k] || "";
+    const cell = tr.querySelector(".trig");
+    if (!trig.length) cell.innerHTML = `<span class="none">not mapped</span>`;
+    for (const t of trig) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = label(t);
+      const x = document.createElement("button");
+      x.textContent = "×"; x.title = "Remove";
+      x.onclick = () => {
+        mapping.buttons[k] = trig.filter(y => y !== t);
+        if (triggerDown.has(t)) { triggerDown.delete(t); setKey(k, false); }
+        save(); render();
+      };
+      chip.appendChild(x);
+      cell.appendChild(chip);
+    }
+    const b = tr.querySelector(".learn");
+    b.textContent = learning === k ? "Press a key… (Esc)" : "Add key";
+    b.classList.toggle("learning", learning === k);
+    b.onclick = () => { learning = learning === k ? null : k; render(); };
+    rows.appendChild(tr);
+  }
+  paintLeds();
+}
+
+let leds = [];
+function paintLeds() {
+  document.querySelectorAll("#rows tr").forEach((tr, i) => {
+    const c = leds[keys.indexOf(tr.dataset.key)];
+    const el = tr.querySelector(".led");
+    el.style.background = c && /^[0-9a-f]{6}$/i.test(c) ? "#" + c : "transparent";
+    el.title = c ? "#" + c : "no colour from the base";
+  });
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && learning) { learning = null; render(); }
+});
+
+let saveTimer = null;
+async function save() {
+  $("saveState").textContent = "Saving…";
+  const r = await fetch("/api/mapping", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(mapping) }).catch(() => null);
+  $("saveState").textContent = r && r.ok ? "Saved to tools/midi_keys/mapping.json" : "Could not save the mapping";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { $("saveState").textContent = ""; }, 4000);
+}
+
+$("reset").onclick = async () => {
+  if (!confirm("Replace the mapping with the default one?")) return;
+  releaseAll();
+  const r = await fetch("/api/mapping/default").then(r => r.json());
+  mapping = r.mapping; save(); render();
+};
+$("allUp").onclick = releaseAll;
+
+// --- the bridge's status, once a second
+let wasConnected = null;
+async function poll() {
+  let s = null;
+  try { s = await (await fetch("/api/status", { cache: "no-store" })).json(); } catch (_) {}
+  if (!s) {
+    $("baseDot").className = "dot bad";
+    $("baseState").textContent = "The bridge (server.py) is not running";
+    $("baseSub").textContent = "python3 tools/midi_keys/server.py";
+  } else {
+    const b = s.base;
+    $("baseDot").className = b.connected ? "dot ok" : "dot bad";
+    $("baseState").textContent = b.connected ? "Connected" : "Not connected";
+    $("baseSub").textContent = b.connected
+      ? `${b.port} (USB ${b.serial}) · ${b.sent} key events sent` + (b.held.length ? ` · held: ${b.held.join(", ")}` : "")
+      : `${b.error || ""} — looking for USB ${b.serial}`;
+    // a base that comes back has nothing held: forget what we think is held
+    if (wasConnected === false && b.connected) { triggerDown.clear(); pressed.clear(); render(); }
+    wasConnected = b.connected;
+    if (JSON.stringify(s.leds) !== JSON.stringify(leds)) { leds = s.leds; paintLeds(); }
+    const log = $("log");
+    const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = s.log.join("\n");
+    if (atEnd) log.scrollTop = log.scrollHeight;
+  }
+  setTimeout(poll, 1000);
+}
+
+// Closing the page lets go of every key it holds on the base.
+addEventListener("pagehide", () => navigator.sendBeacon("/api/allup", new Blob(["{}"], { type: "application/json" })));
+
+(async () => {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    keys = s.keys;
+    mapping = (await (await fetch("/api/mapping")).json()).mapping;
+  } catch (_) {
+    keys = ["1","2","3","4","5","6","7","8","all","body","eyes","fins","page","latch","blackout","finsensor","take","flash","unlock"];
+  }
+  render();
+  poll();
+  startMidi();
+})();
+</script>
+</body>
+</html>
