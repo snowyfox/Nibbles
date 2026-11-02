@@ -192,6 +192,13 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   goes down, everything falls back to the one-brain behaviour. Serial: `ab`, `ab take
   [MS]`, `ab hold on|off`, `wled wifi on|off` (2026-11-02: `NL_OP_CTL_WIFI` by the same
   route as a take: the controller, radio off, joins `Nibbles` until it restarts).
+  **A change made on the Standby brain itself** (its WLED page: preset, fin preset,
+  palette or layer look) becomes Standby's cue instead of being put back
+  (`ctl_standby_adopt`, 2026-11-02, while the base has no keys; the user may want it
+  reverted later): a report that changed since the last one and differs from the cue is
+  taken. A cue from the base still wins (the report hasn't moved). Serial `ab take` now
+  goes through `ctl_ab_take`, as TAKE + LATCH: Standby keeps Live as it was (before, the
+  sync pushed Standby's preset onto the brain that had just left Live).
 - **Simulated power data** (`main/power_sim.c`, host-tested; 2026-11-01). Two
   kinds: **fast** (every value and problem in 2 minutes) and **realistic**
   (festival nights in real time: pack, swapped-in VB99s, a USB-C charge at the

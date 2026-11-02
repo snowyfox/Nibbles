@@ -624,7 +624,17 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "ab hold on")) slot_start(SLOT_AB, NL_BUMP_AB, 0, 255);
         else if (!strcmp(line, "ab hold off")) slot_stop(SLOT_AB);
-        else if (!strncmp(line, "ab take", 7)) ab_take(atoi(line + 7));
+        else if (!strncmp(line, "ab take", 7)) {   // as TAKE + LATCH, so Standby keeps Live as it was
+            ctl_action_t acts[CTL_MAX_ACTIONS];
+            xSemaphoreTake(ctl_mutex, portMAX_DELAY);
+            const int n = ctl_ab_take(&ctl, acts);
+            xSemaphoreGive(ctl_mutex);
+            if (!n) ab_take(atoi(line + 7));
+            for (int i = 0; i < n; i++) {
+                if (acts[i].type == ACT_AB_TAKE) ab_take(atoi(line + 7));
+                else run_ctl_actions(&acts[i], 1);
+            }
+        }
         // The controller joins the Nibbles network (web page, OTA) until it restarts; computer only, no key
         else if (!strcmp(line, "wled wifi on")) ab_cmd(NL_OP_CTL_WIFI, 1, false);
         else if (!strcmp(line, "wled wifi off")) ab_cmd(NL_OP_CTL_WIFI, 0, false);
@@ -777,11 +787,15 @@ void app_main(void)
         ctl_action_t sync_acts[CTL_MAX_ACTIONS];
         int nsync = 0;
         static int64_t next_sync;
+        static ctl_standby_seen_t stby_seen;
+        if (!(ab_on && stby_all) || now < stby_sync_after) stby_seen.have = false;   // a swap or a gap: start the record again
         if (ab_on && stby_all && now >= next_sync && now >= stby_sync_after) {
             next_sync = now + 1000000;
             const ctl_scene_t rep = { .body = sw.preset, .eyes = 0, .fins = sf.fin_preset };
             ctl_layers_t rl;
             layers_from(&sl, &rl);
+            if (ctl_standby_adopt(&ctl, &rep, &rl, &stby_seen))
+                ESP_LOGI(TAG, "standby brain changed by itself: Standby now preset %d, fins %d", ctl.standby.body, ctl.standby.fins);
             nsync = ctl_standby_sync(&ctl, &rep, &rl, sync_acts);
             if (wfresh && sw.bri != w.bri && nsync < CTL_MAX_ACTIONS)
                 sync_acts[nsync++] = (ctl_action_t){ .type = ACT_BRIGHTNESS_STANDBY, .value = w.bri };

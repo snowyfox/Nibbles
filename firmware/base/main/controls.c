@@ -383,6 +383,13 @@ static void take_ab(ctl_t *c, out_t *o)
     c->layers = now_standby;
 }
 
+int ctl_ab_take(ctl_t *c, ctl_action_t *out)
+{
+    out_t o = { out, 0 };
+    if (c->ab) take_ab(c, &o);
+    return o.n;
+}
+
 static void take_release(ctl_t *c, out_t *o, bool commit)
 {
     if (commit && c->ab) {
@@ -544,6 +551,36 @@ int ctl_standby_sync(const ctl_t *c, const ctl_scene_t *rep, const ctl_layers_t 
         if (want.fins_layer >= 0 && rl->fins_layer >= 0 && rl->fins_layer != want.fins_layer) sync_emit(&o, ACT_SLOT_LOOK, NL_SLOT_FINS_OVER, want.fins_layer);
     }
     return o.n;
+}
+
+bool ctl_standby_adopt(ctl_t *c, const ctl_scene_t *rep, const ctl_layers_t *rl, ctl_standby_seen_t *last)
+{
+    if (!c->ab) { last->have = false; return false; }
+    if (!last->have) {
+        *last = (ctl_standby_seen_t){ *rep, *rl, true };
+        return false;
+    }
+    bool took = false;
+    ctl_layers_t *q = &c->standby_layers;
+    // A preset brings its own palette and looks: drop that side's cues.
+    if (rep->body > 0 && rep->body != last->scene.body && rep->body != c->standby.body) {
+        c->standby.body = rep->body;
+        q->body_pal = q->body_layer = -1;
+        took = true;
+    }
+    if (rep->fins >= 0 && rep->fins != last->scene.fins && rep->fins != c->standby.fins) {
+        c->standby.fins = rep->fins;
+        q->fins_pal = q->fins_layer = -1;
+        took = true;
+    }
+    ctl_layers_t want;
+    ctl_standby_layers(c, &want);
+#define ADOPT(f) \
+    if (rl->f >= 0 && last->layers.f >= 0 && rl->f != last->layers.f && want.f >= 0 && rl->f != want.f) { q->f = rl->f; took = true; }
+    ADOPT(body_pal) ADOPT(body_layer) ADOPT(fins_pal) ADOPT(fins_layer)
+#undef ADOPT
+    *last = (ctl_standby_seen_t){ *rep, *rl, true };
+    return took;
 }
 
 int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)

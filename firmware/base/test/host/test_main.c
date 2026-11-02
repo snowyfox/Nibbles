@@ -728,6 +728,44 @@ static void test_ab_take(void)
     CHECK(n == 2 && out[0].type == ACT_SLOT_PALETTE && out[0].value == 6 && out[0].standby &&
           out[1].type == ACT_SLOT_LOOK && out[1].value == 0);
 
+    // A change made on the Standby brain itself (its web page) becomes Standby's cue.
+    {
+        ctl_standby_seen_t seen = { .have = false };
+        ctl_layers_t r = { 6, 0, 0, 0 };
+        ctl_scene_t s = { .body = 1, .eyes = 0, .fins = 0 };
+        CHECK(!ctl_standby_adopt(&c, &s, &r, &seen) && seen.have);   // the first report only starts the record
+        CHECK(!ctl_standby_adopt(&c, &s, &r, &seen));                // nothing changed
+        r.body_pal = 9;                                              // its palette changed by itself
+        CHECK(ctl_standby_adopt(&c, &s, &r, &seen) && c.standby_layers.body_pal == 9);
+        CHECK(ctl_standby_sync(&c, &s, &r, out) == 0);               // and it stays
+        s.body = 5;                                                  // a preset picked on its page
+        r.body_pal = 2;                                              // with that preset's own palette
+        CHECK(ctl_standby_adopt(&c, &s, &r, &seen) && c.standby.body == 5 && c.standby_layers.body_pal == -1);
+        CHECK(ctl_standby_sync(&c, &s, &r, out) == 0);
+        // A cue from the base still wins: the report hasn't moved, so nothing is taken.
+        press(&c, KEY_LATCH);
+        press(&c, KEY_NUM2);
+        release(&c, KEY_NUM2);
+        release(&c, KEY_LATCH);
+        CHECK(c.standby.body == 2);
+        CHECK(!ctl_standby_adopt(&c, &s, &r, &seen) && c.standby.body == 2);
+        n = ctl_standby_sync(&c, &s, &r, out);
+        CHECK(n == 1 && out[0].type == ACT_PRESET && out[0].value == 2);
+        s.body = 2;                                                  // the brain follows: no change to take
+        CHECK(!ctl_standby_adopt(&c, &s, &r, &seen) && c.standby.body == 2);
+        // Back to the state the rest of the test expects.
+        c.standby.body = 1;
+        c.standby_layers.body_pal = 6;
+        c.standby_layers.body_layer = -1;
+        // "ab take" from USB serial trades places as TAKE + LATCH does, and back.
+        const ctl_t before = c;
+        n = ctl_ab_take(&c, out);
+        CHECK(n >= 1 && out[0].type == ACT_AB_TAKE && c.live.body == 1 && c.standby.body == 3);
+        n = ctl_ab_take(&c, out);
+        CHECK(n >= 1 && c.live.body == 3 && c.standby.body == 1);
+        c = before;
+    }
+
     // Eyes have no second brain: they change with TAKE by command, as ever.
     ctl_t e;
     ctl_init(&e, 0);

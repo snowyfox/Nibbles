@@ -140,6 +140,22 @@ int ctl_set_ab(ctl_t *c, bool on, ctl_action_t *out);
 // actions with standby set. A preset first, its palette and looks once it's reported
 // (a new preset brings its own), so call again after the next report.
 int ctl_standby_sync(const ctl_t *c, const ctl_scene_t *reported, const ctl_layers_t *reported_layers, ctl_action_t *out);
+// The Standby brain changed by itself (from its own web page, not the base): take that as
+// Standby's cue instead of putting it back (user, 2026-11-02, while the base has no keys).
+// *last holds the previous report; with *have_last false this one only starts the record.
+// Call before ctl_standby_sync, only while what the Standby brain reports is current.
+// True if it took something.
+typedef struct {
+    ctl_scene_t scene;
+    ctl_layers_t layers;
+    bool have;
+} ctl_standby_seen_t;
+bool ctl_standby_adopt(ctl_t *c, const ctl_scene_t *reported, const ctl_layers_t *reported_layers, ctl_standby_seen_t *last);
+
+// TAKE + LATCH without the keys (USB serial "ab take"): Live and Standby trade places as
+// the controller swaps the brains. Returns the actions (ACT_AB_TAKE among them); none
+// with one brain.
+int ctl_ab_take(ctl_t *c, ctl_action_t *out);
 
 // A key went down or up. Returns how many actions it wrote to out (at most CTL_MAX_ACTIONS).
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out);
