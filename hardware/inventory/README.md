@@ -17,3 +17,4 @@ Order log:
 | Date | Supplier | What |
 |---|---|---|
 | 2026-11-01 | LCSC | Everything in `hardware/fab/combined-LCSC-order.csv` as of that day (58 lines, about $242 before shipping). Not the optional cable parts. |
+| 2026-11-02 | JLCPCB | The bare PCBs: shipped 2026-11-02, DHL tracking 9816452192. |
