@@ -34,7 +34,11 @@ doesn't have.
   steps), so the page only follows it once it leaves a band of 4 steps
   either side of where it last settled (`SLIDER_H`), with the range stretched
   so the ends still reach 0 and 255. An untouched slider changes nothing:
-  move it to take over. The base sends it to the Live brain; the Standby brain follows
+  move it to take over. It also gives single wild readings (255, 145, 255
+  at rest): a reading more than 20 steps from the last (`SLIDER_JUMP`) is
+  only used if the next one agrees. Sends during a move are paced by the
+  slider's own messages; a timer only sends where it stopped, which Chrome
+  may delay up to about a second when the tab is hidden. The base sends it to the Live brain; the Standby brain follows
   within a second (the base's Standby sync). The base status card shows the
   brightness WLED reports. Other sliders or the mod wheel can be added to
   BRIGHTNESS with **Add slider**.

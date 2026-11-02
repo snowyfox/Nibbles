@@ -146,6 +146,10 @@ const BRI_MS = 80;           // brightness at most this often while the slider m
 // seen). Its output only moves when the raw value leaves a band of +-SLIDER_H
 // around it, and that output's range is stretched back to 0..127.
 const SLIDER_H = 4;
+// It also gives single wild readings (255 -> 145 -> 255 at rest). A move sends
+// every step, so a reading more than SLIDER_JUMP from the last one is held
+// until the next reading agrees with it, and dropped if it doesn't.
+const SLIDER_JUMP = 20;
 
 let keys = [];               // the base's key names, in its order
 let mapping = { buttons: {}, sliders: {} };
@@ -156,6 +160,8 @@ let triggerDown = new Set(); // MIDI triggers held ("note:60", "cc:64")
 let ccValue = {};            // last value of each CC
 let sliderOut = {};          // each slider's output after the hysteresis (0..127), once it has moved
 let sliderRaw0 = {};         // the first value heard: no output until the slider moves away from it
+let sliderLast = {};         // the last reading taken
+let sliderHeld = {};         // a far-off reading waiting for the next one to agree
 let midi = null, input = null;
 
 const $ = id => document.getElementById(id);
@@ -215,19 +221,23 @@ function trigger(t, down) {
   drawKeyboard();
 }
 
-// --- brightness from a slider: the newest value, at most every BRI_MS
+// --- brightness from a slider: the newest value, at most every BRI_MS.
+// Sent from the slider's own messages; the timer only sends where it stopped
+// (Chrome slows timers to about once a second in a hidden tab, which would
+// otherwise squash a whole move into one late send).
 let briWant = null, briSent = null, briTimer = null, briLast = 0;
+function briSend() {
+  clearTimeout(briTimer);
+  briTimer = null;
+  if (briWant === briSent) return;
+  briSent = briWant; briLast = performance.now();
+  post("/api/brightness", { value: briSent });
+}
 function brightness(v) {
   briWant = v;
-  if (briTimer) return;
-  const go = () => {
-    briTimer = null;
-    if (briWant === briSent) return;
-    briSent = briWant; briLast = performance.now();
-    post("/api/brightness", { value: briSent });
-  };
   const wait = BRI_MS - (performance.now() - briLast);
-  if (wait <= 0) go(); else briTimer = setTimeout(go, wait);
+  if (wait <= 0) briSend();
+  else if (!briTimer) briTimer = setTimeout(briSend, wait);
 }
 
 // The slider's position through the hysteresis band, 0..127, or null while it
@@ -251,6 +261,21 @@ function sliderValue(t, v) {
 function slider(t, value) {
   ccValue[t] = value;
   if (learning && isSlider(learning)) return assign(learning, t);
+  const held = sliderHeld[t];
+  if (held !== undefined) {
+    delete sliderHeld[t];
+    if (Math.abs(value - held) <= SLIDER_JUMP) { slider2(t, held); return slider2(t, value); }  // it was real
+  }
+  const last = sliderLast[t];
+  if (last !== undefined && Math.abs(value - last) > SLIDER_JUMP) {
+    sliderHeld[t] = value;           // wait for the next reading to agree
+    return;
+  }
+  slider2(t, value);
+}
+
+function slider2(t, value) {
+  sliderLast[t] = value;
   const s = slidersFor(t);
   const v = sliderValue(t, value);
   if (v !== null) {
