@@ -22,8 +22,17 @@ Where it is: Waveshare's board diagram puts the IPEX connector (#14) in the
 top-left corner near the mounting hole and the ceramic antenna (#2) on the
 left edge. In their photo, a short row of small parts runs from the chip
 toward the antenna and ends in one part set at an angle; that is probably
-R22. This is a guess from the photo, so check on the real board. The U.FL
-socket is fitted on our board (confirmed 2026-11-02).
+R22. The U.FL socket is fitted on our board (confirmed 2026-11-02).
+
+Our board under the microscope (2026-11-02) matches the schematic. From the
+chip's side: C28 (fitted, shunt), R23 (fitted, series), C27 (two empty pads,
+shunt), then R22 on a diagonal footprint with three pads. The incoming RF line
+reaches the shared pad at the point of the "<". The resistor bridges it to
+the outer pad whose trace runs to the ceramic antenna. The other outer pad is
+empty; its trace runs to a via, presumably to the U.FL. To switch: move the
+resistor so it bridges the shared pad and the empty pad (a quarter turn).
+**Check with a meter first:** the empty pad should beep to the U.FL centre
+pin, and the fitted outer pad to the ceramic antenna.
 
 Doing it:
 
