@@ -22,9 +22,8 @@ Where it is: Waveshare's board diagram puts the IPEX connector (#14) in the
 top-left corner near the mounting hole and the ceramic antenna (#2) on the
 left edge. In their photo, a short row of small parts runs from the chip
 toward the antenna and ends in one part set at an angle; that is probably
-R22. This is a guess from the photo, so check on the real board. Also check
-that the U.FL socket is actually fitted (it may be on the back, or only pads
-may be there) before buying a pigtail.
+R22. This is a guess from the photo, so check on the real board. The U.FL
+socket is fitted on our board (confirmed 2026-11-02).
 
 Doing it:
 
