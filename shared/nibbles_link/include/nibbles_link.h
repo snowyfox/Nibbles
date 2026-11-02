@@ -41,6 +41,7 @@ typedef enum {
     NL_MSG_PREVIEW = 16,    // a reduced picture for a preview screen, brain -> radio (nl_preview_t)
     NL_MSG_TIME = 17,       // the real time, from a board that knows it, every 10 s (nl_time_t)
     NL_MSG_AB = 18,         // which brain is Live, controller -> radio, 2 Hz and on a change (nl_ab_state_t)
+    NL_MSG_RELAY = 19,      // a radio packet a brain passes down its wire to the controller (nl_relay_*)
 } nl_msg_type_t;
 
 typedef enum {
@@ -162,6 +163,8 @@ typedef enum {
     NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
     NL_OP_SLOT_LOOK = 9,        // WLED: arg = nl_slot_arg(slot, preset): the slot takes that preset's look and comes on; preset 0 switches it off
     NL_OP_AB_TAKE = 11,         // controller: swap Live and Standby; arg = crossfade in ms (0: cut)
+    NL_OP_AB_TAKE_A = 12,       // controller: make brain A Live (safe to repeat, or to send by two routes); arg as above
+    NL_OP_AB_TAKE_B = 13,       // controller: the same for brain B
     NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
 } nl_op_t;
 
@@ -233,6 +236,8 @@ typedef struct {
     bool active;
     nl_bump_t bump;
     uint32_t last_ms;
+    uint16_t stopped_id;    // the press last ended by a STOP: a late copy of it (by another route) stays ignored
+    bool has_stopped;
 } nl_bump_rx_t;
 
 typedef enum {
@@ -643,6 +648,8 @@ bool nl_ab_up(const nl_ab_t *ab, int brain, uint32_t now_ms);
 // Swap Live and Standby. False if the other brain is down (nothing changes). From a
 // hold there's no fade: Standby is already showing.
 bool nl_ab_take(nl_ab_t *ab, uint32_t fade_ms, uint32_t now_ms);
+// Make that brain Live: true if it is now, doing nothing if it already was.
+bool nl_ab_take_to(nl_ab_t *ab, int brain, uint32_t fade_ms, uint32_t now_ms);
 // Show Standby while on (ignored if that brain is down).
 void nl_ab_hold(nl_ab_t *ab, bool on, uint32_t now_ms);
 // Call regularly: ends fades, drops a hold on a lost brain, fails over from a lost
@@ -696,6 +703,7 @@ typedef struct {
     bool overflow;
     uint8_t dec[NL_PIX_RAW_MAX];
     uint32_t chunks, frames, crc_errors, bad_chunks;  // frames: last chunks received
+    uint32_t relays;
 } nl_pix_parser_t;
 
 void nl_pix_parser_init(nl_pix_parser_t *p);
@@ -705,6 +713,28 @@ void nl_pix_parser_init(nl_pix_parser_t *p);
 // outside the frame) is counted and dropped; the parser resynchronises on
 // the next 0x00.
 bool nl_pix_parse_byte(nl_pix_parser_t *p, uint8_t byte, nl_pix_chunk_t *out);
+
+// ---------------------------------------------------------------- relay
+// The controller can do without its radio: a brain passes the radio packets meant
+// for it down the same wire, between the picture's chunks:
+//   COBS( NL_MSG_RELAY | version | sender's MAC (6) | the radio packet | CRC-16 (LE) ) 0x00
+#define NL_RELAY_HEADER_LEN 8
+#define NL_RELAY_PKT_MAX    250
+#define NL_RELAY_RAW_MAX    (NL_RELAY_HEADER_LEN + NL_RELAY_PKT_MAX + NL_CRC_LEN)
+#define NL_RELAY_FRAME_MAX  (NL_RELAY_RAW_MAX + NL_RELAY_RAW_MAX / 254 + 2)
+
+// out needs NL_RELAY_FRAME_MAX bytes. Returns the number of bytes, or 0 if it doesn't fit.
+size_t nl_relay_encode(const uint8_t mac[6], const uint8_t *pkt, size_t len, uint8_t *out, size_t cap);
+
+typedef struct {
+    const uint8_t *mac, *pkt;       // valid until the next parse call
+    size_t len;
+} nl_relay_t;
+
+typedef enum { NL_WIRE_NONE = 0, NL_WIRE_CHUNK, NL_WIRE_RELAY } nl_wire_event_t;
+
+// nl_pix_parse_byte for a wire that also carries relays.
+nl_wire_event_t nl_wire_parse_byte(nl_pix_parser_t *p, uint8_t byte, nl_pix_chunk_t *chunk, nl_relay_t *relay);
 
 #ifdef __cplusplus
 }

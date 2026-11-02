@@ -32,6 +32,12 @@ bool nl_ab_take(nl_ab_t *ab, uint32_t fade_ms, uint32_t now_ms)
     return true;
 }
 
+bool nl_ab_take_to(nl_ab_t *ab, int brain, uint32_t fade_ms, uint32_t now_ms)
+{
+    if (ab->live == (brain & 1)) return true;
+    return nl_ab_take(ab, fade_ms, now_ms);
+}
+
 void nl_ab_hold(nl_ab_t *ab, bool on, uint32_t now_ms)
 {
     if (on && !nl_ab_up(ab, !ab->live, now_ms)) return;

@@ -312,6 +312,8 @@ class NibblesUsermod : public Usermod {
     int8_t wirePinUp = -1;               // the pin the UART runs on now
     uint32_t wireBaudUp = 0;
     bool wireRx = false, wireRecheck = true;
+    bool radioOff = false;               // setting, on the display: take nothing from the radio, only from the wires
+    uint32_t relayRx = 0, relayTx = 0;
     const char *wireNote = "";           // why it isn't running, for the Info page
     volatile bool frameShown = false;    // WLED showed a frame since we last sent one
     uint8_t *wireBuf = nullptr;          // one encoded chunk (TX) or a read block (RX)
@@ -1259,7 +1261,17 @@ class NibblesUsermod : public Usermod {
         avail -= min(avail, (size_t)n);
         for (int i = 0; i < n; i++) {
           nl_pix_chunk_t ch;
-          if (nl_pix_parse_byte(w.parser, wireBuf[i], &ch)) wireChunk(input, ch, now);
+          nl_relay_t relay;
+          const nl_wire_event_t ev = nl_wire_parse_byte(w.parser, wireBuf[i], &ch, &relay);
+          if (ev == NL_WIRE_CHUNK) wireChunk(input, ch, now);
+          else if (ev == NL_WIRE_RELAY && relay.len <= sizeof(RxItem::data)) {
+            RxItem it;
+            memcpy(it.mac, relay.mac, 6);
+            it.len = relay.len;
+            memcpy(it.data, relay.pkt, relay.len);
+            relayRx++;
+            handleFrom(it, true);
+          }
         }
       }
     }
@@ -1289,6 +1301,17 @@ class NibblesUsermod : public Usermod {
         for (int i = 0; i < 2; i++) if (wireIn[i].pinUp >= 0) wireReceive(i, now);
       } else if (wirePinUp >= 0) {
         wireSend(now);
+      }
+    }
+
+    // On a brain: what the controller needs goes down the wire too, so it can do without its radio.
+    void wireRelay(const RxItem &it) {
+      if (wirePinUp < 0) return;
+      uint8_t out[NL_RELAY_FRAME_MAX];
+      const size_t n = nl_relay_encode(it.mac, it.data, it.len, out, sizeof(out));
+      if (n) {
+        uart_write_bytes(WIRE_UART, (const char *)out, n);
+        relayTx++;
       }
     }
 
@@ -1346,6 +1369,14 @@ class NibblesUsermod : public Usermod {
       return NL_ACK_OK;
     }
 
+    uint8_t abTakeTo(int brain, int fade_ms) {
+      if (!abOn) return NL_ACK_UNSUPPORTED;
+      const bool was = ab.live;
+      if (!nl_ab_take_to(&ab, brain, fade_ms > 0 ? (uint32_t)fade_ms : 0, millis())) return NL_ACK_BUSY;
+      if ((bool)ab.live != was) abDirty = true;
+      return NL_ACK_OK;
+    }
+
     void wireInfoIn(JsonArray &wa, int i) {
       const WireIn &w = wireIn[i];
       char buf[170];
@@ -1378,10 +1409,14 @@ class NibblesUsermod : public Usermod {
                    ab.takes, ab.failovers);
           wa.add(buf);
         }
+        {
+          snprintf(buf, sizeof(buf), "relayed from the brains: %lu messages%s", (unsigned long)relayRx, radioOff ? "; radio input off" : "");
+          wa.add(buf);
+        }
         return;
       }
       if (abSide >= 0) {
-        snprintf(buf, sizeof(buf), "Brain %c, %s%s", 'A' + abSide, abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)");
+        snprintf(buf, sizeof(buf), "Brain %c, %s%s; %lu messages relayed", 'A' + abSide, abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)", (unsigned long)relayTx);
         wa.add(buf);
       }
       if (wirePinUp < 0) {
@@ -1960,12 +1995,27 @@ class NibblesUsermod : public Usermod {
       else if (finPreset && !finBumpOn && !finSceneOn && now - panelOffSince > 500) finPreset = 0;
     }
 
-    void handle(const RxItem &it) {
+    void handle(const RxItem &it) { handleFrom(it, false); }
+
+    void handleFrom(const RxItem &it, bool fromWire) {
+      if (display && radioOff && !fromWire) return;   // the brains pass on what the controller needs
       nl_radio_hdr_t h;
       const uint8_t *pl;
       size_t len;
       if (!nl_radio_parse(it.data, it.len, &h, &pl, &len)) return;
       rxCount++;
+      if (!display) {
+        if (h.type == NL_MSG_BATTERY && len == sizeof(nl_battery_t)) wireRelay(it);
+        else if (h.type == NL_MSG_BUMP && len == sizeof(nl_bump_t) && (((const nl_bump_t *)pl)->target & NL_TARGET_AB)) wireRelay(it);
+        else if (h.type == NL_MSG_CMD && len == sizeof(nl_cmd_t) && ((const nl_cmd_t *)pl)->target == NL_TARGET_AB) {
+          nl_cmd_t cmd;
+          memcpy(&cmd, pl, sizeof(cmd));
+          wireRelay(it);
+          const nl_ack_t ack = { cmd.id, (uint8_t)(wirePinUp >= 0 ? NL_ACK_OK : NL_ACK_UNSUPPORTED) };
+          send(it.mac, NL_MSG_ACK, &ack, sizeof(ack));   // "on its way": the base sees the result in NL_MSG_AB
+          return;
+        }
+      }
       if (h.type == NL_MSG_AB && len == sizeof(nl_ab_state_t)) {
         if (abSide >= 0 && !display) {
           memcpy(&abHeard, pl, sizeof(abHeard));
@@ -1983,10 +2033,10 @@ class NibblesUsermod : public Usermod {
         if (h.type == NL_MSG_CMD && len == sizeof(nl_cmd_t)) {
           nl_cmd_t cmd;
           memcpy(&cmd, pl, sizeof(cmd));
-          if (cmd.target != NL_TARGET_AB || cmd.op != NL_OP_AB_TAKE) return;
+          if (cmd.target != NL_TARGET_AB || (cmd.op != NL_OP_AB_TAKE && cmd.op != NL_OP_AB_TAKE_A && cmd.op != NL_OP_AB_TAKE_B)) return;
           const bool repeat = cmd.id == lastCmdId && memcmp(it.mac, lastCmdMac, 6) == 0;
           static uint8_t lastStatus = NL_ACK_OK;
-          if (!repeat) lastStatus = abTake(cmd.arg);
+          if (!repeat) lastStatus = cmd.op == NL_OP_AB_TAKE ? abTake(cmd.arg) : abTakeTo(cmd.op == NL_OP_AB_TAKE_B, cmd.arg);
           lastCmdId = cmd.id;
           memcpy(lastCmdMac, it.mac, 6);
           const nl_ack_t ack = { cmd.id, lastStatus };
@@ -2381,6 +2431,7 @@ class NibblesUsermod : public Usermod {
       top[F("fin_follow")] = finFollowOn;          // fin LEDs follow the fins' angle
       top[F("wire_pin")] = wirePin;                // wire link: TX on the brain, RX on the display; -1 = off
       top[F("wire_baud")] = wireBaud;
+      top[F("radio_off")] = radioOff;              // on the display: commands and battery only through the brains' wires
       top[F("wire_pin_b")] = wirePinB;             // on the display: the second brain's wire; -1 = one brain
       top[F("ab_side")] = abSide;                  // on a brain: 0 A, 1 B; -1 = no A/B
       top[F("preview")] = previewOn;               // preview stream for a preview screen
@@ -2405,6 +2456,7 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("fin_follow")], finFollowOn, true);
       complete &= getJsonValue(top[F("wire_pin")], wirePin, (int8_t)-1);
       complete &= getJsonValue(top[F("wire_baud")], wireBaud, (uint32_t)NL_PIX_BAUD);
+      complete &= getJsonValue(top[F("radio_off")], radioOff, false);
       complete &= getJsonValue(top[F("wire_pin_b")], wirePinB, (int8_t)-1);
       complete &= getJsonValue(top[F("ab_side")], abSide, (int8_t)-1);
       if (wireBaud < 9600 || wireBaud > 5000000) wireBaud = NL_PIX_BAUD;

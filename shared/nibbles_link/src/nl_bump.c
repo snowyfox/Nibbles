@@ -13,9 +13,12 @@ nl_bump_event_t nl_bump_rx_message(nl_bump_rx_t *rx, const nl_bump_t *b, uint32_
     if (b->phase == NL_BUMP_STOP) {
         if (!same) return NL_BUMP_EV_NONE;  // a stop for something already over
         rx->active = false;
+        rx->stopped_id = b->id;
+        rx->has_stopped = true;
         return NL_BUMP_EV_END;
     }
     if (b->phase != NL_BUMP_START && b->phase != NL_BUMP_HOLD) return NL_BUMP_EV_NONE;
+    if (rx->has_stopped && rx->stopped_id == b->id) return NL_BUMP_EV_NONE;  // arrived after its own STOP
     if (same) {
         rx->last_ms = now_ms;  // keepalive (or a repeated start)
         return NL_BUMP_EV_NONE;

@@ -422,6 +422,77 @@ static void test_stream_gaps(void)
     CHECK(sizeof(nl_wled_stream_t) == 15, "stream message is 15 bytes (got %u)", (unsigned)sizeof(nl_wled_stream_t));
 }
 
+static void test_relay(void)
+{
+    const uint8_t mac[6] = { 1, 2, 3, 0, 5, 6 };
+    uint8_t pkt[250], one[NL_RELAY_FRAME_MAX], pix[NL_PIX_FRAME_MAX], rgb[30] = { 0 }, wire[2000];
+    for (size_t i = 0; i < sizeof(pkt); i++) pkt[i] = (uint8_t)i;
+    size_t n = 0;
+    size_t k = nl_pix_encode(1, 0, 20, false, rgb, 10, pix, sizeof(pix));
+    memcpy(wire + n, pix, k); n += k;
+    k = nl_relay_encode(mac, pkt, sizeof(pkt), one, sizeof(one));
+    CHECK(k > 0, "relay encodes");
+    memcpy(wire + n, one, k); n += k;
+    k = nl_pix_encode(1, 10, 20, true, rgb, 10, pix, sizeof(pix));
+    memcpy(wire + n, pix, k); n += k;
+    nl_pix_parser_t p;
+    nl_pix_parser_init(&p);
+    int chunks = 0, relays = 0;
+    bool same = false;
+    for (size_t i = 0; i < n; i++) {
+        nl_pix_chunk_t ch;
+        nl_relay_t r;
+        const nl_wire_event_t ev = nl_wire_parse_byte(&p, wire[i], &ch, &r);
+        if (ev == NL_WIRE_CHUNK) chunks++;
+        if (ev == NL_WIRE_RELAY) {
+            relays++;
+            same = r.len == sizeof(pkt) && !memcmp(r.mac, mac, 6) && !memcmp(r.pkt, pkt, sizeof(pkt));
+        }
+    }
+    CHECK(chunks == 2 && relays == 1, "a relay between a picture's chunks costs neither");
+    CHECK(same, "the relay arrives whole, with its sender");
+    CHECK(p.crc_errors == 0 && p.bad_chunks == 0, "no errors");
+    k = nl_relay_encode(mac, pkt, 40, one, sizeof(one));
+    one[12] ^= 0x55;
+    nl_pix_parser_init(&p);
+    relays = 0;
+    for (size_t i = 0; i < k; i++) {
+        nl_pix_chunk_t ch;
+        nl_relay_t r;
+        relays += nl_wire_parse_byte(&p, one[i], &ch, &r) == NL_WIRE_RELAY;
+    }
+    CHECK(relays == 0, "a corrupt relay is dropped");
+    CHECK(nl_relay_encode(mac, pkt, 0, one, sizeof(one)) == 0, "an empty relay is refused");
+    CHECK(nl_relay_encode(mac, pkt, 251, one, sizeof(one)) == 0, "an oversized relay is refused");
+
+    // The same press arriving by several routes
+    nl_bump_rx_t rx;
+    nl_bump_rx_init(&rx);
+    nl_bump_t b = { .id = 7, .target = NL_TARGET_AB, .action = NL_BUMP_AB, .phase = NL_BUMP_START };
+    CHECK(nl_bump_rx_message(&rx, &b, 0) == NL_BUMP_EV_BEGIN, "first copy begins");
+    CHECK(nl_bump_rx_message(&rx, &b, 1) == NL_BUMP_EV_NONE, "second copy does nothing");
+    b.phase = NL_BUMP_STOP;
+    CHECK(nl_bump_rx_message(&rx, &b, 2) == NL_BUMP_EV_END, "stop ends it");
+    CHECK(nl_bump_rx_message(&rx, &b, 3) == NL_BUMP_EV_NONE, "second stop does nothing");
+    b.phase = NL_BUMP_START;
+    CHECK(nl_bump_rx_message(&rx, &b, 4) == NL_BUMP_EV_NONE, "a start arriving after its stop doesn't restart it");
+    b.phase = NL_BUMP_HOLD;
+    CHECK(nl_bump_rx_message(&rx, &b, 5) == NL_BUMP_EV_NONE, "nor does a late hold");
+    b.id = 8;
+    b.phase = NL_BUMP_START;
+    CHECK(nl_bump_rx_message(&rx, &b, 6) == NL_BUMP_EV_BEGIN, "the next press still works");
+
+    // Take by name: safe to repeat
+    nl_ab_t ab;
+    nl_ab_init(&ab);
+    nl_ab_frame(&ab, 0, 1000);
+    nl_ab_frame(&ab, 1, 1000);
+    CHECK(nl_ab_take_to(&ab, 1, 0, 1000) && ab.live == 1 && ab.takes == 1, "take to B");
+    CHECK(nl_ab_take_to(&ab, 1, 0, 1001) && ab.live == 1 && ab.takes == 1, "repeating it changes nothing");
+    CHECK(nl_ab_take_to(&ab, 0, 0, 1002) && ab.live == 0 && ab.takes == 2, "take back to A");
+    CHECK(!nl_ab_take_to(&ab, 1, 0, 9000), "refused if that brain's wire is down");
+}
+
 static void test_ab(void)
 {
     nl_ab_t ab;
@@ -598,6 +669,7 @@ int main(void)
     test_pixels();
     test_preview();
     test_ab();
+    test_relay();
     CHECK(sizeof(nl_time_t) == 4 && !nl_time_valid(0) && !nl_time_valid(12345) && nl_time_valid(1793566000), "the time packet");
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

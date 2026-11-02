@@ -140,12 +140,13 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
     }
 }
 
-static void send_cmd_mac(const char *who, bool known, const uint8_t mac[6], nl_target_t target, nl_op_t op, int arg)
+// True if it was answered.
+static bool send_cmd_mac(const char *who, bool known, const uint8_t mac[6], nl_target_t target, nl_op_t op, int arg)
 {
     if (!known) {
         ESP_LOGW(TAG, "%s not heard yet; command not sent", who);
         display_event("%s not heard yet", who);
-        return;
+        return false;
     }
     nl_cmd_t cmd = { .target = target, .op = op, .arg = (int16_t)arg };
     uint8_t status = 0xFF;
@@ -154,16 +155,17 @@ static void send_cmd_mac(const char *who, bool known, const uint8_t mac[6], nl_t
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
                                  "auto presets", "reactivity", "fin following", "set layer", "set palette" };
-    const char *what = op == NL_OP_AB_TAKE ? "take" : op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
+    const char *what = op == NL_OP_AB_TAKE || op == NL_OP_AB_TAKE_A || op == NL_OP_AB_TAKE_B ? "take" : op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "%s %s %d: acked in %.1f ms (status %d)", who, what, arg, ms, status);
         display_event("%s %s: %s, %.1f ms", who, what, st, ms);
-    } else {
-        ESP_LOGW(TAG, "%s %s: no ack after %d tries", who, what, CMD_TRIES);
-        display_event("%s %s: no answer", who, what);
+        return status == NL_ACK_OK;
     }
+    ESP_LOGW(TAG, "%s %s: no ack after %d tries", who, what, CMD_TRIES);
+    display_event("%s %s: no answer", who, what);
+    return false;
 }
 
 static void send_cmd_to(nl_target_t target, nl_op_t op, int arg)
@@ -200,15 +202,28 @@ static void send_wled_both(nl_op_t op, int arg)
     if (ab_in_use) send_cmd_standby(op, arg);
 }
 
+// Through a brain, which passes it down its wire: the Live one, or Standby if that doesn't
+// answer, or the controller's own radio. "Make that brain Live", so a second route can't undo it.
 static void ab_take(int fade_ms)
 {
-    uint8_t mac[6];
+    uint8_t live[6], stby[6], ctrl[6];
     taskENTER_CRITICAL(&lock);
     const bool known = ab_us != 0;
-    memcpy(mac, ab_mac, 6);
+    const bool have_live = have_wled, have_stby = stby_wled_us != 0;
+    const nl_op_t op = ab_state.live ? NL_OP_AB_TAKE_A : NL_OP_AB_TAKE_B;
+    memcpy(live, wled_mac, 6);
+    memcpy(stby, stby_mac, 6);
+    memcpy(ctrl, ab_mac, 6);
     stby_sync_after = esp_timer_get_time() + 2000000;
     taskEXIT_CRITICAL(&lock);
-    send_cmd_mac("controller", known, mac, NL_TARGET_AB, NL_OP_AB_TAKE, fade_ms);
+    if (!known) {
+        ESP_LOGW(TAG, "controller not heard yet; take not sent");
+        display_event("controller not heard yet");
+        return;
+    }
+    if (have_live && send_cmd_mac("live brain", true, live, NL_TARGET_AB, op, fade_ms)) return;
+    if (have_stby && send_cmd_mac("standby brain", true, stby, NL_TARGET_AB, op, fade_ms)) return;
+    send_cmd_mac("controller", true, ctrl, NL_TARGET_AB, op, fade_ms);
 }
 
 static void send_preset(nl_op_t op) { send_cmd_to(NL_TARGET_EYES, op, 0); }

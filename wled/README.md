@@ -432,6 +432,13 @@ sorts them by role into its Live and Standby sharks.
   2 (receive) on each brain. The controller's usermod makes its access point lwIP's default
   route (`apDefaultRoute`), or the multicast goes nowhere. Both brains report "receiving";
   delay and reaction to music aren't measured yet.
+- **Relay (built 2026-11-01):** each brain passes what the controller needs down its wire,
+  between the picture's chunks (`nl_relay_*`): battery readings, A/B bumps, and takes, which
+  the base now sends to the Live brain (then Standby, then the controller's own radio) as
+  "make that brain Live" (`NL_OP_AB_TAKE_A`/`_B`), so a second route can't undo the first.
+  The brain's ack means "on its way"; the result shows in `NL_MSG_AB`. The controller's
+  `radio_off` setting ignores its radio input and only takes these. Its radio still sends
+  `NL_MSG_AB` and the Wi-Fi network; turning those off needs a wire back to the brains.
 - **Changing settings with `/json/cfg`:** send the whole `um.Nibbles` block too. A POST with
   `um` but no `Nibbles` resets every Nibbles setting to its default, live and on flash.
 - **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
