@@ -155,7 +155,7 @@ static bool send_cmd_mac(const char *who, bool known, const uint8_t mac[6], nl_t
     const float ms = (esp_timer_get_time() - t0) / 1000.0f;
     static const char *ops[] = { "?", "set preset", "next preset", "previous preset", "set brightness", "step brightness",
                                  "auto presets", "reactivity", "fin following", "set layer", "set palette" };
-    const char *what = op == NL_OP_AB_TAKE || op == NL_OP_AB_TAKE_A || op == NL_OP_AB_TAKE_B ? "take" : op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
+    const char *what = op == NL_OP_AB_TAKE || op == NL_OP_AB_TAKE_A || op == NL_OP_AB_TAKE_B ? "take" : op == NL_OP_CTL_WIFI ? "controller wifi" : op <= NL_OP_SLOT_PALETTE ? ops[op] : "?";
     static const char *statuses[] = { "ok", "unsupported", "bad preset", "busy" };
     const char *st = status < 4 ? statuses[status] : "?";
     if (err == ESP_OK) {
@@ -204,27 +204,29 @@ static void send_wled_both(nl_op_t op, int arg)
 
 // Through a brain, which passes it down its wire: the Live one, or Standby if that doesn't
 // answer, or the controller's own radio. "Make that brain Live", so a second route can't undo it.
-static void ab_take(int fade_ms)
+static void ab_cmd(nl_op_t op, int arg, bool take)
 {
     uint8_t live[6], stby[6], ctrl[6];
     taskENTER_CRITICAL(&lock);
     const bool known = ab_us != 0;
     const bool have_live = have_wled, have_stby = stby_wled_us != 0;
-    const nl_op_t op = ab_state.live ? NL_OP_AB_TAKE_A : NL_OP_AB_TAKE_B;
+    if (take) op = ab_state.live ? NL_OP_AB_TAKE_A : NL_OP_AB_TAKE_B;
     memcpy(live, wled_mac, 6);
     memcpy(stby, stby_mac, 6);
     memcpy(ctrl, ab_mac, 6);
-    stby_sync_after = esp_timer_get_time() + 2000000;
+    if (take) stby_sync_after = esp_timer_get_time() + 2000000;
     taskEXIT_CRITICAL(&lock);
     if (!known) {
-        ESP_LOGW(TAG, "controller not heard yet; take not sent");
+        ESP_LOGW(TAG, "controller not heard yet; command not sent");
         display_event("controller not heard yet");
         return;
     }
-    if (have_live && send_cmd_mac("live brain", true, live, NL_TARGET_AB, op, fade_ms)) return;
-    if (have_stby && send_cmd_mac("standby brain", true, stby, NL_TARGET_AB, op, fade_ms)) return;
-    send_cmd_mac("controller", true, ctrl, NL_TARGET_AB, op, fade_ms);
+    if (have_live && send_cmd_mac("live brain", true, live, NL_TARGET_AB, op, arg)) return;
+    if (have_stby && send_cmd_mac("standby brain", true, stby, NL_TARGET_AB, op, arg)) return;
+    send_cmd_mac("controller", true, ctrl, NL_TARGET_AB, op, arg);
 }
+
+static void ab_take(int fade_ms) { ab_cmd(NL_OP_AB_TAKE, fade_ms, true); }
 
 static void send_preset(nl_op_t op) { send_cmd_to(NL_TARGET_EYES, op, 0); }
 static void send_preset_index(int index) { send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, index); }
@@ -623,6 +625,9 @@ static void console_task(void *arg)
         else if (!strcmp(line, "ab hold on")) slot_start(SLOT_AB, NL_BUMP_AB, 0, 255);
         else if (!strcmp(line, "ab hold off")) slot_stop(SLOT_AB);
         else if (!strncmp(line, "ab take", 7)) ab_take(atoi(line + 7));
+        // The controller joins the Nibbles network (web page, OTA) until it restarts; computer only, no key
+        else if (!strcmp(line, "wled wifi on")) ab_cmd(NL_OP_CTL_WIFI, 1, false);
+        else if (!strcmp(line, "wled wifi off")) ab_cmd(NL_OP_CTL_WIFI, 0, false);
         else if (!strcmp(line, "eyepic off")) display_eye_test(-1, 0);
         else if (!strncmp(line, "eyepic ", 7)) {
             int preset = 0, state = 0;

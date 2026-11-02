@@ -453,6 +453,28 @@ sorts them by role into its Live and Standby sharks.
   `um` but no `Nibbles` resets every Nibbles setting to its default, live and on flash.
 - **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
 - A controller reboot starts with brain A Live.
+- **Controller radio off, brain A hosts `Nibbles` (built and tested 2026-11-02):**
+  - **Controller** `wifi_off`: at boot the usermod hides its network to join (in RAM; the
+    saved settings keep `Nibbles` and its password) and ESP-NOW stays off, and its own
+    access point is "button only" (`ap.behav` 3; the Bong69 has no button), so after WLED's
+    ~2 s boot scan the radio never starts. Everything comes through the wires. The base's
+    `wled wifi on` (USB serial only), a brain's `{"nibbles":{"ctlwifi":true}}`, or the buttons
+    on a brain's Info page send `NL_OP_CTL_WIFI` down a brain's wire: the controller joins
+    `Nibbles` (web page, OTA) until it restarts or gets `wled wifi off`. Tested: it joined at
+    4.3.2.3 with both wires running, and left again.
+  - **Brain A** hosts `Nibbles` on channel 1 (no network to join, `ap.behav` 2, the network's
+    name and password as its access point) and anchors the channel.
+  - **Brain B** joins it; its own access point is `Nibbles` on channel 1 too, `ap.behav` 3, and
+    `net_fallback` on: after 6 s without the network it hosts `Nibbles` itself (rather than
+    search every channel), and joins again once it hears A's anchor heartbeat (at least
+    10 s later). A brain sends the anchor flag only when joined or hosting, never while
+    searching. Tested by pausing A: the controller failed over at once, B hosted after
+    6 s, the base was off channel 1 for about 10 s in between, and B rejoined A within 10 s
+    of A's restart, with A back as Standby.
+  - **The brains rebroadcast `NL_MSG_AB`** from the return wire, so the base sees the switch
+    without the controller's radio. TAKE, hold and fade tested this way.
+  - While B hosts, its WLED settings show no network to join: don't save its Wi-Fi settings
+    then.
 
 ### Wire link (built 2026-10-30; sending tested, receiving not yet)
 The plan (`docs/architecture.md`, "Two brains and the Standby preview") puts

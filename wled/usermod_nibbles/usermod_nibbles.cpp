@@ -133,6 +133,8 @@
 #define WIRE_RX_BUF            8192   // ~40 ms at 2 Mbaud, for loop() hiccups
 #define WIRE_READ              512
 #define RET_TX_BUF             2048   // the return wire: A/B state and sound sync, ~3 KB/s
+#define NET_FALLBACK_MS        6000   // a brain without its network this long hosts it
+#define NET_REJOIN_MS          10000  // and hosts at least this long before trying the host again
 #define RET_RX_BUF             4096   // on a brain: ~20 ms of the return wire at 2 Mbaud
 #define WIRE_KEEPALIVE_MS      200    // resend while WLED shows nothing new (off, frozen)
 
@@ -329,6 +331,15 @@ class NibblesUsermod : public Usermod {
     float arLevel = 0, arLevelMax = 0;   // on a brain: the sound from the wire, for the Info page
     uint32_t arBeats = 0;
     int arSock = -1;
+    // Network without the controller: one brain hosts "Nibbles" (WLED: no network to join, its own
+    // network always on), the other joins it. The controller's radio stays off ("wifi_off").
+    bool wifiOff = false;                // setting, on the display: no radio; NL_OP_CTL_WIFI joins the network until restart
+    bool netFallback = false;            // setting, on a brain that joins the network: host it while the host is gone
+    bool ssidHidden = false, fallbackOn = false, ctlWifiOn = false;
+    char savedSsid[33] = "";
+    uint8_t savedApBehavior = AP_BEHAVIOR_BOOT_NO_CONN;
+    unsigned long netLostAt = 0, fallbackAt = 0, hostHeardAt = 0;
+    uint32_t fallbacks = 0;
     uint8_t ownMac[6] = {};
     const char *wireNote = "";           // why it isn't running, for the Info page
     volatile bool frameShown = false;    // WLED showed a frame since we last sent one
@@ -1437,6 +1448,20 @@ class NibblesUsermod : public Usermod {
       }
     }
 
+    // On a brain: NL_OP_CTL_WIFI down our wire, as if relayed from the base.
+    void sendCtlWifi(bool on) {
+      if (wirePinUp < 0) return;
+      nl_cmd_t cmd = {};
+      cmd.id = (uint16_t)(esp_random() | 1);
+      cmd.target = NL_TARGET_AB;
+      cmd.op = NL_OP_CTL_WIFI;
+      cmd.arg = on ? 1 : 0;
+      RxItem it;
+      esp_read_mac(it.mac, ESP_MAC_WIFI_STA);
+      it.len = nl_radio_build(it.data, sizeof(it.data), NL_MSG_CMD, seq++, NL_ROLE_WLED, NL_SIDE_NONE, &cmd, sizeof(cmd));
+      if (it.len) wireRelay(it);
+    }
+
     // ---- A/B brains
     bool abStandby() const { return abSide >= 0 && nl_ab_is_standby(abSide, abHeardAny, &abHeard); }
 
@@ -1536,6 +1561,10 @@ class NibblesUsermod : public Usermod {
           snprintf(buf, sizeof(buf), "relayed from the brains: %lu messages%s", (unsigned long)relayRx, radioOff ? "; radio input off" : "");
           wa.add(buf);
         }
+        if (wifiOff) {
+          snprintf(buf, sizeof(buf), "radio %s", ctlWifiOn ? (WLED_CONNECTED ? "on until restart: joined the network" : "on until restart: joining the network") : "off");
+          wa.add(buf);
+        }
         if (retPin >= 0) {
           if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running (pin in use, or wire A not up)", retPin);
           else snprintf(buf, sizeof(buf), "return wire out on GPIO %d: %lu messages, %lu of them sound", retPinUp, (unsigned long)retTx, (unsigned long)arOut);
@@ -1547,6 +1576,14 @@ class NibblesUsermod : public Usermod {
         snprintf(buf, sizeof(buf), "Brain %c, %s%s; %lu messages relayed", 'A' + abSide, abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)", (unsigned long)relayTx);
         wa.add(buf);
       }
+      if (netFallback) {
+        snprintf(buf, sizeof(buf), "network: %s; hosted it %lu times", fallbackOn ? "hosting it (the host is gone)" : WLED_CONNECTED ? "joined" : "joining",
+                 (unsigned long)fallbacks);
+        wa.add(buf);
+      }
+      if (wirePinUp >= 0 && retPinUp >= 0)
+        wa.add(F("controller's radio: <button class=\"btn btn-xs\" onclick=\"requestJson({nibbles:{ctlwifi:true}});\">join the network</button> "
+                 "<button class=\"btn btn-xs\" onclick=\"requestJson({nibbles:{ctlwifi:false}});\">off</button> (until it restarts)"));
       if (retPin >= 0) {
         if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running", retPin);
         else {
@@ -1578,6 +1615,7 @@ class NibblesUsermod : public Usermod {
     // the "sent" callback, and a send that fails (e.g. while Wi-Fi is still
     // connecting in station mode) never gets one. That hung WLED on the shark.
     void send(const uint8_t *mac, uint8_t type, const void *payload, size_t len) {
+      if (!radioUp()) return;
       uint8_t pkt[NL_RADIO_MAX];
       const size_t n = nl_radio_build(pkt, sizeof(pkt), type, seq++, abStandby() ? NL_ROLE_WLED_STANDBY : NL_ROLE_WLED, NL_SIDE_NONE, payload, len);
       if (!n) return;
@@ -1598,7 +1636,9 @@ class NibblesUsermod : public Usermod {
       hb.fw = NIBBLES_WLED_FW;
       hb.uptime_ms = millis();
       hb.fps_x10 = strip.getFps() * 10;
-      hb.flags = anchor ? NL_HB_ANCHOR : 0;
+      // Not while searching for a network: that moves the radio across channels, and the
+      // base and eyes would follow it.
+      hb.flags = anchor && (WLED_CONNECTED || !isWiFiConfigured()) ? NL_HB_ANCHOR : 0;
       hb.channel = WiFi.channel();
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_HEARTBEAT, &hb, sizeof(hb));
     }
@@ -2160,11 +2200,15 @@ class NibblesUsermod : public Usermod {
           return;
         }
       }
+      if (h.type == NL_MSG_HEARTBEAT && !display) heardAnchor(h, pl, len);
       if (h.type == NL_MSG_AB && len == sizeof(nl_ab_state_t)) {
         if (abSide >= 0 && !display) {
           memcpy(&abHeard, pl, sizeof(abHeard));
           abHeardAny = true;
-          if (fromWire) abWireAt = millis();
+          if (fromWire) {   // the controller's radio may be off: tell the base ourselves
+            abWireAt = millis();
+            send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AB, pl, len);
+          }
         }
         return;
       }
@@ -2178,10 +2222,11 @@ class NibblesUsermod : public Usermod {
         if (h.type == NL_MSG_CMD && len == sizeof(nl_cmd_t)) {
           nl_cmd_t cmd;
           memcpy(&cmd, pl, sizeof(cmd));
-          if (cmd.target != NL_TARGET_AB || (cmd.op != NL_OP_AB_TAKE && cmd.op != NL_OP_AB_TAKE_A && cmd.op != NL_OP_AB_TAKE_B)) return;
+          if (cmd.target != NL_TARGET_AB || (cmd.op != NL_OP_AB_TAKE && cmd.op != NL_OP_AB_TAKE_A && cmd.op != NL_OP_AB_TAKE_B && cmd.op != NL_OP_CTL_WIFI)) return;
           const bool repeat = cmd.id == lastCmdId && memcmp(it.mac, lastCmdMac, 6) == 0;
           static uint8_t lastStatus = NL_ACK_OK;
-          if (!repeat) lastStatus = cmd.op == NL_OP_AB_TAKE ? abTake(cmd.arg) : abTakeTo(cmd.op == NL_OP_AB_TAKE_B, cmd.arg);
+          if (!repeat) lastStatus = cmd.op == NL_OP_CTL_WIFI ? ctlWifi(cmd.arg != 0)
+                                  : cmd.op == NL_OP_AB_TAKE ? abTake(cmd.arg) : abTakeTo(cmd.op == NL_OP_AB_TAKE_B, cmd.arg);
           lastCmdId = cmd.id;
           memcpy(lastCmdMac, it.mac, 6);
           const nl_ack_t ack = { cmd.id, lastStatus };
@@ -2256,7 +2301,77 @@ class NibblesUsermod : public Usermod {
       nl_ar_init(&arState);
       nl_stream_gaps_init(&streamGaps);
       // The shark needs ESP-NOW; switch it on before WLED starts networking.
-      if (enabled && !enableESPNow) enableESPNow = true;
+      // Not on a controller with its radio off: no network to join and no access point keeps
+      // WLED from ever starting the radio after its boot scan.
+      if (display && wifiOff) {
+        enableESPNow = false;
+        wifiHide(AP_BEHAVIOR_BUTTON_ONLY);
+      } else if (enabled && !enableESPNow) {
+        enableESPNow = true;
+      }
+    }
+
+    // WLED joins a network only if one is configured, and opens its own as apBehavior says.
+    // Hide the configured one (in RAM: the saved settings don't change) and say how the
+    // access point behaves meanwhile; wifiRestore() puts both back. Either reconnects.
+    void wifiHide(uint8_t apMode) {
+      if (!ssidHidden) {
+        strlcpy(savedSsid, multiWiFi[0].clientSSID, sizeof(savedSsid));
+        savedApBehavior = apBehavior;
+        ssidHidden = true;
+      }
+      multiWiFi[0].clientSSID[0] = 0;
+      apBehavior = apMode;
+      forceReconnect = true;
+    }
+
+    void wifiRestore() {
+      if (!ssidHidden) return;
+      strlcpy(multiWiFi[0].clientSSID, savedSsid, sizeof(multiWiFi[0].clientSSID));
+      apBehavior = savedApBehavior;
+      ssidHidden = false;
+      forceReconnect = true;
+    }
+
+    // On the display: NL_OP_CTL_WIFI.
+    uint8_t ctlWifi(bool on) {
+      if (!display || !wifiOff) return NL_ACK_UNSUPPORTED;
+      if (on == ctlWifiOn) return NL_ACK_OK;
+      ctlWifiOn = on;
+      if (on) wifiRestore();
+      else wifiHide(AP_BEHAVIOR_BUTTON_ONLY);
+      return NL_ACK_OK;
+    }
+
+    // On a brain that joins the network: if it's gone for a while, host it (same name,
+    // password and channel, from WLED's access point settings) rather than search every
+    // channel, which drags the base and eyes along. Join again once the host is heard.
+    void netLoop(unsigned long now) {
+      if (display || !netFallback) return;
+      if (!fallbackOn) {
+        if (WLED_CONNECTED || ssidHidden) { netLostAt = 0; return; }
+        if (!netLostAt) { netLostAt = now; return; }
+        if (now - netLostAt < NET_FALLBACK_MS) return;
+        fallbackOn = true;
+        fallbackAt = now;
+        hostHeardAt = 0;
+        fallbacks++;
+        wifiHide(AP_BEHAVIOR_ALWAYS);
+        return;
+      }
+      if (hostHeardAt && now - hostHeardAt < 2000 && now - fallbackAt > NET_REJOIN_MS) {
+        fallbackOn = false;
+        netLostAt = now;   // a host that doesn't let us in: back to hosting after NET_FALLBACK_MS
+        wifiRestore();
+      }
+    }
+
+    // Another brain's heartbeat that anchors the channel: the host, if we're standing in for it.
+    void heardAnchor(const nl_radio_hdr_t &h, const uint8_t *pl, size_t len) {
+      if (!fallbackOn || len != sizeof(nl_heartbeat_t) || h.role == NL_ROLE_BASE) return;
+      nl_heartbeat_t hb;
+      memcpy(&hb, pl, sizeof(hb));
+      if ((hb.flags & NL_HB_ANCHOR) && hb.role == NL_ROLE_WLED) hostHeardAt = millis();
     }
 
     void loop() override {
@@ -2281,8 +2396,9 @@ class NibblesUsermod : public Usermod {
       presetQueueLoop(millis());
       trackPresets(millis());
       if (!display) slotLoop();
-      if (!radioUp()) return;
+      netLoop(millis());
       for (;;) {
+        if (!radioUp()) break;
         RxItem it;
         bool got = false;
         portENTER_CRITICAL(&rxLock);
@@ -2296,8 +2412,9 @@ class NibblesUsermod : public Usermod {
         handle(it);
       }
       if (display) {   // listening only (battery readings, in handle()); just the stream reports out
-        abLoop();
+        abLoop();      // with the radio off too: the wires and the return wire carry it all
         retAudio(millis());
+        if (!radioUp()) return;
         apDefaultRoute();
         if (millis() - lastStream >= 1000) {
           lastStream = millis();
@@ -2305,6 +2422,7 @@ class NibblesUsermod : public Usermod {
         }
         return;
       }
+      if (!radioUp()) return;
       bumpEvent(nl_bump_rx_tick(&bumps, millis()));  // a lost STOP still releases
       finBumpEvent(nl_bump_rx_tick(&finBumps, millis()));
       eyeSendLoop(millis());
@@ -2528,6 +2646,13 @@ class NibblesUsermod : public Usermod {
       // {"nibbles":{"abtake":ms}}, {"nibbles":{"abhold":true|false}}: the A/B switch, on the display (tests)
       if (!root[F("nibbles")][F("abtake")].isNull()) abTake(root[F("nibbles")][F("abtake")].as<int>());
       if (!root[F("nibbles")][F("abhold")].isNull() && abOn) { nl_ab_hold(&ab, root[F("nibbles")][F("abhold")].as<bool>(), millis()); abDirty = true; }
+      // {"nibbles":{"ctlwifi":true|false}}: on a brain, tell the controller (down our wire) to join the
+      // network until it restarts, or to switch its radio off again; on the controller, directly.
+      if (!root[F("nibbles")][F("ctlwifi")].isNull()) {
+        const bool on = root[F("nibbles")][F("ctlwifi")].as<bool>();
+        if (display) ctlWifi(on);
+        else sendCtlWifi(on);
+      }
       // {"nibbles":{"preview":true|false}}: the preview stream, until the next reboot
       if (!root[F("nibbles")][F("preview")].isNull()) previewOn = root[F("nibbles")][F("preview")].as<bool>();
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
@@ -2580,7 +2705,9 @@ class NibblesUsermod : public Usermod {
       top[F("radio_off")] = radioOff;              // on the display: commands and battery only through the brains' wires
       top[F("wire_pin_b")] = wirePinB;             // on the display: the second brain's wire; -1 = one brain
       top[F("ab_side")] = abSide;                  // on a brain: 0 A, 1 B; -1 = no A/B
-      top[F("ret_pin")] = retPin;                  // return wire: TX on the display (A/B state, sound), RX on a brain; -1 = off
+      top[F("ret_pin")] = retPin;
+      top[F("wifi_off")] = wifiOff;                // on the display: radio off; NL_OP_CTL_WIFI joins the network until restart
+      top[F("net_fallback")] = netFallback;        // on a brain that joins the network: host it while the host is gone                  // return wire: TX on the display (A/B state, sound), RX on a brain; -1 = off
       top[F("preview")] = previewOn;               // preview stream for a preview screen
       top[F("preview_fps")] = previewFps;
     }
@@ -2607,6 +2734,8 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("wire_pin_b")], wirePinB, (int8_t)-1);
       complete &= getJsonValue(top[F("ab_side")], abSide, (int8_t)-1);
       complete &= getJsonValue(top[F("ret_pin")], retPin, (int8_t)-1);
+      complete &= getJsonValue(top[F("wifi_off")], wifiOff, false);
+      complete &= getJsonValue(top[F("net_fallback")], netFallback, false);
       if (wireBaud < 9600 || wireBaud > 5000000) wireBaud = NL_PIX_BAUD;
       wireRecheck = true;
       complete &= getJsonValue(top[F("preview")], previewOn, false);

@@ -166,6 +166,8 @@ typedef enum {
     NL_OP_AB_TAKE = 11,         // controller: swap Live and Standby; arg = crossfade in ms (0: cut)
     NL_OP_AB_TAKE_A = 12,       // controller: make brain A Live (safe to repeat, or to send by two routes); arg as above
     NL_OP_AB_TAKE_B = 13,       // controller: the same for brain B
+    NL_OP_CTL_WIFI = 14,        // controller (NL_TARGET_AB, through a brain's wire): arg 1 joins the Nibbles
+                                // network until its next restart (web page, OTA), 0 radio off again
     NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
 } nl_op_t;
 

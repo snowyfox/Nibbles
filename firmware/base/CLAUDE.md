@@ -190,7 +190,8 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   on Standby's preset, fin preset, palette and looks once a second, and main its
   brightness; it waits 2 s after a swap. Panels read LIVE A / STANDBY B. If a brain
   goes down, everything falls back to the one-brain behaviour. Serial: `ab`, `ab take
-  [MS]`, `ab hold on|off`.
+  [MS]`, `ab hold on|off`, `wled wifi on|off` (2026-11-02: `NL_OP_CTL_WIFI` by the same
+  route as a take: the controller, radio off, joins `Nibbles` until it restarts).
 - **Simulated power data** (`main/power_sim.c`, host-tested; 2026-11-01). Two
   kinds: **fast** (every value and problem in 2 minutes) and **realistic**
   (festival nights in real time: pack, swapped-in VB99s, a USB-C charge at the
