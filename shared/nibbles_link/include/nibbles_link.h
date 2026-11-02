@@ -42,6 +42,7 @@ typedef enum {
     NL_MSG_TIME = 17,       // the real time, from a board that knows it, every 10 s (nl_time_t)
     NL_MSG_AB = 18,         // which brain is Live, controller -> radio, 2 Hz and on a change (nl_ab_state_t)
     NL_MSG_RELAY = 19,      // a radio packet a brain passes down its wire to the controller (nl_relay_*)
+    NL_MSG_AR_SYNC = 20,    // the controller's sound analysis, controller -> brains over the return wire, ~50 Hz (nl_ar_sync_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -735,6 +736,29 @@ typedef enum { NL_WIRE_NONE = 0, NL_WIRE_CHUNK, NL_WIRE_RELAY } nl_wire_event_t;
 
 // nl_pix_parse_byte for a wire that also carries relays.
 nl_wire_event_t nl_wire_parse_byte(nl_pix_parser_t *p, uint8_t byte, nl_pix_chunk_t *chunk, nl_relay_t *relay);
+
+// ---------------------------------------------------------------- return wire
+// One wire from the controller back to both brains, in the same relay framing
+// (the controller's MAC, then a radio packet): NL_MSG_AB, so a brain knows
+// whether it is Live without the radio, and NL_MSG_AR_SYNC, the controller's
+// mic as WLED AudioReactive's own sound sync packet (version 2, 44 bytes),
+// which a brain hands to its AudioReactive as if it came over the network.
+#define NL_AR_SYNC_HEADER   "00002"
+#define NL_AR_SYNC_PORT     11988   // AudioReactive's default sync port
+#define NL_AR_SYNC_MS       20
+
+typedef struct NL_PACKED {
+    char header[6];         // NL_AR_SYNC_HEADER, NUL-terminated
+    uint8_t reserved1[2];
+    float sample_raw;
+    float sample_smooth;
+    uint8_t sample_peak;    // 1: a beat; sent once per beat
+    uint8_t reserved2;
+    uint8_t fft[16];
+    uint16_t reserved3;
+    float fft_magnitude;
+    float fft_major_peak;   // Hz
+} nl_ar_sync_t;
 
 #ifdef __cplusplus
 }

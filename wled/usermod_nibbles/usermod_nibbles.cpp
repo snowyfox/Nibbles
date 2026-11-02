@@ -108,6 +108,7 @@
 #include <driver/uart.h>
 #include <driver/gpio.h>
 #include <lwip/netif.h>
+#include <lwip/sockets.h>
 #include <map>
 #ifdef NIBBLES_ES7210
 #include <Wire.h>
@@ -131,6 +132,8 @@
 #define WIRE_TX_BUF            8192   // a whole frame of 1064 LEDs is ~3.3 KB encoded
 #define WIRE_RX_BUF            8192   // ~40 ms at 2 Mbaud, for loop() hiccups
 #define WIRE_READ              512
+#define RET_TX_BUF             2048   // the return wire: A/B state and sound sync, ~3 KB/s
+#define RET_RX_BUF             4096   // on a brain: ~20 ms of the return wire at 2 Mbaud
 #define WIRE_KEEPALIVE_MS      200    // resend while WLED shows nothing new (off, frozen)
 
 #ifdef NIBBLES_ES7210
@@ -314,6 +317,19 @@ class NibblesUsermod : public Usermod {
     bool wireRx = false, wireRecheck = true;
     bool radioOff = false;               // setting, on the display: take nothing from the radio, only from the wires
     uint32_t relayRx = 0, relayTx = 0;
+    // Return wire (setting "ret_pin"): TX on the display, on the first wire's UART;
+    // RX on a brain, on its wire UART. Carries NL_MSG_AB and the sound sync.
+    int8_t retPin = -1;                  // setting; -1 = off
+    int8_t retPinUp = -1;
+    int8_t retPinSet = -1;               // the setting when the wires last started (a pin that fails is not retried)
+    nl_pix_parser_t *retParser = nullptr;
+    uint32_t retTx = 0, retRx = 0, arOut = 0, arIn = 0;
+    unsigned long lastArAt = 0, abWireAt = 0, retRxAt = 0;
+    bool lastArPeak = false;
+    float arLevel = 0, arLevelMax = 0;   // on a brain: the sound from the wire, for the Info page
+    uint32_t arBeats = 0;
+    int arSock = -1;
+    uint8_t ownMac[6] = {};
     const char *wireNote = "";           // why it isn't running, for the Info page
     volatile bool frameShown = false;    // WLED showed a frame since we last sent one
     uint8_t *wireBuf = nullptr;          // one encoded chunk (TX) or a read block (RX)
@@ -1067,6 +1083,9 @@ class NibblesUsermod : public Usermod {
         uart_driver_delete(WIRE_UART);
         PinManager::deallocatePin(wirePinUp, PinOwner::UM_Unspecified);
       }
+      if (retPinUp >= 0) PinManager::deallocatePin(retPinUp, PinOwner::UM_Unspecified);
+      retPinUp = -1;
+      free(retParser); retParser = nullptr;
       free(wireBuf); wireBuf = nullptr;
       wirePinUp = -1;
       for (int i = 0; i < 2; i++) {
@@ -1093,7 +1112,7 @@ class NibblesUsermod : public Usermod {
       cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
       cfg.source_clk = UART_SCLK_APB;
       wireBuf = (uint8_t *)malloc(NL_PIX_FRAME_MAX);
-      if (!wireBuf || uart_driver_install(WIRE_UART, 256, WIRE_TX_BUF, 0, nullptr, 0) != ESP_OK) {
+      if (!wireBuf || uart_driver_install(WIRE_UART, retPin >= 0 ? RET_RX_BUF : 256, WIRE_TX_BUF, 0, nullptr, 0) != ESP_OK) {
         PinManager::deallocatePin(wirePin, PinOwner::UM_Unspecified);
         free(wireBuf); wireBuf = nullptr;
         wireNote = "no memory or UART";
@@ -1104,6 +1123,29 @@ class NibblesUsermod : public Usermod {
       wirePinUp = wirePin;
       wireBaudUp = wireBaud;
       wireLastAt = 0;
+      retStartRx();
+    }
+
+    // On a brain: the return wire comes in on the same UART as the picture goes out.
+    void retStartRx() {
+      if (retPin < 0 || wirePinUp < 0) return;
+      if (!PinManager::allocatePin(retPin, false, PinOwner::UM_Unspecified)) return;
+      retParser = (nl_pix_parser_t *)malloc(sizeof(nl_pix_parser_t));
+      if (!retParser) { PinManager::deallocatePin(retPin, PinOwner::UM_Unspecified); return; }
+      nl_pix_parser_init(retParser);
+      uart_set_pin(WIRE_UART, UART_PIN_NO_CHANGE, retPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+      uart_set_rx_full_threshold(WIRE_UART, 32);
+      if (GPIO_IS_VALID_OUTPUT_GPIO(retPin)) gpio_pullup_en((gpio_num_t)retPin);  // idle high with the controller off
+      retPinUp = retPin;
+    }
+
+    // On the display: out on the first wire's UART, which was installed with a TX buffer for it.
+    void retStartTx() {
+      if (retPin < 0 || wireIn[0].pinUp < 0) return;
+      if (!PinManager::allocatePin(retPin, true, PinOwner::UM_Unspecified)) return;
+      uart_set_pin(WIRE_UART, retPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+      esp_read_mac(ownMac, ESP_MAC_WIFI_STA);
+      retPinUp = retPin;
     }
 
     // Input i on the display: wire_pin (brain A) or wire_pin_b (brain B).
@@ -1127,7 +1169,7 @@ class NibblesUsermod : public Usermod {
       w.parser = (nl_pix_parser_t *)malloc(sizeof(nl_pix_parser_t));
       if (ab_on) w.frame = (uint8_t *)calloc(abLeds, 3);
       if (!wireBuf || !w.parser || (ab_on && !w.frame) ||
-          uart_driver_install(w.uart, WIRE_RX_BUF, 0, 0, nullptr, 0) != ESP_OK) {
+          uart_driver_install(w.uart, WIRE_RX_BUF, (i == 0 && retPin >= 0) ? RET_TX_BUF : 0, 0, nullptr, 0) != ESP_OK) {
         PinManager::deallocatePin(pin, PinOwner::UM_Unspecified);
         free(w.parser); w.parser = nullptr;
         free(w.frame); w.frame = nullptr;
@@ -1149,6 +1191,7 @@ class NibblesUsermod : public Usermod {
     }
 
     void wireStart() {
+      retPinSet = retPin;
       wireRx = display;
       if (!wireRx) { wireStartTx(); return; }
       abOn = wirePin >= 0 && wirePinB >= 0;
@@ -1157,6 +1200,7 @@ class NibblesUsermod : public Usermod {
       nl_bump_rx_init(&abBumps);
       wireStartRx(0, wirePin, abOn);
       wireStartRx(1, wirePinB, abOn);
+      retStartTx();
       if (abOn && (wireIn[0].pinUp < 0 || wireIn[1].pinUp < 0)) abOn = false;  // the note says why
     }
 
@@ -1277,7 +1321,7 @@ class NibblesUsermod : public Usermod {
     }
 
     void wireLoop() {
-      if (wireRecheck || display != wireRx || (display ? wirePin != wireIn[0].pinUp || wirePinB != wireIn[1].pinUp : wirePin != wirePinUp) ||
+      if (wireRecheck || display != wireRx || retPin != retPinSet || (display ? wirePin != wireIn[0].pinUp || wirePinB != wireIn[1].pinUp : wirePin != wirePinUp) ||
           ((wirePinUp >= 0 || wireIn[0].pinUp >= 0 || wireIn[1].pinUp >= 0) && wireBaud != wireBaudUp)) {
         if (!wireRetryAt || millis() >= wireRetryAt) {   // a pin that won't start is only retried now and then
           wireRecheck = false;
@@ -1300,8 +1344,86 @@ class NibblesUsermod : public Usermod {
       if (wireRx) {
         for (int i = 0; i < 2; i++) if (wireIn[i].pinUp >= 0) wireReceive(i, now);
       } else if (wirePinUp >= 0) {
+        retReceive(now);
         wireSend(now);
       }
+    }
+
+    // ---- return wire
+    // On the display: a packet as if broadcast, in the relay framing with our own MAC.
+    void retSend(uint8_t type, const void *payload, size_t len) {
+      if (retPinUp < 0) return;
+      uint8_t pkt[NL_RADIO_MAX];
+      const size_t n = nl_radio_build(pkt, sizeof(pkt), type, seq++, NL_ROLE_WLED, NL_SIDE_NONE, payload, len);
+      if (!n) return;
+      uint8_t out[NL_RELAY_FRAME_MAX];
+      const size_t k = nl_relay_encode(ownMac, pkt, n, out, sizeof(out));
+      if (k && uart_write_bytes(WIRE_UART, (const char *)out, k) == (int)k) retTx++;
+    }
+
+    // On the display: AudioReactive's analysis of the controller's mic, as its own sync packet.
+    // Its sync mode stays "send": in any other mode it stops listening while the wires drive the LEDs.
+    void retAudio(unsigned long now) {
+      if (retPinUp < 0 || now - lastArAt < NL_AR_SYNC_MS) return;
+      lastArAt = now;
+      um_data_t *um = nullptr;
+      if (!UsermodManager::getUMData(&um, USERMOD_ID_AUDIOREACTIVE) || !um) return;
+      nl_ar_sync_t a = {};
+      memcpy(a.header, NL_AR_SYNC_HEADER, sizeof(NL_AR_SYNC_HEADER));
+      a.sample_smooth = *(float *)um->u_data[0];
+      a.sample_raw = *(int16_t *)um->u_data[1];
+      memcpy(a.fft, um->u_data[2], sizeof(a.fft));
+      const bool peak = *(bool *)um->u_data[3];
+      a.sample_peak = peak && !lastArPeak;   // once per beat: AudioReactive holds it a while
+      lastArPeak = peak;
+      a.fft_major_peak = *(float *)um->u_data[4];
+      a.fft_magnitude = *(float *)um->u_data[5];
+      retSend(NL_MSG_AR_SYNC, &a, sizeof(a));
+      arOut++;
+    }
+
+    // On a brain.
+    void retReceive(unsigned long now) {
+      if (retPinUp < 0) return;
+      size_t avail = 0;
+      uart_get_buffered_data_len(WIRE_UART, &avail);
+      uint8_t buf[256];
+      while (avail) {
+        const int n = uart_read_bytes(WIRE_UART, buf, min(avail, sizeof(buf)), 0);
+        if (n <= 0) break;
+        avail -= min(avail, (size_t)n);
+        for (int i = 0; i < n; i++) {
+          nl_pix_chunk_t ch;
+          nl_relay_t relay;
+          if (nl_wire_parse_byte(retParser, buf[i], &ch, &relay) != NL_WIRE_RELAY || relay.len > sizeof(RxItem::data)) continue;
+          RxItem it;
+          memcpy(it.mac, relay.mac, 6);
+          it.len = relay.len;
+          memcpy(it.data, relay.pkt, relay.len);
+          retRx++;
+          retRxAt = now;
+          handleFrom(it, true);
+        }
+      }
+    }
+
+    // On a brain: the controller's sound, handed to our AudioReactive as if it came over the network.
+    void arInject(const uint8_t *pl, size_t len) {
+      if (arSock < 0) {
+        arSock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (arSock < 0) return;
+        fcntl(arSock, F_SETFL, O_NONBLOCK);
+      }
+      sockaddr_in to = {};
+      to.sin_family = AF_INET;
+      to.sin_port = htons(NL_AR_SYNC_PORT);
+      to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      if (sendto(arSock, pl, len, 0, (const sockaddr *)&to, sizeof(to)) == (int)len) arIn++;
+      nl_ar_sync_t a;
+      memcpy(&a, pl, sizeof(a));
+      arLevel = a.sample_smooth;
+      arLevelMax = max(arLevelMax, a.sample_smooth);
+      if (a.sample_peak) arBeats++;
     }
 
     // On a brain: what the controller needs goes down the wire too, so it can do without its radio.
@@ -1323,6 +1445,7 @@ class NibblesUsermod : public Usermod {
       nl_ab_state_t st;
       nl_ab_state(&ab, millis(), fps, &st);
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AB, &st, sizeof(st));
+      retSend(NL_MSG_AB, &st, sizeof(st));
     }
 
     // With only its access point up, lwIP has no route for multicast, so AudioReactive's
@@ -1400,7 +1523,7 @@ class NibblesUsermod : public Usermod {
     void wireInfo(JsonObject &user) {
       if (wirePin < 0 && wirePinUp < 0 && wirePinB < 0 && abSide < 0) return;
       JsonArray wa = user.createNestedArray(F("Nibbles wire"));
-      char buf[160];
+      char buf[220];
       if (wireRx) {
         wireInfoIn(wa, 0);
         wireInfoIn(wa, 1);
@@ -1413,10 +1536,27 @@ class NibblesUsermod : public Usermod {
           snprintf(buf, sizeof(buf), "relayed from the brains: %lu messages%s", (unsigned long)relayRx, radioOff ? "; radio input off" : "");
           wa.add(buf);
         }
+        if (retPin >= 0) {
+          if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running (pin in use, or wire A not up)", retPin);
+          else snprintf(buf, sizeof(buf), "return wire out on GPIO %d: %lu messages, %lu of them sound", retPinUp, (unsigned long)retTx, (unsigned long)arOut);
+          wa.add(buf);
+        }
         return;
       }
       if (abSide >= 0) {
         snprintf(buf, sizeof(buf), "Brain %c, %s%s; %lu messages relayed", 'A' + abSide, abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)", (unsigned long)relayTx);
+        wa.add(buf);
+      }
+      if (retPin >= 0) {
+        if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running", retPin);
+        else {
+          const unsigned long ago = retRxAt ? millis() - retRxAt : 0;
+          snprintf(buf, sizeof(buf), "return wire in on GPIO %d: %s; %lu messages, %lu sound (level %.0f, highest %.0f since last look, %lu beats), %lu CRC errors, %lu bad", retPinUp,
+                   !retRxAt ? "nothing yet" : ago > 1000 ? "silent" : "receiving",
+                   (unsigned long)retRx, (unsigned long)arIn, arLevel, arLevelMax, (unsigned long)arBeats,
+                   (unsigned long)retParser->crc_errors, (unsigned long)retParser->bad_chunks);
+          arLevelMax = 0;
+        }
         wa.add(buf);
       }
       if (wirePinUp < 0) {
@@ -2004,6 +2144,10 @@ class NibblesUsermod : public Usermod {
       size_t len;
       if (!nl_radio_parse(it.data, it.len, &h, &pl, &len)) return;
       rxCount++;
+      if (h.type == NL_MSG_AR_SYNC) {
+        if (fromWire && !display && len == sizeof(nl_ar_sync_t)) arInject(pl, len);
+        return;
+      }
       if (!display) {
         if (h.type == NL_MSG_BATTERY && len == sizeof(nl_battery_t)) wireRelay(it);
         else if (h.type == NL_MSG_BUMP && len == sizeof(nl_bump_t) && (((const nl_bump_t *)pl)->target & NL_TARGET_AB)) wireRelay(it);
@@ -2020,6 +2164,7 @@ class NibblesUsermod : public Usermod {
         if (abSide >= 0 && !display) {
           memcpy(&abHeard, pl, sizeof(abHeard));
           abHeardAny = true;
+          if (fromWire) abWireAt = millis();
         }
         return;
       }
@@ -2152,6 +2297,7 @@ class NibblesUsermod : public Usermod {
       }
       if (display) {   // listening only (battery readings, in handle()); just the stream reports out
         abLoop();
+        retAudio(millis());
         apDefaultRoute();
         if (millis() - lastStream >= 1000) {
           lastStream = millis();
@@ -2434,6 +2580,7 @@ class NibblesUsermod : public Usermod {
       top[F("radio_off")] = radioOff;              // on the display: commands and battery only through the brains' wires
       top[F("wire_pin_b")] = wirePinB;             // on the display: the second brain's wire; -1 = one brain
       top[F("ab_side")] = abSide;                  // on a brain: 0 A, 1 B; -1 = no A/B
+      top[F("ret_pin")] = retPin;                  // return wire: TX on the display (A/B state, sound), RX on a brain; -1 = off
       top[F("preview")] = previewOn;               // preview stream for a preview screen
       top[F("preview_fps")] = previewFps;
     }
@@ -2459,6 +2606,7 @@ class NibblesUsermod : public Usermod {
       complete &= getJsonValue(top[F("radio_off")], radioOff, false);
       complete &= getJsonValue(top[F("wire_pin_b")], wirePinB, (int8_t)-1);
       complete &= getJsonValue(top[F("ab_side")], abSide, (int8_t)-1);
+      complete &= getJsonValue(top[F("ret_pin")], retPin, (int8_t)-1);
       if (wireBaud < 9600 || wireBaud > 5000000) wireBaud = NL_PIX_BAUD;
       wireRecheck = true;
       complete &= getJsonValue(top[F("preview")], previewOn, false);

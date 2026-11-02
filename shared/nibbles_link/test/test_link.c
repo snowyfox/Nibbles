@@ -670,6 +670,7 @@ int main(void)
     test_preview();
     test_ab();
     test_relay();
+    CHECK(sizeof(nl_ar_sync_t) == 44 && sizeof(NL_AR_SYNC_HEADER) == 6, "the sound sync packet matches AudioReactive's");
     CHECK(sizeof(nl_time_t) == 4 && !nl_time_valid(0) && !nl_time_valid(12345) && nl_time_valid(1793566000), "the time packet");
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
     return failures ? 1 : 0;

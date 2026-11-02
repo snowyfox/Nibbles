@@ -439,6 +439,16 @@ sorts them by role into its Live and Standby sharks.
   The brain's ack means "on its way"; the result shows in `NL_MSG_AB`. The controller's
   `radio_off` setting ignores its radio input and only takes these. Its radio still sends
   `NL_MSG_AB` and the Wi-Fi network; turning those off needs a wire back to the brains.
+- **Return wire (built 2026-11-02):** one wire from the controller's GPIO 17 (H1, freed by
+  moving the mic's SD to GPIO 39: `digitalmic.pin` `[39, 32, 33, -1]`) to GPIO 10 on both
+  brains (left header pin 16), setting `ret_pin` (17 on the controller, 10 on each brain).
+  It runs on the UART of the controller's first input, at the same baud, in the relay
+  framing with the controller's MAC: `NL_MSG_AB` (2 Hz and on a change) and
+  `NL_MSG_AR_SYNC` every 20 ms, AudioReactive's own v2 sync packet built from its
+  analysis. A brain hands that to its own AudioReactive on 127.0.0.1:11988, so its sync
+  mode stays 2 (receive). The controller's sync mode must stay 1 (send): in any other mode
+  AudioReactive stops listening while the wires drive the LEDs. A `ret_pin` that can't
+  start (pin taken, or wire A down) is not retried until the setting changes.
 - **Changing settings with `/json/cfg`:** send the whole `um.Nibbles` block too. A POST with
   `um` but no `Nibbles` resets every Nibbles setting to its default, live and on flash.
 - **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
