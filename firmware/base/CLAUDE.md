@@ -155,15 +155,15 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   With nothing plugged in, the LEMO battery is a dim outline with no
   number. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
-  kerning), so values don't shift as they change. Simulated readings are in the section below. Under it, a side view of the shark from a brain's preview
-  stream (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
+  kerning), so values don't shift as they change. Simulated readings are in the section below. Under it, a side view of the shark from the Live brain's preview
+  stream, or a lone brain's (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
   `tools/sim/make_preview_map.py`); all dim with no stream. Under that, the fins
   laid flat, seen from above (leading edges up, port on the left, live colours,
   `fin_pos.h`: a 4 px band like the shark's line, both strands side by side, each pixel taking its nearest LED), a padlock between them
   (grey shackle, amber body; unlocked: shackle lifted with its right end clear,
   all at 25% opacity; dim body when not known), and an invisible touch key for FIN SENSOR across the whole band; a
   card shows behind the fins only while that key is down (`display_fin_key`).
-  Under the fins, the **eyes** at y 242, 80 px each, starboard on the left, port on the right: stills of
+  A second shark and fins at y 326 show the Standby brain (by the sender's role, so a TAKE swaps them; no padlock or touch key). Both draw in one screen refresh: about 11 a second, 77 ms each, the same with one stream or two (the `sharks:` log line). Under the fins, the **eyes** at y 242, 80 px each, starboard on the left, port on the right: stills of
   the preset on screen (`eye_thumb.c`, the rings, spiral arms, colours and lids of
   the eyes' `render_core.c` with no music or motion; it builds in the eyes'
   `presets.c`, so new presets just appear). Redrawn only when the telemetry's preset

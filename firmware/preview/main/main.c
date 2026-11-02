@@ -119,6 +119,10 @@ static inline void dot(int x, int y, uint16_t c)
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *hdr, const uint8_t *payload, size_t len)
 {
     if (hdr->type != NL_MSG_PREVIEW || len <= NL_PREVIEW_HEADER_LEN) return;
+    // Two brains both send: show Standby, and a Live brain only when there's no Standby.
+    static int64_t standby_us;
+    if (hdr->role == NL_ROLE_WLED_STANDBY) standby_us = esp_timer_get_time();
+    else if (standby_us && esp_timer_get_time() - standby_us < 2000000) return;
     const nl_preview_t *m = (const nl_preview_t *)payload;
     size_t n = len - NL_PREVIEW_HEADER_LEN;
     if (m->start >= LED_POS_COUNT) return;

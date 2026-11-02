@@ -91,10 +91,10 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
             stby_layers_us = t;
         }
         taskEXIT_CRITICAL(&lock);
-        if (h->type != NL_MSG_PREVIEW && h->type != NL_MSG_TIME) return;   // the preview is what a Standby brain is for
+        if (h->type != NL_MSG_PREVIEW && h->type != NL_MSG_TIME) return;
     }
-    if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second: straight to the screen
-        display_preview(pl, len);
+    if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second from each brain: straight to the screen
+        display_preview(h->role == NL_ROLE_WLED_STANDBY, pl, len);
         return;
     }
     if (h->type == NL_MSG_TIME && len == sizeof(nl_time_t)) {

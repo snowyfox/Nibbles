@@ -394,18 +394,28 @@ Access point notes:
   (REVERT.md: ledmap back), `20261023-2323-pre-ap-test/` (both boards'
   Wi-Fi), `20261023-*-pre-stream-gaps/` (before the stall counter build).
 
-### A/B brains (built 2026-11-01; host-tested, not yet on real boards)
+### A/B brains (built 2026-11-01; running on real boards the same day)
 Two brains each send the controller a full picture; TAKE on the keypad switches
 which reaches the LEDs. Settings (`{"um":{"Nibbles":{...}}}`):
 
+Tested on the bench over real wires, with no pull-ups fitted as far as known and
+no LEDs confirmed attached: both wires 42-44 fps at once, take, hold, a 1.5 s fade
+(accepted; not seen on LEDs), failover when the Live brain stopped (survivor still
+42-44 fps), and the stopped brain rejoining as Standby. Lost-frame and CRC counts
+(controller Info page): none new in a 9-minute soak, no LEDs attached as far as known.
+Both brains send the preview (`NL_MSG_PREVIEW`, 12 fps), whatever `preview` says; the base
+sorts them by role into its Live and Standby sharks.
+
 | Board | Settings |
 |---|---|
-| Controller (`nibbles_shark`) | `display` on, `wire_pin` brain A's wire (39), `wire_pin_b` brain B's (32 or 33, once the mic has moved) |
+| Controller (`nibbles_shark`) | `display` on, `wire_pin` brain A's wire, `wire_pin_b` brain B's: 35 (H3) and 34 (H2) as now wired, which must match each brain's `ab_side`; the mic stays on H1 |
 | Brain A (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 0 |
 | Brain B (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 1 |
 
 - **Wiring:** each brain's TX and a GND to the controller. Never 3.3 V or 5 V between
-  boards. An input-only pin such as 39 needs a 10 kOhm pull-up to the header's 3.3 V.
+  boards. GPIO 34 and 35 are input only with no internal pull-up: each needs its own
+  10 kOhm pull-up to the Bong69's 3.3 V (H1 has it). Pin order on H2 and H3 isn't
+  documented, so measure before connecting; H4 carries 5 V.
 - **The presets must match on both brains**, by number: copy `presets.json`, the
   ledmap and the settings across.
 - **On the Info page:** "Nibbles wire" shows both wires, which brain is Live, takes and
@@ -416,7 +426,14 @@ which reaches the LEDs. Settings (`{"um":{"Nibbles":{...}}}`):
 - **Not carried across yet:**
   - eye settings in a preset on the Standby brain (the base sends it with
     `NL_PRESET_NO_EYES`; Standby's eye preset still changes with TAKE);
-  - audio: each brain needs sound, from its own mic or WLED's audio sync.
+  - nothing else for now; audio is below.
+- **Audio:** the controller's mic on H1 feeds both brains through AudioReactive's sound
+  sync over the `Nibbles` Wi-Fi: `um.AudioReactive.sync.mode` 1 (send) on the controller,
+  2 (receive) on each brain. The controller's usermod makes its access point lwIP's default
+  route (`apDefaultRoute`), or the multicast goes nowhere. Both brains report "receiving";
+  delay and reaction to music aren't measured yet.
+- **Changing settings with `/json/cfg`:** send the whole `um.Nibbles` block too. A POST with
+  `um` but no `Nibbles` resets every Nibbles setting to its default, live and on flash.
 - **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
 - A controller reboot starts with brain A Live.
 
@@ -436,8 +453,8 @@ controller, so the picture never crosses the air.
   `0.0.0.0` to send nothing over Wi-Fi (WLED skips the send), or leave it on
   the controller as a Wi-Fi backup (both arrive; the controller shows
   whichever came last, the same picture).
-- **Controller:** with `display` on, `wire_pin` is its RX pin: GPIO 39 on the
-  Bong69's mic header (input only, so a 10 kOhm pull-up to the header's 3.3 V;
+- **Controller:** with `display` on, `wire_pin` is its RX pin: GPIO 34 on the
+  Bong69's H2 (input only, so a 10 kOhm pull-up to its 3.3 V;
   no internal pull-up). Chunks go into WLED's realtime path like DDP
   (`realtimeLock`, `setRealtimePixel`, shown on the last chunk), so the
   realtime timeout, the current limiter and the stall counter keep working.
@@ -511,7 +528,7 @@ Build notes:
 
 ## The shark's real controller
 A **Bong69 8 Port LED Distro v3** (https://github.com/bobko69/8PortLEDDistro):
-a WT32-ETH01 (classic ESP32, 4 MB flash, no PSRAM; LAN8720 clocked by an
+an ESP32 module soldered flat to the board, not a plug-in WT32-ETH01 as first assumed (seen in photos 2026-11-01; WLED's WT32-ETH01 Ethernet setting still applies. Classic ESP32, 4 MB flash, no PSRAM; LAN8720 clocked by an
 external oscillator on GPIO 0, so ESP-NOW is safe; Ethernet is off in its
 config anyway). Read on 2026-09-24 at 10.7.200.253: WLED 0.15.1
 "ESP32_Ethernet" release, 1194 LEDs on 5 WS281x outputs (config pins 1-5, matching the board's silkscreen: channels 1-5 = GPIO 1-5, channels 6-8 = GPIO 12, 14, 15 (unused); all working;

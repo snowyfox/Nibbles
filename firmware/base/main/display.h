@@ -82,8 +82,8 @@ void display_show_page(int page);
 // "SHOT END"), for checking the layout from a computer.
 void display_screenshot(bool rle);   // rle: run-length encoded ("SHOT w h rle565le")
 void display_update(const display_status_t *s);
-// A brain's preview picture (NL_MSG_PREVIEW payload), for the shark on the main page.
-void display_preview(const void *payload, size_t len);
+// A brain's preview picture (NL_MSG_PREVIEW payload), for the main page's Live or Standby shark.
+void display_preview(bool standby, const void *payload, size_t len);
 // The fin lock key is down (or its touch area is): lights up the area around the fins.
 void display_fin_key(bool down);
 // A look from a WLED preset, as the eyes get it (any task; NL_MSG_EYE_LOOK).

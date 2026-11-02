@@ -181,8 +181,9 @@ base's Standby only shows names. Plan:
   a cut or crossfade on a take, Standby shown while TAKE is held, and failover if
   the Live brain's stream stops for 500 ms. The brain not on the LEDs sends as
   `NL_ROLE_WLED_STANDBY`, so the eyes (which filter on `NL_ROLE_WLED`) need no
-  change. It keeps its eye settings until taken, ignores bumps and sends the
-  preview, so **the side view shows Standby, not Live**. The base keeps the Standby
+  change. It keeps its eye settings until taken and ignores bumps. Both brains
+  send the preview, and the base shows **Live on the top shark and Standby on a
+  second one under the eyes**. The base keeps the Standby
   brain matching its Standby scene (`ctl_standby_sync`, once a second). With one
   brain up, everything works as before.
 - **Order**: (1) the wired brain-to-controller link (usermod and protocol

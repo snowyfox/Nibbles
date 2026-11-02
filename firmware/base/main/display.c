@@ -570,75 +570,96 @@ static lv_obj_t *at(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int
     return l;
 }
 
-// ------------------------------------------------------------------ the shark
-// A side view of the shark between the power bar and LIVE, from a brain's
-// preview stream. Unlit LEDs stay faintly visible, and so does the whole shark
-// with no stream, so its shape is always there.
+// ------------------------------------------------------------------ the sharks
+// Side views of the shark from the brains' preview streams: Live under the power
+// bar, Standby under the eyes, each with its fins laid flat beneath it. They go by
+// the sender's role, so a TAKE swaps the pictures and the top one is always what's
+// on the LEDs. Unlit LEDs stay faintly visible, and so does the whole shark with no
+// stream, so its shape is always there.
 #define SHARK_W        164
 #define SHARK_H        82
 #define SHARK_DIM      0x18C3   // RGB565, the same grey as FIN_UNLIT
 #define SHARK_LOST_MS  2000
+#define SHARK_LIVE     0
+#define SHARK_STANDBY  1
+#define SHARK_VIEWS    2
 
-static lv_obj_t *shark_canvas;
-static uint16_t *shark_px;
-static uint8_t shark_leds[LED_POS_COUNT];
-static volatile bool shark_dirty = true;
-static volatile int64_t shark_rx_us;
-static bool shark_blank = false;   // showing the no-stream shark
-static volatile uint32_t shark_rx_frames;
-static uint32_t shark_drawn;
+static struct {
+    lv_obj_t *canvas, *fin_canvas;
+    uint16_t *px;
+    uint32_t *fin_px;              // ARGB8888
+    uint8_t leds[LED_POS_COUNT];
+    volatile bool dirty;
+    volatile int64_t rx_us;
+    bool blank;                    // showing the no-stream shark
+    volatile uint32_t rx_frames;
+    uint32_t drawn;
+} shark[SHARK_VIEWS] = { { .dirty = true }, { .dirty = true } };
 
-void display_preview(const void *payload, size_t len)
+void display_preview(bool standby, const void *payload, size_t len)
 {
     if (len <= NL_PREVIEW_HEADER_LEN) return;
     const nl_preview_t *m = payload;
     size_t n = len - NL_PREVIEW_HEADER_LEN;
     if (m->start >= LED_POS_COUNT) return;
     if (m->start + n > LED_POS_COUNT) n = LED_POS_COUNT - m->start;
+    typeof(&shark[0]) v = &shark[standby ? SHARK_STANDBY : SHARK_LIVE];
     taskENTER_CRITICAL(&lock);
-    memcpy(shark_leds + m->start, m->rgb332, n);
+    memcpy(v->leds + m->start, m->rgb332, n);
     taskEXIT_CRITICAL(&lock);
-    shark_rx_us = esp_timer_get_time();
+    v->rx_us = esp_timer_get_time();
     if (m->flags & NL_PREVIEW_LAST) {
-        shark_dirty = true;
-        shark_rx_frames++;
+        v->dirty = true;
+        v->rx_frames++;
     }
 }
 
-static void fins_paint(const uint8_t *leds);
+static void fins_paint(int view, const uint8_t *leds);
 
-static void shark_draw(void)
+static void shark_draw_view(int view)
 {
-    if (!shark_canvas) return;
-    const bool stream = shark_rx_us && esp_timer_get_time() - shark_rx_us < SHARK_LOST_MS * 1000LL;
-    if (stream ? !shark_dirty : shark_blank) return;
+    typeof(&shark[0]) v = &shark[view];
+    if (!v->canvas) return;
+    const bool stream = v->rx_us && esp_timer_get_time() - v->rx_us < SHARK_LOST_MS * 1000LL;
+    if (stream ? !v->dirty : v->blank) return;
     static uint8_t now[LED_POS_COUNT];
     taskENTER_CRITICAL(&lock);
-    memcpy(now, shark_leds, sizeof(now));
-    shark_dirty = false;
+    memcpy(now, v->leds, sizeof(now));
+    v->dirty = false;
     taskEXIT_CRITICAL(&lock);
-    memset(shark_px, 0, SHARK_W * SHARK_H * 2);
+    memset(v->px, 0, SHARK_W * SHARK_H * 2);
     for (int i = 0; i < LED_POS_COUNT; i++) {
         const uint8_t c = stream ? now[i] : 0;
         const uint16_t col = !c ? SHARK_DIM : ((c >> 5) * 31 / 7) << 11 | (((c >> 2) & 7) * 63 / 7) << 5 | (c & 3) * 31 / 3;
         const int x = shark_pos[i][0], y = shark_pos[i][1];
         for (int dy = 0; dy < 2 && y + dy < SHARK_H; dy++)
             for (int dx = 0; dx < 2 && x + dx < SHARK_W; dx++)
-                if (col != SHARK_DIM || shark_px[(y + dy) * SHARK_W + x + dx] == 0) shark_px[(y + dy) * SHARK_W + x + dx] = col;
+                if (col != SHARK_DIM || v->px[(y + dy) * SHARK_W + x + dx] == 0) v->px[(y + dy) * SHARK_W + x + dx] = col;
     }
-    shark_blank = !stream;
-    shark_drawn++;
-    lv_obj_invalidate(shark_canvas);
-    fins_paint(stream ? now : NULL);
+    v->blank = !stream;
+    v->drawn++;
+    lv_obj_invalidate(v->canvas);
+    fins_paint(view, stream ? now : NULL);
+}
+
+static void shark_create(int view, lv_obj_t *page, int y)
+{
+    shark[view].px = heap_caps_malloc(SHARK_W * SHARK_H * 2, MALLOC_CAP_SPIRAM);
+    if (!shark[view].px) return;
+    memset(shark[view].px, 0, SHARK_W * SHARK_H * 2);
+    shark[view].canvas = lv_canvas_create(page);
+    lv_canvas_set_buffer(shark[view].canvas, shark[view].px, SHARK_W, SHARK_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(shark[view].canvas, 4, y);
 }
 
 // ------------------------------------------------------------------ the fins
-// Under the shark: the fins laid flat, seen from above, with a padlock between
+// Under each shark: the fins laid flat, seen from above. Under Live, a padlock between
 // them showing whether they're locked at the modelled angle or follow their
 // angle sensors. The whole band, screen edge to screen edge, is a hidden touch
 // key for KEY_FIN_SENSOR; a card appears behind the fins only while that key is down.
 #define FINS_Y         154
 #define FINS_BAND_H    84
+#define SHARK2_Y       326      // under the eyes
 #define FIN_UNLIT      0xFF181B1Du   // ARGB8888
 #define COL_FIN_CARD   0x2A2E33
 #define COL_FIN_BORDER 0x6A7076
@@ -646,8 +667,7 @@ static void shark_draw(void)
 #define COL_SHACKLE    0xA0A6AC
 
 static struct {
-    lv_obj_t *card, *canvas, *lock_body, *lock_shackle, *lock_leg;
-    uint32_t *px;          // ARGB8888
+    lv_obj_t *card, *lock_body, *lock_shackle, *lock_leg;
     int8_t shown;          // the padlock's state now (fin_sensor; -2: not drawn yet)
     bool lit;
 } fin = { .shown = -2 };
@@ -657,13 +677,25 @@ void display_fin_key(bool down) { fin_key_down = down; }
 
 // One frame of the fin LEDs (RGB332), or all unlit with no stream, through the
 // fins' shape: each pixel takes its nearest LED (fin_pos.h).
-static void fins_paint(const uint8_t *leds)
+static void fins_paint(int view, const uint8_t *leds)
 {
-    if (!fin.canvas) return;
+    if (!shark[view].fin_canvas) return;
+    uint32_t *px = shark[view].fin_px;
     uint32_t cols[256];
     if (leds) for (int i = 0; i < 256; i++) cols[i] = i ? 0xFF000000u | ((i >> 5) * 255 / 7) << 16 | (((i >> 2) & 7) * 255 / 7) << 8 | (i & 3) * 255 / 3 : FIN_UNLIT;
-    for (int i = 0; i < FIN_PIXELS; i++) fin.px[fin_mask[i].at] = leds ? cols[leds[FIN_FIRST_LED + fin_mask[i].led]] : FIN_UNLIT;
-    lv_obj_invalidate(fin.canvas);
+    for (int i = 0; i < FIN_PIXELS; i++) px[fin_mask[i].at] = leds ? cols[leds[FIN_FIRST_LED + fin_mask[i].led]] : FIN_UNLIT;
+    lv_obj_invalidate(shark[view].fin_canvas);
+}
+
+static void fins_canvas(int view, lv_obj_t *parent, int y)
+{
+    shark[view].fin_px = heap_caps_calloc(FIN_W * FIN_H, 4, MALLOC_CAP_SPIRAM);
+    if (!shark[view].fin_px) return;
+    shark[view].fin_canvas = lv_canvas_create(parent);
+    lv_canvas_set_buffer(shark[view].fin_canvas, shark[view].fin_px, FIN_W, FIN_H, LV_COLOR_FORMAT_ARGB8888);
+    lv_obj_set_pos(shark[view].fin_canvas, (172 - FIN_W) / 2, y);
+    lv_obj_remove_flag(shark[view].fin_canvas, LV_OBJ_FLAG_CLICKABLE);
+    fins_paint(view, NULL);
 }
 
 // Locked: the grey shackle closed into the amber body. Unlocked: the shackle
@@ -893,14 +925,7 @@ static void fins_build(void)
     lv_obj_set_style_border_width(fin.card, 2, 0);
     lv_obj_add_flag(fin.card, LV_OBJ_FLAG_HIDDEN);
 
-    fin.px = heap_caps_calloc(FIN_W * FIN_H, 4, MALLOC_CAP_SPIRAM);
-    if (fin.px) {
-        fin.canvas = lv_canvas_create(band);
-        lv_canvas_set_buffer(fin.canvas, fin.px, FIN_W, FIN_H, LV_COLOR_FORMAT_ARGB8888);
-        lv_obj_set_pos(fin.canvas, (172 - FIN_W) / 2, (FINS_BAND_H - FIN_H) / 2);
-        lv_obj_remove_flag(fin.canvas, LV_OBJ_FLAG_CLICKABLE);
-        fins_paint(NULL);
-    }
+    fins_canvas(SHARK_LIVE, band, (FINS_BAND_H - FIN_H) / 2);
 
     fin.lock_shackle = lv_obj_create(band);   // behind the body: a rounded loop
     lv_obj_remove_style_all(fin.lock_shackle);
@@ -1122,15 +1147,10 @@ static void build_main_page(void)
     lv_label_set_text(m.no_board, "???");
 
     eyes_create(pagem);
-    shark_px = heap_caps_malloc(SHARK_W * SHARK_H * 2, MALLOC_CAP_SPIRAM);
-    if (shark_px) {
-        memset(shark_px, 0, SHARK_W * SHARK_H * 2);
-        shark_canvas = lv_canvas_create(pagem);
-        lv_canvas_set_buffer(shark_canvas, shark_px, SHARK_W, SHARK_H, LV_COLOR_FORMAT_RGB565);
-        lv_obj_set_pos(shark_canvas, 4, 70);
-    }
-
+    shark_create(SHARK_LIVE, pagem, 70);
     fins_build();
+    shark_create(SHARK_STANDBY, pagem, SHARK2_Y);
+    fins_canvas(SHARK_STANDBY, pagem, SHARK2_Y + SHARK_H + (FINS_BAND_H - FIN_H) / 2);
     graph_build();
 
     // The next page: Live, Standby and the keypad's state.
@@ -1553,13 +1573,22 @@ static void display_task(void *arg)
             page_wanted = -1;
         }
         if (shot_wanted) lv_obj_invalidate(screen);
-        shark_draw();
+        for (int i = 0; i < SHARK_VIEWS; i++) shark_draw_view(i);
         fins_key_show();
+        const int64_t t_lv = esp_timer_get_time();
         const uint32_t wait = lv_timer_handler();
-        static int64_t shark_log_us;
-        if (esp_timer_get_time() - shark_log_us > 10000000) {
-            shark_log_us = esp_timer_get_time();
-            ESP_LOGI(TAG, "shark: %lu preview frames in, %lu drawn", (unsigned long)shark_rx_frames, (unsigned long)shark_drawn);
+        const int64_t t_end = esp_timer_get_time();
+        static int64_t shark_log_us, lv_busy_us, lv_max_us;
+        const int64_t lv_us = t_end - t_lv;
+        lv_busy_us += t_end - now;
+        if (lv_us > lv_max_us) lv_max_us = lv_us;
+        if (t_end - shark_log_us > 10000000) {
+            ESP_LOGI(TAG, "sharks: Live %lu in, %lu drawn; Standby %lu in, %lu drawn; screen busy %d%%, longest refresh %d ms",
+                     (unsigned long)shark[SHARK_LIVE].rx_frames, (unsigned long)shark[SHARK_LIVE].drawn,
+                     (unsigned long)shark[SHARK_STANDBY].rx_frames, (unsigned long)shark[SHARK_STANDBY].drawn,
+                     shark_log_us ? (int)(lv_busy_us * 100 / (t_end - shark_log_us)) : 0, (int)(lv_max_us / 1000));
+            shark_log_us = t_end;
+            lv_busy_us = lv_max_us = 0;
         }
         vTaskDelay(pdMS_TO_TICKS(wait < 10 ? 10 : wait > UPDATE_MS ? UPDATE_MS : wait));
     }

@@ -81,7 +81,7 @@
 // - A/B brains (settings "wire_pin_b" on the display, "ab_side" on each brain): the
 //   display has a wire from each and switches between them (shared nl_ab_*). The
 //   brain not on the LEDs sends as NL_ROLE_WLED_STANDBY, so the eyes ignore it, keeps
-//   its eye settings until it's taken, ignores bumps and sends the preview.
+//   its eye settings until it's taken and ignores bumps. Both send the preview.
 // - The time: /time on a phone sets WLED's clock; it broadcasts that every 10 s
 //   (NL_MSG_TIME) for the base's logs.
 //   broadcasts a reduced copy of the LEDs for a preview screen (NL_MSG_PREVIEW,
@@ -107,6 +107,7 @@
 #include <esp_now.h>
 #include <driver/uart.h>
 #include <driver/gpio.h>
+#include <lwip/netif.h>
 #include <map>
 #ifdef NIBBLES_ES7210
 #include <Wire.h>
@@ -1033,7 +1034,7 @@ class NibblesUsermod : public Usermod {
 
     // ---- preview stream
     void previewLoop(unsigned long now) {
-      if (display || (abSide >= 0 ? !abStandby() : !previewOn)) return;   // with two brains: Standby's picture
+      if (display || (abSide < 0 && !previewOn)) return;   // two brains: always, for the base's Live and Standby sharks
       Bus *bus = wireSourceBus();
       if (!bus) return;
       const unsigned total = bus->getLength();
@@ -1299,6 +1300,22 @@ class NibblesUsermod : public Usermod {
       nl_ab_state_t st;
       nl_ab_state(&ab, millis(), fps, &st);
       send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AB, &st, sizeof(st));
+    }
+
+    // With only its access point up, lwIP has no route for multicast, so AudioReactive's
+    // sound sync to the brains goes nowhere. Make the access point the default.
+    void apDefaultRoute() {
+      static unsigned long lastCheck = 0;
+      if (millis() - lastCheck < 5000) return;
+      lastCheck = millis();
+      if (!apActive || WLED_CONNECTED) return;
+      const uint32_t ip = (uint32_t)WiFi.softAPIP();
+      for (netif *n = netif_list; n; n = n->next) {
+        if (netif_ip4_addr(n)->addr == ip) {
+          if (netif_default != n) netif_set_default(n);
+          return;
+        }
+      }
     }
 
     // On the display, with both wires up.
@@ -2085,6 +2102,7 @@ class NibblesUsermod : public Usermod {
       }
       if (display) {   // listening only (battery readings, in handle()); just the stream reports out
         abLoop();
+        apDefaultRoute();
         if (millis() - lastStream >= 1000) {
           lastStream = millis();
           sendStream();
