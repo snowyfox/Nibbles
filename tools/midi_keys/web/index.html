@@ -142,6 +142,10 @@ const CC_NAMES = { 1: "mod wheel", 7: "volume slider", 64: "sustain pedal", 66: 
 const LOW = 36, HIGH = 84;   // the KeyStudio 49 at its centre octave: C2 .. C6
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const BRI_MS = 80;           // brightness at most this often while the slider moves
+// The KeyStudio's slider is noisy: untouched, it wanders about 5 steps (122..127
+// seen). Its output only moves when the raw value leaves a band of +-SLIDER_H
+// around it, and that output's range is stretched back to 0..127.
+const SLIDER_H = 4;
 
 let keys = [];               // the base's key names, in its order
 let mapping = { buttons: {}, sliders: {} };
@@ -150,6 +154,8 @@ let selected = null;         // control whose MIDI keys the picture shows
 let pressed = new Set();     // base keys held down from MIDI
 let triggerDown = new Set(); // MIDI triggers held ("note:60", "cc:64")
 let ccValue = {};            // last value of each CC
+let sliderOut = {};          // each slider's output after the hysteresis (0..127), once it has moved
+let sliderRaw0 = {};         // the first value heard: no output until the slider moves away from it
 let midi = null, input = null;
 
 const $ = id => document.getElementById(id);
@@ -224,12 +230,33 @@ function brightness(v) {
   if (wait <= 0) go(); else briTimer = setTimeout(go, wait);
 }
 
+// The slider's position through the hysteresis band, 0..127, or null while it
+// hasn't moved (or the noise stays inside the band).
+function sliderValue(t, v) {
+  const H = SLIDER_H;
+  let o = sliderOut[t];
+  if (o === undefined) {
+    // not touched yet: wait for a real move away from where it was first heard
+    if (sliderRaw0[t] === undefined) { sliderRaw0[t] = v; return null; }
+    if (Math.abs(v - sliderRaw0[t]) <= H) return null;
+    o = v > sliderRaw0[t] ? v - H : v + H;
+  } else if (v > o + H) o = v - H;
+  else if (v < o - H) o = v + H;
+  else return null;
+  if (o === sliderOut[t]) return null;
+  sliderOut[t] = o;
+  return Math.max(0, Math.min(127, Math.round((o - H) * 127 / (127 - 2 * H))));
+}
+
 function slider(t, value) {
   ccValue[t] = value;
   if (learning && isSlider(learning)) return assign(learning, t);
   const s = slidersFor(t);
-  showLast(t, String(value));
-  for (const name of s) if (name === "brightness") brightness(Math.round(value * 255 / 127));
+  const v = sliderValue(t, value);
+  if (v !== null) {
+    showLast(t, String(value));
+    for (const name of s) if (name === "brightness") brightness(Math.round(v * 255 / 127));
+  }
   drawSide();
 }
 
@@ -321,10 +348,11 @@ function drawSide() {
   const sk = controlsFor(sl);
   $("sliderMap").textContent = sk.length ? sk.map(title).join(", ") : "not mapped";
   $("sliderBox").classList.toggle("sel", !!selected && trigList(selected).includes(sl));
-  const v = ccValue[sl];
-  $("sliderBar").style.width = v === undefined ? "0" : `${v / 127 * 100}%`;
-  $("sliderVal").textContent = v === undefined ? "move it to read" : `${v} / 127` +
-    (sk.includes("brightness") ? ` → bri ${Math.round(v * 255 / 127)}` : "");
+  const v = ccValue[sl], o = sliderOut[sl];
+  const out = o === undefined ? null : Math.max(0, Math.min(127, Math.round((o - SLIDER_H) * 127 / (127 - 2 * SLIDER_H))));
+  $("sliderBar").style.width = out === null ? "0" : `${out / 127 * 100}%`;
+  $("sliderVal").textContent = v === undefined ? "move it to read" : out === null ? `${v} / 127 (move it to take over)` :
+    `${v} / 127` + (sk.includes("brightness") ? ` → bri ${Math.round(out * 255 / 127)}` : "");
 }
 
 function select(c) {
