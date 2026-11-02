@@ -7,32 +7,61 @@
 <style>
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --line: #dde2e8;
-  --ok: #1f8a4c; --bad: #c0392b; --warn: #b7791f; --accent: #6d4aff; --chip: #eef0f4; --press: #ffd84d;
+  --ok: #1f8a4c; --bad: #c0392b; --warn: #b7791f; --accent: #6d4aff; --chip: #eef0f4; --press: #ffc400;
+  --white-key: #ffffff; --black-key: #23262b; --key-edge: #9aa3ad;
+  --mapped-white: #e4dcff; --mapped-black: #4a3d86; --sel: #6d4aff; --sel-text: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14161a; --card: #1d2026; --text: #e7eaee; --muted: #9aa4b1; --line: #2e333b;
-    --ok: #3cc27a; --bad: #ff6b5b; --warn: #e0a83a; --accent: #9b85ff; --chip: #2a2e36; --press: #c9a400;
+    --ok: #3cc27a; --bad: #ff6b5b; --warn: #e0a83a; --accent: #9b85ff; --chip: #2a2e36; --press: #ffc400;
+    --white-key: #e9ebee; --black-key: #0b0c0e; --key-edge: #5b636e;
+    --mapped-white: #cfc3ff; --mapped-black: #4f3f9c; --sel: #8a6cff; --sel-text: #ffffff;
   }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
-main { max-width: 980px; margin: 0 auto; padding: 16px; }
+main { max-width: 1040px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 20px; margin: 0 0 12px; }
-.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 0 6px; }
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
 .state { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 .sub { color: var(--muted); font-size: 13px; margin-top: 4px; word-break: break-word; }
 select, button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.learning { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* the keyboard */
+.kbd { display: flex; gap: 14px; align-items: stretch; }
+.kbd svg { flex: 1; min-width: 0; height: auto; display: block; user-select: none; }
+.kbd .side { display: flex; flex-direction: column; gap: 10px; width: 112px; flex: none; font-size: 12px; }
+.ctl { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; cursor: pointer; }
+.ctl.sel { outline: 2px solid var(--sel); }
+.ctl .t { color: var(--muted); }
+.ctl .v { font-weight: 700; font-size: 14px; }
+.ctl.on { background: color-mix(in srgb, var(--press) 45%, transparent); }
+.bar { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.bar > div { height: 100%; width: 0; background: var(--accent); }
+.key { cursor: pointer; }
+.key text { pointer-events: none; }
+.hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+@media (max-width: 640px) { .kbd { flex-direction: column; } .kbd .side { flex-direction: row; width: auto; } .kbd .side .ctl { flex: 1; } }
+
+/* the table */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 10px; }
+.toolbar .sub { margin: 0; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+tbody tr { cursor: pointer; }
 tr.pressed td { background: color-mix(in srgb, var(--press) 30%, transparent); }
+tr.sel td { box-shadow: inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
+tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--sel), inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
+tr.sel td:last-child { box-shadow: inset -2px 0 0 var(--sel), inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
 .name { font-weight: 700; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
 .what { color: var(--muted); font-size: 13px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 9px; margin: 2px 4px 2px 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; white-space: nowrap; }
@@ -40,8 +69,6 @@ tr.pressed td { background: color-mix(in srgb, var(--press) 30%, transparent); }
 .chip button:hover { color: var(--bad); }
 .none { color: var(--muted); font-style: italic; font-size: 13px; }
 .led { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); display: inline-block; }
-.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
-.toolbar .sub { margin: 0; }
 pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 12px; overflow-x: auto; max-height: 260px; overflow-y: auto; margin: 0; }
 .tablewrap { overflow-x: auto; }
 @media (max-width: 640px) { .what { display: none; } }
@@ -65,6 +92,18 @@ pre { background: var(--card); border: 1px solid var(--line); border-radius: 10p
     </div>
   </div>
 
+  <div class="card">
+    <div class="kbd">
+      <svg id="kbd" role="img" aria-label="The MIDI keyboard"></svg>
+      <div class="side">
+        <div class="ctl" id="pedalBox" title="Sustain pedal"><div class="t">Sustain pedal</div><div class="v" id="pedalMap">—</div></div>
+        <div class="ctl" id="sliderBox" title="Volume slider"><div class="t">Volume slider</div><div class="v" id="sliderMap">—</div>
+          <div class="bar"><div id="sliderBar"></div></div><div class="t" id="sliderVal"></div></div>
+      </div>
+    </div>
+    <p class="hint" id="kbdHint">Click a row below to see its keys here, or click a key here to find its row. Keys being pressed light up yellow.</p>
+  </div>
+
   <div class="toolbar">
     <button id="allUp" title="Send key up for every key held on the base">Release all keys</button>
     <button id="reset">Reset to default mapping</button>
@@ -73,12 +112,12 @@ pre { background: var(--card); border: 1px solid var(--line); border-radius: 10p
 
   <div class="card tablewrap">
     <table>
-      <thead><tr><th>Button</th><th>What it does</th><th>Keys</th><th></th><th>LED</th></tr></thead>
+      <thead><tr><th>Control</th><th>What it does</th><th>MIDI</th><th></th><th>LED</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
 
-  <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:16px 0 6px">Base log</h2>
+  <h2 class="sec">Base log</h2>
   <pre id="log"></pre>
 </main>
 
@@ -97,21 +136,32 @@ const WHAT = {
   flash: "Flash while held",
   unlock: "Hold 1 s: lock or unlock the keypad",
 };
+const SLIDERS = { brightness: "WLED brightness, 0 (off) to 255; to the Live brain, Standby follows" };
 const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const CC_NAMES = { 1: "mod wheel", 64: "sustain pedal", 66: "sostenuto pedal", 67: "soft pedal" };
+const CC_NAMES = { 1: "mod wheel", 7: "volume slider", 64: "sustain pedal", 66: "sostenuto pedal", 67: "soft pedal" };
+const LOW = 36, HIGH = 84;   // the KeyStudio 49 at its centre octave: C2 .. C6
+const BLACK = new Set([1, 3, 6, 8, 10]);
+const BRI_MS = 80;           // brightness at most this often while the slider moves
 
 let keys = [];               // the base's key names, in its order
-let mapping = { buttons: {} };
-let learning = null;         // key name waiting for a MIDI key
-let pressed = new Set();     // key names held down from MIDI
-let triggerDown = new Set(); // MIDI triggers held ("note:60")
+let mapping = { buttons: {}, sliders: {} };
+let learning = null;         // control waiting for a MIDI key or slider
+let selected = null;         // control whose MIDI keys the picture shows
+let pressed = new Set();     // base keys held down from MIDI
+let triggerDown = new Set(); // MIDI triggers held ("note:60", "cc:64")
+let ccValue = {};            // last value of each CC
 let midi = null, input = null;
 
 const $ = id => document.getElementById(id);
+const isSlider = c => c in SLIDERS;
+const controls = () => [...keys, ...Object.keys(SLIDERS)];
+const trigList = c => (isSlider(c) ? mapping.sliders : mapping.buttons)[c] || [];
+const title = c => c === "brightness" ? "BRIGHTNESS" : c.toUpperCase();
+const noteName = v => `${NOTE[v % 12]}${Math.floor(v / 12) - 1}`;
 const label = t => {
   const [kind, n] = t.split(":"); const v = +n;
-  if (kind === "note") return `${NOTE[v % 12]}${Math.floor(v / 12) - 1} (${v})`;
-  return `${CC_NAMES[v] || "CC " + v}`;
+  if (kind === "note") return `${noteName(v)} (${v})`;
+  return CC_NAMES[v] || "CC " + v;
 };
 
 // --- talking to the bridge, one request at a time so downs and ups stay in order
@@ -122,9 +172,9 @@ function post(path, body) {
   return chain;
 }
 
-function buttonsFor(trigger) {
-  return keys.filter(k => (mapping.buttons[k] || []).includes(trigger));
-}
+const buttonsFor = t => keys.filter(k => (mapping.buttons[k] || []).includes(t));
+const slidersFor = t => Object.keys(SLIDERS).filter(s => (mapping.sliders[s] || []).includes(t));
+const controlsFor = t => [...buttonsFor(t), ...slidersFor(t)];
 
 function setKey(name, down) {
   if (down === pressed.has(name)) return;
@@ -134,23 +184,53 @@ function setKey(name, down) {
   if (row) row.classList.toggle("pressed", down);
 }
 
-// A trigger went down or up: every button it is mapped to follows, but a
-// button with two triggers (a key and the pedal) stays down while either is.
+function assign(control, t) {
+  for (const k of keys) mapping.buttons[k] = (mapping.buttons[k] || []).filter(x => x !== t);
+  for (const s of Object.keys(SLIDERS)) mapping.sliders[s] = (mapping.sliders[s] || []).filter(x => x !== t);
+  const list = isSlider(control) ? mapping.sliders : mapping.buttons;
+  (list[control] = list[control] || []).push(t);
+  learning = null;
+  selected = control;
+  save(); render();
+}
+
+function showLast(t, what) {
+  const c = controlsFor(t);
+  $("lastMidi").textContent = `Last: ${label(t)} ${what}` + (c.length ? ` → ${c.map(title).join(", ")}` : " (not mapped)");
+}
+
+// A key or pedal went down or up: every base key it is mapped to follows, but
+// a base key with two triggers (a key and the pedal) stays down while either is.
 function trigger(t, down) {
-  $("lastMidi").textContent = `Last: ${label(t)} ${down ? "down" : "up"}` +
-    (buttonsFor(t).length ? ` → ${buttonsFor(t).join(", ")}` : " (not mapped)");
-  if (learning && down) {
-    for (const k of keys) mapping.buttons[k] = (mapping.buttons[k] || []).filter(x => x !== t);
-    (mapping.buttons[learning] = mapping.buttons[learning] || []).push(t);
-    learning = null;
-    save(); render();
-    return;
-  }
+  showLast(t, down ? "down" : "up");
+  if (learning && down && !isSlider(learning)) return assign(learning, t);
   down ? triggerDown.add(t) : triggerDown.delete(t);
-  for (const k of buttonsFor(t)) {
-    const held = (mapping.buttons[k] || []).some(x => triggerDown.has(x));
-    setKey(k, held);
-  }
+  for (const k of buttonsFor(t)) setKey(k, (mapping.buttons[k] || []).some(x => triggerDown.has(x)));
+  drawKeyboard();
+}
+
+// --- brightness from a slider: the newest value, at most every BRI_MS
+let briWant = null, briSent = null, briTimer = null, briLast = 0;
+function brightness(v) {
+  briWant = v;
+  if (briTimer) return;
+  const go = () => {
+    briTimer = null;
+    if (briWant === briSent) return;
+    briSent = briWant; briLast = performance.now();
+    post("/api/brightness", { value: briSent });
+  };
+  const wait = BRI_MS - (performance.now() - briLast);
+  if (wait <= 0) go(); else briTimer = setTimeout(go, wait);
+}
+
+function slider(t, value) {
+  ccValue[t] = value;
+  if (learning && isSlider(learning)) return assign(learning, t);
+  const s = slidersFor(t);
+  showLast(t, String(value));
+  for (const name of s) if (name === "brightness") brightness(Math.round(value * 255 / 127));
+  drawSide();
 }
 
 function onMidi(e) {
@@ -159,8 +239,13 @@ function onMidi(e) {
   if (type === 0x90 && d2 > 0) trigger(`note:${d1}`, true);
   else if (type === 0x80 || (type === 0x90 && d2 === 0)) trigger(`note:${d1}`, false);
   else if (type === 0xb0) {
-    const t = `cc:${d1}`, down = d2 >= 64;
+    const t = `cc:${d1}`;
+    // a CC mapped to a slider (or being learned as one) is a value; any other is a switch (pedals)
+    if (slidersFor(t).length || (learning && isSlider(learning))) return slider(t, d2);
+    ccValue[t] = d2;
+    const down = d2 >= 64;
     if (down !== triggerDown.has(t)) trigger(t, down);
+    else drawSide();
   }
 }
 
@@ -168,7 +253,96 @@ function releaseAll() {
   triggerDown.clear();
   for (const k of [...pressed]) setKey(k, false);
   post("/api/allup", {});
+  drawKeyboard();
 }
+
+// --- the keyboard picture
+const WW = 22, WH = 120, BW = 13, BH = 74;
+function drawKeyboard() {
+  const svg = $("kbd");
+  const notes = []; for (let n = LOW; n <= HIGH; n++) notes.push(n);
+  const whites = notes.filter(n => !BLACK.has(n % 12));
+  svg.setAttribute("viewBox", `0 0 ${whites.length * WW + 1} ${WH + 1}`);
+  const selTrig = selected ? trigList(selected) : [];
+  const css = getComputedStyle(document.documentElement);
+  const col = v => css.getPropertyValue(v).trim();
+  let out = "";
+  const keyFor = n => buttonsFor(`note:${n}`)[0];
+  const fill = (n, black) => {
+    const t = `note:${n}`;
+    if (triggerDown.has(t)) return col("--press");
+    if (selTrig.includes(t)) return col("--sel");
+    if (keyFor(n)) return col(black ? "--mapped-black" : "--mapped-white");
+    return col(black ? "--black-key" : "--white-key");
+  };
+  const textCol = (n, black) => {
+    const t = `note:${n}`;
+    if (selTrig.includes(t) && !triggerDown.has(t)) return col("--sel-text");
+    if (triggerDown.has(t)) return "#1b1f24";
+    return black ? "#ffffff" : "#1b1f24";
+  };
+  let wi = 0;
+  const pos = {};
+  for (const n of whites) pos[n] = wi++ * WW;
+  // white keys first, then black keys on top
+  for (const n of whites) {
+    const x = pos[n], k = keyFor(n);
+    out += `<g class="key" data-note="${n}"><title>${noteName(n)} (${n})${k ? " → " + title(k) : ""}</title>` +
+      `<rect x="${x + .5}" y=".5" width="${WW}" height="${WH}" rx="2" fill="${fill(n, false)}" stroke="${col("--key-edge")}"/>` +
+      `<text x="${x + WW / 2 + .5}" y="${WH - 6}" font-size="8" text-anchor="middle" fill="${textCol(n, false)}"` +
+      ` font-weight="${n % 12 === 0 ? 700 : 400}">${noteName(n)}</text>`;
+    if (k) out += `<text transform="translate(${x + WW / 2 + 3.5} ${WH - 20}) rotate(-90)" font-size="10" font-weight="700"` +
+      ` fill="${textCol(n, false)}">${title(k)}</text>`;
+    out += `</g>`;
+  }
+  for (const n of notes.filter(n => BLACK.has(n % 12))) {
+    const x = pos[n - 1] + WW - BW / 2 + .5, k = keyFor(n);
+    out += `<g class="key" data-note="${n}"><title>${noteName(n)} (${n})${k ? " → " + title(k) : ""}</title>` +
+      `<rect x="${x}" y=".5" width="${BW}" height="${BH}" rx="1.5" fill="${fill(n, true)}" stroke="${col("--key-edge")}"/>`;
+    if (k) out += `<text transform="translate(${x + BW / 2 + 3} ${BH - 6}) rotate(-90)" font-size="9" font-weight="700"` +
+      ` fill="${textCol(n, true)}">${title(k)}</text>`;
+    out += `</g>`;
+  }
+  svg.innerHTML = out;
+  const outside = selTrig.filter(t => t.startsWith("note:") && (+t.slice(5) < LOW || +t.slice(5) > HIGH));
+  $("kbdHint").textContent = outside.length
+    ? `${title(selected)} is also on ${outside.map(label).join(", ")}, outside this keyboard's range at the centre octave.`
+    : "Click a row below to see its keys here, or click a key here to find its row. Keys being pressed light up yellow.";
+  drawSide();
+}
+
+function drawSide() {
+  const pedal = "cc:64";
+  const pk = controlsFor(pedal);
+  $("pedalMap").textContent = pk.length ? pk.map(title).join(", ") : "not mapped";
+  $("pedalBox").classList.toggle("on", triggerDown.has(pedal));
+  $("pedalBox").classList.toggle("sel", !!selected && trigList(selected).includes(pedal));
+  const sl = "cc:7";
+  const sk = controlsFor(sl);
+  $("sliderMap").textContent = sk.length ? sk.map(title).join(", ") : "not mapped";
+  $("sliderBox").classList.toggle("sel", !!selected && trigList(selected).includes(sl));
+  const v = ccValue[sl];
+  $("sliderBar").style.width = v === undefined ? "0" : `${v / 127 * 100}%`;
+  $("sliderVal").textContent = v === undefined ? "move it to read" : `${v} / 127` +
+    (sk.includes("brightness") ? ` → bri ${Math.round(v * 255 / 127)}` : "");
+}
+
+function select(c) {
+  selected = selected === c ? null : c;
+  document.querySelectorAll("#rows tr").forEach(tr => tr.classList.toggle("sel", tr.dataset.key === selected));
+  drawKeyboard();
+}
+
+$("kbd").addEventListener("click", e => {
+  const g = e.target.closest(".key");
+  if (!g) return;
+  const t = `note:${g.dataset.note}`;
+  const c = controlsFor(t)[0];
+  $("lastMidi").textContent = `${label(t)}` + (c ? ` → ${title(c)}` : " (not mapped)");
+  if (c) { if (selected !== c) select(c); document.querySelector(`tr[data-key="${CSS.escape(c)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+});
+$("pedalBox").onclick = () => { const c = controlsFor("cc:64")[0]; if (c) select(c); };
+$("sliderBox").onclick = () => { const c = controlsFor("cc:7")[0]; if (c) select(c); };
 
 // --- the MIDI keyboard
 function pickInput() {
@@ -190,8 +364,7 @@ function pickInput() {
   }
   let want = null;
   try { want = localStorage.getItem("midiInput"); } catch (_) {}
-  input = inputs.find(i => i.id === sel.value && i.id === want) || inputs.find(i => i.id === want) ||
-          inputs.find(i => /keystudio|m-audio/i.test(i.name)) || inputs[0];
+  input = inputs.find(i => i.id === want) || inputs.find(i => /keystudio|m-audio/i.test(i.name)) || inputs[0];
   sel.value = input.id;
   input.onmidimessage = onMidi;
   $("midiDot").className = "dot ok";
@@ -224,14 +397,16 @@ async function startMidi() {
 function render() {
   const rows = $("rows");
   rows.innerHTML = "";
-  for (const k of keys) {
+  for (const k of controls()) {
+    const slider = isSlider(k);
     const tr = document.createElement("tr");
     tr.dataset.key = k;
     if (pressed.has(k)) tr.classList.add("pressed");
-    const trig = mapping.buttons[k] || [];
-    tr.innerHTML = `<td class="name">${k.toUpperCase()}</td><td class="what"></td><td class="trig"></td>` +
+    if (selected === k) tr.classList.add("sel");
+    const trig = trigList(k);
+    tr.innerHTML = `<td class="name">${title(k)}</td><td class="what"></td><td class="trig"></td>` +
       `<td><button class="learn"></button></td><td><span class="led"></span></td>`;
-    tr.querySelector(".what").textContent = WHAT[k] || "";
+    tr.querySelector(".what").textContent = slider ? SLIDERS[k] : WHAT[k] || "";
     const cell = tr.querySelector(".trig");
     if (!trig.length) cell.innerHTML = `<span class="none">not mapped</span>`;
     for (const t of trig) {
@@ -240,28 +415,34 @@ function render() {
       chip.textContent = label(t);
       const x = document.createElement("button");
       x.textContent = "×"; x.title = "Remove";
-      x.onclick = () => {
-        mapping.buttons[k] = trig.filter(y => y !== t);
-        if (triggerDown.has(t)) { triggerDown.delete(t); setKey(k, false); }
+      x.onclick = e => {
+        e.stopPropagation();
+        const list = slider ? mapping.sliders : mapping.buttons;
+        list[k] = trig.filter(y => y !== t);
+        if (!slider && triggerDown.has(t)) { triggerDown.delete(t); setKey(k, false); }
         save(); render();
       };
       chip.appendChild(x);
       cell.appendChild(chip);
     }
     const b = tr.querySelector(".learn");
-    b.textContent = learning === k ? "Press a key… (Esc)" : "Add key";
+    b.textContent = learning === k ? (slider ? "Move a slider… (Esc)" : "Press a key… (Esc)") : (slider ? "Add slider" : "Add key");
     b.classList.toggle("learning", learning === k);
-    b.onclick = () => { learning = learning === k ? null : k; render(); };
+    b.onclick = e => { e.stopPropagation(); learning = learning === k ? null : k; render(); };
+    if (slider) tr.querySelector(".led").remove();
+    tr.onclick = () => select(k);
     rows.appendChild(tr);
   }
   paintLeds();
+  drawKeyboard();
 }
 
 let leds = [];
 function paintLeds() {
-  document.querySelectorAll("#rows tr").forEach((tr, i) => {
-    const c = leds[keys.indexOf(tr.dataset.key)];
+  document.querySelectorAll("#rows tr").forEach(tr => {
     const el = tr.querySelector(".led");
+    if (!el) return;
+    const c = leds[keys.indexOf(tr.dataset.key)];
     el.style.background = c && /^[0-9a-f]{6}$/i.test(c) ? "#" + c : "transparent";
     el.title = c ? "#" + c : "no colour from the base";
   });
@@ -270,6 +451,7 @@ function paintLeds() {
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && learning) { learning = null; render(); }
 });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawKeyboard);
 
 let saveTimer = null;
 async function save() {
@@ -303,7 +485,9 @@ async function poll() {
     $("baseDot").className = b.connected ? "dot ok" : "dot bad";
     $("baseState").textContent = b.connected ? "Connected" : "Not connected";
     $("baseSub").textContent = b.connected
-      ? `${b.port} (USB ${b.serial}) · ${b.sent} key events sent` + (b.held.length ? ` · held: ${b.held.join(", ")}` : "")
+      ? `${b.port} (USB ${b.serial}) · ${b.sent} commands sent` +
+        (b.wled_bri !== null && b.wled_bri !== undefined ? ` · WLED brightness ${b.wled_bri}` : "") +
+        (b.held.length ? ` · held: ${b.held.join(", ")}` : "")
       : `${b.error || ""} — looking for USB ${b.serial}`;
     // a base that comes back has nothing held: forget what we think is held
     if (wasConnected === false && b.connected) { triggerDown.clear(); pressed.clear(); render(); }
@@ -325,9 +509,12 @@ addEventListener("pagehide", () => navigator.sendBeacon("/api/allup", new Blob([
     const s = await (await fetch("/api/status")).json();
     keys = s.keys;
     mapping = (await (await fetch("/api/mapping")).json()).mapping;
+    if (!mapping.sliders) mapping.sliders = (await (await fetch("/api/mapping/default")).json()).mapping.sliders || {};
   } catch (_) {
     keys = ["1","2","3","4","5","6","7","8","all","body","eyes","fins","page","latch","blackout","finsensor","take","flash","unlock"];
   }
+  mapping.buttons = mapping.buttons || {};
+  mapping.sliders = mapping.sliders || {};
   render();
   poll();
   startMidi();

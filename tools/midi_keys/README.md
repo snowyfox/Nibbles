@@ -2,8 +2,9 @@
 
 Plays the real base station's keypad from a MIDI keyboard (an M-Audio
 KeyStudio here), for testing before the keypads exist. No screen: a status
-page shows whether the keyboard and the base are connected, every base key
-with the MIDI keys mapped to it, and lets you remap them.
+page shows whether the keyboard and the base are connected, a picture of the
+keyboard with each key's mapping, every base key with the MIDI keys mapped to
+it, and lets you remap them. The volume slider sets WLED's brightness.
 
 ```
 python3 tools/midi_keys/server.py        # then open http://localhost:8090/ in Chrome
@@ -27,6 +28,17 @@ doesn't have.
   port can restart the base: give it ~15 s to find the radio channel.
 - The key names come from the firmware (`key_names` in
   `firmware/base/main/controls.c`), so a new key appears on the page by itself.
+- **Brightness:** the volume slider (CC 7) sends `wled bri N` (0 at the
+  bottom, which turns WLED off, to 255 at the top), at most every 80 ms while
+  it moves. The base sends it to the Live brain; the Standby brain follows
+  within a second (the base's Standby sync). The base status card shows the
+  brightness WLED reports. Other sliders or the mod wheel can be added to
+  BRIGHTNESS with **Add slider**.
+- **The keyboard picture** (the KeyStudio 49 at its centre octave, C2 to C6)
+  labels every white key with its note and every mapped key with its base
+  key. Click a row to light its keys (and the pedal or slider) in purple;
+  click a key in the picture to find its row. Keys being pressed light up
+  yellow, so it also shows which note you're on.
 - The page shows each key's LED colour as the base lights it (`leds on`) and
   the end of the base's log, where every key shows as `key NAME down|up`.
 - Closing the page, a base that goes away, or **Release all keys** lets go of

@@ -1,23 +1,67 @@
 {
   "buttons": {
-    "all": ["note:48"],
-    "body": ["note:50"],
-    "eyes": ["note:52"],
-    "fins": ["note:53"],
-    "page": ["note:55"],
-    "latch": ["note:57", "cc:64"],
-    "take": ["note:59"],
-    "1": ["note:60"],
-    "2": ["note:62"],
-    "3": ["note:64"],
-    "4": ["note:65"],
-    "5": ["note:67"],
-    "6": ["note:69"],
-    "7": ["note:71"],
-    "8": ["note:72"],
-    "flash": ["note:74"],
-    "blackout": ["note:76"],
-    "finsensor": ["note:77"],
-    "unlock": ["note:79"]
+    "all": [
+      "note:48"
+    ],
+    "body": [
+      "note:50"
+    ],
+    "eyes": [
+      "note:52"
+    ],
+    "fins": [
+      "note:53"
+    ],
+    "page": [
+      "note:55"
+    ],
+    "latch": [
+      "note:57",
+      "cc:64"
+    ],
+    "take": [
+      "note:59"
+    ],
+    "1": [
+      "note:60"
+    ],
+    "2": [
+      "note:62"
+    ],
+    "3": [
+      "note:64"
+    ],
+    "4": [
+      "note:65"
+    ],
+    "5": [
+      "note:67"
+    ],
+    "6": [
+      "note:69"
+    ],
+    "7": [
+      "note:71"
+    ],
+    "8": [
+      "note:72"
+    ],
+    "flash": [
+      "note:74"
+    ],
+    "blackout": [
+      "note:76"
+    ],
+    "finsensor": [
+      "note:77"
+    ],
+    "unlock": [
+      "note:79"
+    ]
+  },
+  "sliders": {
+    "brightness": [
+      "cc:7"
+    ]
   }
 }

@@ -12,8 +12,11 @@ then open http://localhost:8090/ in Chrome (Web MIDI) and allow MIDI.
   ioreg, and found again when it comes back after a restart or a replug.
   Opening the port can restart the base: give it ~15 s to find the radio.
 - The key mapping lives in mapping.json next to this file (the page edits it).
-- The page also shows the base's key LED colours ("leds on") and the end of
-  its log, to see that the keys arrive.
+- A slider (the KeyStudio's volume slider, CC 7) sets WLED's brightness:
+  "wled bri N" (0..255) to the base, which sends it to the Live brain (the
+  Standby brain follows within a second).
+- The page also shows the base's key LED colours ("leds on"), WLED's
+  brightness from the base's status line, and the end of its log.
 """
 import argparse
 import json
@@ -55,6 +58,7 @@ def key_names():
 
 
 KEYS = key_names()
+SLIDERS = ["brightness"]
 
 
 def find_base_port():
@@ -90,6 +94,7 @@ class Base:
         self.error = "not looked for yet"
         self.down = set()           # keys this bridge holds down on the base
         self.sent = 0
+        self.wled_bri = None        # WLED's brightness, from the base's status line
         threading.Thread(target=self.run, daemon=True).start()
 
     def open(self):
@@ -147,6 +152,13 @@ class Base:
             (self.down.add if down else self.down.discard)(name)
         return ok
 
+    def brightness(self, value):
+        value = max(0, min(255, int(value)))
+        ok = self.write(f"wled bri {value}")
+        if ok:
+            self.sent += 1
+        return ok
+
     def all_up(self):
         for name in list(self.down):
             self.key(name, False)
@@ -180,7 +192,11 @@ class Base:
                 if line.startswith("LEDS "):
                     self.leds = line[5:].split(",")
                     self.leds_at = time.monotonic()
-                elif line and not re.fullmatch(r"[A-Za-z0-9+/=]{40,}", line):
+                    continue
+                m = re.search(r"wled: (on|off) bri (\d+)", line)
+                if m:
+                    self.wled_bri = int(m.group(2)) if m.group(1) == "on" else 0
+                if line and not re.fullmatch(r"[A-Za-z0-9+/=]{40,}", line):
                     self.note(line)
             # "leds on" is forgotten when the base restarts without the port
             # going away: ask again while no colours have come
@@ -210,6 +226,14 @@ def valid_mapping(m):
         if name not in KEYS or not isinstance(triggers, list):
             return False
         if not all(isinstance(t, str) and re.fullmatch(r"(note|cc):\d{1,3}", t) for t in triggers):
+            return False
+    sliders = m.get("sliders", {})
+    if not isinstance(sliders, dict):
+        return False
+    for name, triggers in sliders.items():
+        if name not in SLIDERS or not isinstance(triggers, list):
+            return False
+        if not all(isinstance(t, str) and re.fullmatch(r"cc:\d{1,3}", t) for t in triggers):
             return False
     return True
 
@@ -241,7 +265,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             return self.reply(200, {
                 "base": {"connected": base.fd is not None, "port": base.port, "error": base.error,
-                         "serial": BASE_SERIAL, "held": sorted(base.down), "sent": base.sent},
+                         "serial": BASE_SERIAL, "held": sorted(base.down), "sent": base.sent,
+                         "wled_bri": base.wled_bri},
                 "keys": KEYS,
                 "leds": base.leds,
                 "log": base.log[-25:],
@@ -258,6 +283,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/key":
             m = self.body() or {}
             ok = base.key(str(m.get("name")), bool(m.get("down")))
+            return self.reply(200 if ok else 409, {"ok": ok})
+        if self.path == "/api/brightness":
+            m = self.body() or {}
+            try:
+                ok = base.brightness(m.get("value"))
+            except (TypeError, ValueError):
+                return self.reply(400, {"ok": False})
             return self.reply(200 if ok else 409, {"ok": ok})
         if self.path == "/api/allup":
             base.all_up()
