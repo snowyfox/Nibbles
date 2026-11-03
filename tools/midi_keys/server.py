@@ -37,7 +37,7 @@ MAPPING = os.path.join(HERE, "mapping.json")
 DEFAULT_MAPPING = os.path.join(HERE, "mapping.default.json")
 CONTROLS_C = os.path.join(REPO, "firmware", "base", "main", "controls.c")
 
-BASE_SERIAL = "28:84:85:91:27:08"   # the base prototype's USB serial number (its MAC)
+BASE_SERIAL = "80:45:6B:35:D0:14"   # the base's USB serial number (its MAC)
 LOG_LINES = 60
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 

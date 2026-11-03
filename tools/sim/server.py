@@ -369,7 +369,7 @@ base = Base()
 
 # ------------------------------------------------------------------ the real base, on USB
 
-BASE_SERIAL = "28:84:85:91:27:08"   # the base prototype's USB serial number (its MAC)
+BASE_SERIAL = "80:45:6B:35:D0:14"   # the base's USB serial number (its MAC)
 
 
 def find_base_port():

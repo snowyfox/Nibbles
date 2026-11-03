@@ -360,4 +360,4 @@ Earlier features, still there (`main/main.c`):
     the main end was switched on with nothing attached ("no mirror", no harm).
 
 Build: `idf.py -C firmware/base build`, flash to the base board's port
-(check its serial number, 28:84:85:91:27:08, first).
+(check its serial number, 80:45:6B:35:D0:14, first; the base before 2026-11-02 was 28:84:85:91:27:08).

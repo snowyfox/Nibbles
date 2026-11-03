@@ -332,8 +332,10 @@ streams every LED (DDP, physical LED order) to the controller, which only
 displays them. **The main board is the brain**: everything Nibbles-specific
 runs there; the controller is a display.
 
-- **Main board** (for now the bench 3.49: MAC 80:45:6b:35:d0:14,
-  `nibbles_dev_s3_349`, at 4.3.2.2 on the controller's network):
+- **Main board** (first the bench 3.49: MAC 80:45:6b:35:d0:14,
+  `nibbles_dev_s3_349`, at 4.3.2.2 on the controller's network; since
+  2026-11-02 that board is the base, its WLED flash saved in
+  `wled/backup/20261102-bench349-pre-base/`, and the brains do this job):
   - the shark's config and presets, the 2D map with the fin panel, fin
     presets, and the presets' eye settings;
   - one network LED output of 1064 LEDs (DDP) to 4.3.2.1;
