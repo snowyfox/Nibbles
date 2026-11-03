@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "nibbles_link.h"
+#include "wled_palettes.h"
 
 #define SLOT_BIT(t) (1u << (t))
 
@@ -18,6 +19,7 @@ static const char *const key_names[] = {
     "layer9", "layer10", "layer11", "layer12", "layer13", "layer14", "layer15", "layer16",
     "bright1", "bright2", "bright3", "bright4", "bright5", "bright6", "bright7", "bright8",
     "polepower",
+    "left", "right", "up", "down",
 };
 _Static_assert(sizeof(key_names) / sizeof(key_names[0]) == KEY_COUNT, "a name for every key");
 
@@ -44,11 +46,16 @@ const char *ctl_page_name(int page)
 
 const char *ctl_palette_name(const ctl_t *c, int palette)
 {
-    static const char *const names[CTL_PALETTES] = CTL_DEFAULT_PALETTE_NAMES;
-    static const uint8_t defaults[CTL_PALETTES] = CTL_DEFAULT_PALETTES;
-    for (int i = 0; i < CTL_PALETTES; i++)
-        if (c->palettes[i] == palette && defaults[i] == palette) return names[i];
-    return NULL;
+    (void)c;
+    return palette >= 0 && palette < WLED_PALETTE_COUNT ? wled_palettes[palette].name : NULL;
+}
+
+#define PAL_SETS ((WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS)
+
+int ctl_set_palette(const ctl_t *c, int n)
+{
+    const int id = c->pal_set * CTL_PALETTE_ROWS + n - 1;
+    return n >= 1 && n <= CTL_PALETTE_ROWS && id < WLED_PALETTE_COUNT ? id : -1;
 }
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms)
@@ -172,11 +179,14 @@ static ctl_target_t key_target(ctl_key_t k)
 }
 
 // What a number or a key of its own stands for.
-enum { FN_NONE = 0, FN_PRESET, FN_PALETTE, FN_LAYER, FN_BRIGHT };
+// FN_PALETTE is a favourite (PALETTE1-8); FN_WLED_PALETTE any of WLED's, by
+// id + 1 (a number in palette mode: the viewer's set).
+enum { FN_NONE = 0, FN_PRESET, FN_PALETTE, FN_LAYER, FN_BRIGHT, FN_WLED_PALETTE };
 typedef struct {
     int kind;
-    int n;           // 1-based: preset, palette key, layer look, brightness eighth
+    int n;           // 1-based: preset, favourite palette, layer look, brightness eighth, WLED palette id + 1
 } fn_t;
+static bool is_pal(int kind) { return kind == FN_PALETTE || kind == FN_WLED_PALETTE; }
 
 // The number key's number (1-16), or 0.
 static int num_of(ctl_key_t k)
@@ -197,7 +207,8 @@ int ctl_mode(const ctl_t *c)
 
 static fn_t fn_make(int kind, int n)
 {
-    const int max = kind == FN_PRESET ? CTL_PRESETS : kind == FN_PALETTE ? CTL_PALETTES : kind == FN_LAYER ? CTL_LAYERS : CTL_BRIGHTS;
+    const int max = kind == FN_PRESET ? CTL_PRESETS : kind == FN_PALETTE ? CTL_PALETTES : kind == FN_LAYER ? CTL_LAYERS
+                  : kind == FN_WLED_PALETTE ? WLED_PALETTE_COUNT : CTL_BRIGHTS;
     return n >= 1 && n <= max ? (fn_t){ kind, n } : (fn_t){ FN_NONE, 0 };
 }
 
@@ -205,7 +216,11 @@ static fn_t fn_make(int kind, int n)
 static fn_t number_fn(const ctl_t *c, int n)
 {
     const int mode = c->down[KEY_PAGE] ? PAGE_BRIGHT : ctl_mode(c);
-    return fn_make(mode == PAGE_PALETTES ? FN_PALETTE : mode == PAGE_LAYERS ? FN_LAYER : mode == PAGE_BRIGHT ? FN_BRIGHT : FN_PRESET, n);
+    if (mode == PAGE_PALETTES) {
+        const int id = ctl_set_palette(c, n);
+        return id < 0 ? (fn_t){ FN_NONE, 0 } : fn_make(FN_WLED_PALETTE, id + 1);
+    }
+    return fn_make(mode == PAGE_LAYERS ? FN_LAYER : mode == PAGE_BRIGHT ? FN_BRIGHT : FN_PRESET, n);
 }
 
 // A key of its own (PRESET3, LAYER12, ...), whatever is held.
@@ -224,6 +239,7 @@ static int fn_value(const ctl_t *c, fn_t f)
     switch (f.kind) {
         case FN_PRESET:  return f.n;
         case FN_PALETTE: return c->palettes[f.n - 1];
+        case FN_WLED_PALETTE: return f.n - 1;
         case FN_LAYER:   return NL_LAYER_PRESET_BASE + f.n;
         case FN_BRIGHT:  return f.n * 255 / CTL_BRIGHTS;
         default:         return 0;
@@ -253,7 +269,7 @@ static void latch_layered(ctl_t *c, out_t *o)
     const int v = c->num_preset;
     const ctl_layers_t old = c->num_layers;
     ctl_layers_t *q = &c->standby_layers;
-    if (c->num_kind == FN_PALETTE) {
+    if (is_pal(c->num_kind)) {
         if (on_body(c, c->target)) {
             emit(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, 0, v);
             c->layers.body_pal = v;
@@ -314,7 +330,7 @@ static void stage_layered(ctl_t *c, fn_t f)
     ctl_layers_t *q = &c->standby_layers;
     const bool body = on_body(c, c->target), fins = c->target == TGT_FINS || (c->target == TGT_ALL && c->standby.fins > 0);
     const int v = fn_value(c, f);
-    if (f.kind == FN_PALETTE) {
+    if (is_pal(f.kind)) {
         if (body) q->body_pal = v;
         if (fins) q->fins_pal = v;
     } else {
@@ -499,7 +515,7 @@ static void fn_press(ctl_t *c, out_t *o, ctl_key_t key, fn_t f)
     c->num_preset = fn_value(c, f);
     c->num_layers = c->layers;
     if (f.kind == FN_PRESET) bump_target(c, o, c->target, NL_BUMP_PRESET, c->num_preset);
-    else bump_layered(c, o, f.kind == FN_PALETTE, c->num_preset);
+    else bump_layered(c, o, is_pal(f.kind), c->num_preset);
 }
 
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out)
@@ -562,6 +578,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         case KEY_POLE_POWER:
             if (down) emit(&o, ACT_POLE_POWER, 0, 0, 0);
+            break;
+        case KEY_LEFT: case KEY_RIGHT: case KEY_UP: case KEY_DOWN:
+            if (down && ctl_mode(c) == PAGE_PALETTES) {   // the palette viewer: the set before or after, round
+                const int step = key == KEY_LEFT || key == KEY_UP ? PAL_SETS - 1 : 1;
+                c->pal_set = (c->pal_set + step) % PAL_SETS;
+            }
             break;
         case KEY_FIN_SENSOR:
             if (down) {
@@ -719,7 +741,7 @@ static uint32_t fn_color(const ctl_t *c, fn_t f, const ctl_layers_t *sb)
         return live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : preset > 8 ? C_PAGE2 : C_IDLE;
     }
     if (c->target == TGT_EYES) return C_OFF;   // the eyes have no layers
-    const bool pal = f.kind == FN_PALETTE;
+    const bool pal = is_pal(f.kind);
     const int v = fn_value(c, f);
     const bool live = (on_body(c, c->target) && v == (pal ? c->layers.body_pal : c->layers.body_layer)) ||
                       (c->target == TGT_FINS && v == (pal ? c->layers.fins_pal : c->layers.fins_layer));
@@ -750,6 +772,8 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     rgb[KEY_MOD_LAYER] = c->down[KEY_MOD_LAYER] ? 0xffffff : 0x006050;
     rgb[KEY_MOD_BRIGHT] = c->down[KEY_MOD_BRIGHT] ? 0xffffff : 0x504000;
     rgb[KEY_POLE_POWER] = c->down[KEY_POLE_POWER] ? 0xff0000 : 0x301000;
+    for (int k = KEY_LEFT; k <= KEY_DOWN; k++)   // lit while they do something: palettes showing
+        rgb[k] = c->down[k] ? 0xffffff : ctl_mode(c) == PAGE_PALETTES ? 0x404040 : C_OFF;
     for (int k = KEY_ALL; k <= KEY_FINS; k++) {
         const ctl_target_t t = key_target((ctl_key_t)k);
         rgb[k] = t == c->target ? target_color(t) : dim(target_color(t), 12);

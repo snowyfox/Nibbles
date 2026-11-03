@@ -336,6 +336,18 @@ static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 static volatile int64_t page_locked_since;
 #define WIFI_KEY_HOLD_US 5000000
 
+// The palette viewer follows the keys: on while the numbers are palettes.
+// Call with ctl_mutex held.
+static void palettes_show(const ctl_t *c)
+{
+    uint32_t held = 0;
+    for (int n = 1; n <= CTL_NUMBERS; n++) {
+        const ctl_key_t k = n <= 8 ? (ctl_key_t)(KEY_NUM1 + n - 1) : (ctl_key_t)(KEY_NUM9 + n - 9);
+        if (c->down[k]) held |= 1u << (n - 1);
+    }
+    display_palettes(!c->locked && ctl_mode(c) == PAGE_PALETTES, c->pal_set, held);
+}
+
 static void on_key(ctl_key_t key, bool down)
 {
     ctl_action_t a[CTL_MAX_ACTIONS];
@@ -343,6 +355,7 @@ static void on_key(ctl_key_t key, bool down)
     xSemaphoreTake(ctl_mutex, portMAX_DELAY);
     if (key == KEY_PAGE) page_locked_since = down && ctl.locked ? esp_timer_get_time() : 0;
     const int n = ctl_key(&ctl, key, down, now_ms(), a);
+    palettes_show(&ctl);
     xSemaphoreGive(ctl_mutex);
     ESP_LOGI(TAG, "key %s %s", ctl_key_name(key), down ? "down" : "up");
     run_ctl_actions(a, n);
@@ -886,6 +899,7 @@ void app_main(void)
         }
         ctl_led_colors(&ctl, now_ms(), rgb);
         const ctl_t c = ctl;
+        palettes_show(&c);   // also after a lock that came by itself
         xSemaphoreGive(ctl_mutex);
         run_ctl_actions(ab_acts, nab);
         run_ctl_actions(acts, nacts);

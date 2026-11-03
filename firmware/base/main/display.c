@@ -25,6 +25,7 @@
 #include "fin_pos.h"
 #include "eye_thumb.h"
 #include "shark_pos.h"
+#include "wled_palettes.h"
 
 static const char *TAG = "display";
 
@@ -1342,6 +1343,150 @@ static void main_update(const display_status_t *s)
     lv_label_set_text(m.stby.title, s->ab_live < 0 ? "STANDBY" : s->ab_live ? "STANDBY A" : "STANDBY B");
 }
 
+
+// ------------------------------------------------------------------ the palette viewer
+// A full screen over the pages: a title with the set and the arrows, then
+// CTL_PALETTE_ROWS rows, each the key's number, the palette's name and its
+// colours as WLED blends its 16 (a CRGBPalette16, wled_palettes.h).
+#define PV_TOP     44
+#define PV_ROW     ((640 - PV_TOP) / CTL_PALETTE_ROWS)   // 74 for 8 rows, 37 for 16
+#define PV_BAR_X   30
+#define PV_BAR_W   (172 - PV_BAR_X - 4)
+#define PV_BAR_Y   18                                     // within the row, under the name
+#define PV_BAR_H   (PV_ROW - PV_BAR_Y - 4)
+#define PV_SETS    ((WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS)
+
+static portMUX_TYPE pv_lock = portMUX_INITIALIZER_UNLOCKED;
+static struct { bool on; int set; uint32_t held; } pv_want;
+static struct {
+    lv_obj_t *root, *title, *range, *target, *canvas;
+    lv_obj_t *num[CTL_PALETTE_ROWS], *name[CTL_PALETTE_ROWS];
+    uint16_t *px;
+    bool on;
+    int set;                  // drawn; -1 none yet
+    uint32_t held;
+    int16_t live, stby;       // the target's palettes as last marked
+    uint8_t tgt;
+} pv = { .set = -1, .live = -2, .stby = -2, .tgt = 0xff };
+
+void display_palettes(bool on, int set, uint32_t held)
+{
+    taskENTER_CRITICAL(&pv_lock);
+    pv_want.on = on;
+    pv_want.set = set;
+    pv_want.held = held;
+    taskEXIT_CRITICAL(&pv_lock);
+}
+
+static uint16_t rgb565(int r, int g, int b) { return (uint16_t)((r & 0xf8) << 8 | (g & 0xfc) << 3 | b >> 3); }
+
+static void pv_build(void)
+{
+    pv.px = heap_caps_calloc(172 * (640 - PV_TOP), 2, MALLOC_CAP_SPIRAM);
+    if (!pv.px) return;
+    pv.root = lv_obj_create(screen);
+    lv_obj_remove_style_all(pv.root);
+    lv_obj_set_size(pv.root, 172, 640);
+    lv_obj_set_pos(pv.root, 0, 0);
+    lv_obj_set_style_bg_color(pv.root, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_opa(pv.root, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(pv.root, LV_OBJ_FLAG_SCROLLABLE);
+    pv.title = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 6, 3, 100);
+    lv_label_set_text(pv.title, "PALETTES");
+    pv.target = at(pv.root, &lv_font_montserrat_14, COL_TEXT, 100, 4, 66);
+    lv_obj_set_style_text_align(pv.target, LV_TEXT_ALIGN_RIGHT, 0);
+    pv.range = at(pv.root, &lv_font_montserrat_12, COL_TITLE, 6, 24, 160);
+    pv.canvas = lv_canvas_create(pv.root);
+    lv_canvas_set_buffer(pv.canvas, pv.px, 172, 640 - PV_TOP, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(pv.canvas, 0, PV_TOP);
+    for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
+        const int y = PV_TOP + i * PV_ROW;
+        pv.num[i] = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 2, y + PV_BAR_Y + (PV_BAR_H - 20) / 2, 24);
+        lv_obj_set_style_text_align(pv.num[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_radius(pv.num[i], 4, 0);
+        lv_obj_set_style_bg_opa(pv.num[i], LV_OPA_TRANSP, 0);
+        lv_label_set_text_fmt(pv.num[i], "%d", i + 1);
+        pv.name[i] = at(pv.root, &lv_font_montserrat_12, COL_TEXT, PV_BAR_X, y + 2, PV_BAR_W);
+    }
+    lv_obj_add_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+}
+
+// The rows for a set: names and colour bars.
+static void pv_draw(int set)
+{
+    memset(pv.px, 0, 172 * (640 - PV_TOP) * 2);
+    for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
+        const int id = set * CTL_PALETTE_ROWS + i;
+        const bool have = id < WLED_PALETTE_COUNT;
+        if (have) lv_obj_remove_flag(pv.num[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(pv.num[i], LV_OBJ_FLAG_HIDDEN);
+        if (!have) { lv_label_set_text(pv.name[i], ""); continue; }
+        const wled_palette_t *p = &wled_palettes[id];
+        lv_label_set_text_fmt(pv.name[i], "%s%s", p->name, p->kind == WLED_PAL_DEFAULT ? " (effect's own)" : "");
+        lv_obj_set_style_text_color(pv.name[i], lv_color_hex(p->kind == WLED_PAL_DYNAMIC ? COL_TITLE : COL_TEXT), 0);
+        uint16_t *row = pv.px + (i * PV_ROW + PV_BAR_Y) * 172;
+        for (int x = 0; x < PV_BAR_W; x++) {
+            uint16_t c;
+            if (p->kind == WLED_PAL_DYNAMIC) {
+                c = ((x / 6) & 1) ? 0x2104 : 0x4208;   // stripes: made from the effect's colours, nothing fixed
+            } else {
+                // WLED's linear blend of its 16 colours, end to end without wrapping
+                const int idx = x * 240 / (PV_BAR_W - 1), hi = idx >> 4, lo = idx & 15;
+                const uint8_t *a = p->rgb[hi], *b = p->rgb[hi < 15 ? hi + 1 : 15];
+                c = rgb565((a[0] * (16 - lo) + b[0] * lo) / 16, (a[1] * (16 - lo) + b[1] * lo) / 16,
+                           (a[2] * (16 - lo) + b[2] * lo) / 16);
+            }
+            for (int y = 0; y < PV_BAR_H; y++) row[y * 172 + PV_BAR_X + x] = c;
+        }
+    }
+    lv_label_set_text_fmt(pv.range, "Set %d of %d   " LV_SYMBOL_UP " " LV_SYMBOL_DOWN, set + 1, PV_SETS);
+    lv_obj_invalidate(pv.canvas);
+}
+
+// Which numbers are held, and the target's Live and Standby palettes.
+static void pv_mark(const display_status_t *s)
+{
+    const bool fins = s->target == TGT_FINS, eyes = s->target == TGT_EYES;
+    const int16_t live = eyes ? -1 : fins ? s->layers.fins_pal : s->layers.body_pal;
+    const int16_t stby = eyes ? -1 : fins ? s->stby_layers.fins_pal : s->stby_layers.body_pal;
+    if (live == pv.live && stby == pv.stby && pv.held == pv_want.held && s->target == pv.tgt) return;
+    pv.live = live;
+    pv.stby = stby;
+    pv.tgt = s->target;
+    pv.held = pv_want.held;
+    lv_label_set_text(pv.target, eyes ? "EYES: none" : ctl_target_name((ctl_target_t)s->target));
+    for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
+        const int id = pv.set * CTL_PALETTE_ROWS + i;
+        const bool l = id == live, st = id == stby, h = pv.held >> i & 1;
+        const uint32_t bg = h ? 0xffffff : l && st ? 0xffa000 : l ? COL_LIVE : st ? COL_STANDBY : 0;
+        lv_obj_set_style_bg_opa(pv.num[i], bg ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(pv.num[i], lv_color_hex(bg), 0);
+        lv_obj_set_style_text_color(pv.num[i], lv_color_hex(bg ? COL_BG : COL_TEXT), 0);
+    }
+}
+
+// On the display task, every loop: show, hide, redraw, mark.
+static void pv_show(const display_status_t *s)
+{
+    if (!pv.root) return;
+    taskENTER_CRITICAL(&pv_lock);
+    const bool on = pv_want.on;
+    const int set = pv_want.set;
+    taskEXIT_CRITICAL(&pv_lock);
+    if (on != pv.on) {
+        pv.on = on;
+        if (on) lv_obj_remove_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (!on) return;
+    if (set != pv.set) {
+        pv.set = set;
+        pv_draw(set);
+        pv.live = pv.stby = -2;   // mark again
+    }
+    pv_mark(s);
+}
+
 static void ui_build(void)
 {
     screen = lv_screen_active();
@@ -1412,6 +1557,7 @@ static void ui_build(void)
     pad_flash = make_pad("FLASH", COL_WARN, DISPLAY_PAD_FLASH, -8 - 104);
 
     build_preset_page();
+    pv_build();   // last: over everything
 }
 
 static const char *eye_state(uint8_t s)
@@ -1563,6 +1709,13 @@ static void display_task(void *arg)
                 set_event_text(ev, COL_TITLE);
             }
             last_bump = s.bump_action;
+        }
+        {
+            display_status_t s;
+            taskENTER_CRITICAL(&lock);
+            s = status;
+            taskEXIT_CRITICAL(&lock);
+            pv_show(&s);
         }
         if (page_wanted >= 0) {
             // pages: 0 main, 1 Live and Standby, 2 presets, 3 details (tiles in that order)

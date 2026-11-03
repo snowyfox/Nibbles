@@ -281,7 +281,8 @@ async def keep_mirroring():
 
 class Base:
     """The base firmware's keypad logic (controls.c), shared by every page."""
-    SOURCES = [os.path.join(HERE, "src", "base_host.c"), os.path.join(REPO, "firmware", "base", "main", "controls.c")]
+    SOURCES = [os.path.join(HERE, "src", "base_host.c"), os.path.join(REPO, "firmware", "base", "main", "controls.c"),
+               os.path.join(REPO, "firmware", "base", "main", "wled_palettes.c")]
 
     def __init__(self):
         self.lib = None

@@ -7,6 +7,7 @@
 #include "controls.h"
 #include "nibbles_link.h"
 #include "power_math.h"
+#include "wled_palettes.h"
 #include "log_format.h"
 #include "power_sim.h"
 #include "eye_thumb.h"
@@ -35,6 +36,8 @@ static void live(ctl_t *c, int body, int eyes, int fins)
     const ctl_scene_t s = { body, eyes, fins };
     ctl_set_live(c, &s, 128, 1);
 }
+
+static ctl_key_t num_key_of(int n) { return n <= 8 ? (ctl_key_t)(KEY_NUM1 + n - 1) : (ctl_key_t)(KEY_NUM9 + n - 9); }
 
 static void test_standby_fills_from_live(void)
 {
@@ -194,6 +197,41 @@ static void test_pages_and_brightness(void)
     CHECK(c.page == PAGE_PRESETS);
 }
 
+// The palette viewer: all of WLED's palettes, CTL_PALETTE_ROWS to a set; the arrows step through the sets.
+static void test_palette_sets(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    const int sets = (WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS;
+    tap(&c, KEY_DOWN);                          // no palettes showing: the arrows do nothing
+    CHECK(c.pal_set == 0);
+    press(&c, KEY_MOD_PALETTE);
+    tap(&c, KEY_DOWN);
+    CHECK(c.pal_set == 1 && ctl_set_palette(&c, 1) == CTL_PALETTE_ROWS);
+    press(&c, KEY_NUM2);
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, CTL_PALETTE_ROWS + 1)));
+    release(&c, KEY_NUM2);
+    tap(&c, KEY_LEFT);
+    tap(&c, KEY_UP);                            // round to the last set
+    CHECK(c.pal_set == sets - 1);
+    const int last = WLED_PALETTE_COUNT - (sets - 1) * CTL_PALETTE_ROWS;   // palettes in the last set
+    CHECK(ctl_set_palette(&c, last) == WLED_PALETTE_COUNT - 1);
+    if (last < CTL_PALETTE_ROWS) {
+        CHECK(ctl_set_palette(&c, last + 1) == -1);
+        CHECK(press(&c, num_key_of(last + 1)) == 0);
+        release(&c, num_key_of(last + 1));
+    }
+    tap(&c, KEY_RIGHT);
+    CHECK(c.pal_set == 0);
+    release(&c, KEY_MOD_PALETTE);
+    // the page works the same way
+    c.page = PAGE_PALETTES;
+    tap(&c, KEY_DOWN);
+    CHECK(c.pal_set == 1);
+    CHECK(!strcmp(ctl_palette_name(&c, 44), "Orange & Teal") && ctl_palette_name(&c, WLED_PALETTE_COUNT) == NULL);
+}
+
 // Modifiers held change what the numbers do, as hotkeys; keys of their own
 // do one thing whatever is held.
 static void test_modifiers_and_own_keys(void)
@@ -214,17 +252,18 @@ static void test_modifiers_and_own_keys(void)
     release(&c, KEY_LATCH);
     release(&c, KEY_NUM12);
     CHECK(c.layers.body_layer == NL_LAYER_PRESET_BASE + 12 && ctl_mode(&c) == PAGE_PRESETS);
-    // PALETTE held + 3: the third palette; + 9: none
+    // PALETTE held + 3: the viewer's third palette (WLED palette 2 in the first set)
     press(&c, KEY_MOD_PALETTE);
     press(&c, KEY_NUM3);
-    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, c.palettes[2])));
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, 2)));
     release(&c, KEY_NUM3);
-    CHECK(press(&c, KEY_NUM9) == 0);
-    release(&c, KEY_NUM9);
     uint32_t rgb[KEY_COUNT];
     ctl_led_colors(&c, now, rgb);
-    CHECK(rgb[KEY_NUM9] == 0 && rgb[KEY_MOD_PALETTE] == 0xffffff);
+    CHECK(rgb[KEY_NUM3] != 0 && rgb[KEY_MOD_PALETTE] == 0xffffff && rgb[KEY_DOWN] != 0);
+    CHECK((rgb[KEY_NUM9] != 0) == (CTL_PALETTE_ROWS >= 9));   // numbers past the set are dark
     release(&c, KEY_MOD_PALETTE);
+    ctl_led_colors(&c, now, rgb);
+    CHECK(rgb[KEY_DOWN] == 0);                  // the arrows are dark with no palettes showing
     // BRIGHT held: brightness
     press(&c, KEY_MOD_BRIGHT);
     press(&c, KEY_NUM2);
@@ -274,22 +313,22 @@ static void test_palettes(void)
     // ALL: holding 2 shows the second palette on the body only (the fins follow it)
     press(&c, KEY_NUM2);
     CHECK(nacts == 1 && acts[0].type == ACT_BUMP && acts[0].target == TGT_BODY && acts[0].bump == NL_BUMP_PALETTE);
-    CHECK(nl_slot_arg_slot(acts[0].value) == NL_SLOT_BODY && nl_slot_arg_value(acts[0].value) == c.palettes[1]);
+    CHECK(nl_slot_arg_slot(acts[0].value) == NL_SLOT_BODY && nl_slot_arg_value(acts[0].value) == 1);
     release(&c, KEY_NUM2);
     CHECK(has(ACT_BUMP_END, TGT_BODY, -10000));
     CHECK(c.layers.body_pal == 11);           // a bump changes nothing
     // LATCH keeps it: the command, then the bump lets go
     press(&c, KEY_NUM3);
     press(&c, KEY_LATCH);
-    CHECK(acts[0].type == ACT_SLOT_PALETTE && acts[0].target == NL_SLOT_BODY && acts[0].value == c.palettes[2]);
+    CHECK(acts[0].type == ACT_SLOT_PALETTE && acts[0].target == NL_SLOT_BODY && acts[0].value == 2);
     CHECK(acts[nacts - 1].type == ACT_BUMP_END);
     release(&c, KEY_LATCH);
     CHECK(release(&c, KEY_NUM3) == 0);
-    CHECK(c.layers.body_pal == c.palettes[2] && c.live.body == 1);   // the preset stays
+    CHECK(c.layers.body_pal == 2 && c.live.body == 1);   // the preset stays
     // Fins with their own preset: ALL covers them too; FINS alone only them
     live(&c, 1, 1, 3);
     press(&c, KEY_NUM1);
-    CHECK(nacts == 2 && has(ACT_BUMP, TGT_FINS, nl_slot_arg(NL_SLOT_FINS, c.palettes[0])));
+    CHECK(nacts == 2 && has(ACT_BUMP, TGT_FINS, nl_slot_arg(NL_SLOT_FINS, 0)));
     release(&c, KEY_NUM1);
     press(&c, KEY_FINS);
     press(&c, KEY_NUM1);
@@ -303,7 +342,7 @@ static void test_palettes(void)
     release(&c, KEY_EYES);
     // LATCH first cues the palette in Standby, unseen
     press(&c, KEY_LATCH);
-    CHECK(press(&c, KEY_NUM4) == 0 && c.standby.body == 1 && c.standby_layers.body_pal == c.palettes[3]);
+    CHECK(press(&c, KEY_NUM4) == 0 && c.standby.body == 1 && c.standby_layers.body_pal == 3);
     release(&c, KEY_NUM4);
     release(&c, KEY_LATCH);
 }
@@ -325,13 +364,13 @@ static void test_standby_layers(void)
     c.page = PAGE_PALETTES;
     // LATCH held, then 2: Lava cued for the body; nothing sent; TAKE lights up
     press(&c, KEY_LATCH);
-    CHECK(press(&c, KEY_NUM2) == 0 && c.standby_layers.body_pal == 8);
-    release(&c, KEY_NUM2);
+    CHECK(press(&c, KEY_PALETTE1 + 1) == 0 && c.standby_layers.body_pal == 8);
+    release(&c, KEY_PALETTE1 + 1);
     release(&c, KEY_LATCH);
     CHECK(ctl_standby_diff(&c) == (1 << TGT_BODY));
     uint32_t rgb[KEY_COUNT];
     ctl_led_colors(&c, now, rgb);
-    CHECK(rgb[KEY_NUM2] == 0x00e040 && rgb[KEY_NUM4] == 0xff1010);   // Standby green, Live (Rainbow 11) red
+    CHECK(rgb[KEY_PALETTE1 + 1] == 0x00e040 && rgb[KEY_PALETTE1 + 3] == 0xff1010);   // Standby green, Live (Rainbow 11) red
     // TAKE previews it: one scene bump on the body, palette + 1, preset and layer left alone
     press(&c, KEY_TAKE);
     CHECK(nacts == 1 && acts[0].type == ACT_BUMP && acts[0].target == TGT_BODY && acts[0].bump == NL_BUMP_SCENE);
@@ -399,9 +438,9 @@ static void test_standby_layers(void)
     release(&c, KEY_LATCH);
     press(&c, KEY_FINS);
     press(&c, KEY_LATCH);
-    tap(&c, KEY_NUM1);                        // Party is already the fins' palette: nothing to take
+    tap(&c, KEY_PALETTE1);                        // Party is already the fins' palette: nothing to take
     CHECK(ctl_standby_diff(&c) == 0);
-    tap(&c, KEY_NUM2);
+    tap(&c, KEY_PALETTE1 + 1);
     release(&c, KEY_LATCH);
     release(&c, KEY_FINS);
     CHECK(ctl_standby_diff(&c) == (1 << TGT_FINS));
@@ -414,10 +453,10 @@ static void test_standby_layers(void)
 
     // Latching a palette live drops the old one into Standby
     layers(&c, 30, 8, 0, 0);
-    press(&c, KEY_NUM3);
+    press(&c, KEY_PALETTE1 + 2);
     press(&c, KEY_LATCH);
     release(&c, KEY_LATCH);
-    release(&c, KEY_NUM3);
+    release(&c, KEY_PALETTE1 + 2);
     CHECK(c.layers.body_pal == c.palettes[2] && c.standby.body == 5 && c.standby_layers.body_pal == 30);
 }
 
@@ -971,6 +1010,7 @@ int main(void)
     test_targets();
     test_pages_and_brightness();
     test_modifiers_and_own_keys();
+    test_palette_sets();
     test_palettes();
     test_layers();
     test_standby_layers();

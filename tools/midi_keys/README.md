@@ -56,9 +56,11 @@ doesn't have.
 
 - **Every base key has a row**, in sections: numbers 1-16, the modifiers
   (PALETTE, LAYER, BRIGHT, PAGE), targets, the switcher keys, then keys of
-  their own for each preset (PRESET1-16), palette (PALETTE1-8), layer look
+  their own for each preset (PRESET1-16), favourite palette (PALETTE1-8), layer look
   (LAYER1-16) and brightness step (BRIGHT1-8), and POLEPOWER. None has to be
-  mapped. A number does what the base's held modifier says (LAYER held + 3:
+  mapped. Holding PALETTE shows the base's palette viewer (every WLED
+  palette, 8 to a set): a number picks from the set shown, and LEFT/UP and
+  RIGHT/DOWN change the set. A number does what the base's held modifier says (LAYER held + 3:
   layer look 3); a key of its own does its one thing whatever is held.
 - **Combinations**, like hotkeys: a row can be mapped to a MIDI key pressed
   while modifiers are held, e.g. LAYER3 on "LAYER + E4". To record one, click

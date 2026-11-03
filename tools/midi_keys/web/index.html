@@ -135,7 +135,9 @@ const WHAT = {
   take: "Held: show Standby; + tap LATCH: swap Standby and Live",
   flash: "Flash while held",
   unlock: "Hold 1 s: lock or unlock the keypad",
-  palette: "Modifier: hold, then a number 1-8 for that palette",
+  palette: "Modifier: hold to show the palette viewer; a number picks that palette, the arrows change the set",
+  left: "Palette viewer: the set before", up: "Palette viewer: the set before",
+  right: "Palette viewer: the next set", down: "Palette viewer: the next set",
   layer: "Modifier: hold, then a number 1-16 for that layer look",
   bright: "Modifier: hold, then a number 1-8 for the brightness in eighths",
   polepower: "Toggle the pole's power (only on a USB-C supply)",
@@ -146,11 +148,11 @@ function what(k) {
   let m;
   if ((m = /^(\d+)$/.exec(k))) {
     const n = +m[1];
-    return `Preset ${n} (bump while held)` + (n <= 8 ? `; with PALETTE: palette ${n}` : "") +
+    return `Preset ${n} (bump while held)` + `; with PALETTE: the viewer's palette ${n} (if the set has one)` +
       `; with LAYER: layer look ${n}` + (n <= 8 ? `; with BRIGHT: brightness ${n}/8` : "");
   }
   if ((m = /^preset(\d+)$/.exec(k))) return `Preset ${m[1]}, whatever is held (bump while held)`;
-  if ((m = /^palette(\d+)$/.exec(k))) return `Palette ${m[1]}` + (PALETTES[m[1] - 1] ? `: ${PALETTES[m[1] - 1]}` : "") + ", on the target's own layer";
+  if ((m = /^palette(\d+)$/.exec(k))) return `Favourite palette ${m[1]}` + (PALETTES[m[1] - 1] ? `: ${PALETTES[m[1] - 1]}` : "") + ", on the target's own layer";
   if ((m = /^layer(\d+)$/.exec(k))) return `Layer look ${m[1]} (WLED preset ${100 + +m[1]}) over the target; LATCH on the live one turns it off`;
   if ((m = /^bright(\d+)$/.exec(k))) return `Brightness ${m[1]}/8 (${Math.floor(m[1] * 255 / 8)})`;
   return "";
@@ -160,9 +162,10 @@ const GROUPS = [
   ["Numbers (presets; with a modifier held, what it says)", k => /^\d+$/.test(k)],
   ["Modifiers (hold, as on a computer)", k => MODS.includes(k)],
   ["Targets", k => ["all", "body", "eyes", "fins"].includes(k)],
+  ["Arrows (the palette viewer's sets)", k => ["left", "right", "up", "down"].includes(k)],
   ["Switcher", k => ["latch", "take", "flash", "blackout", "finsensor", "unlock", "polepower"].includes(k)],
   ["Presets, whatever is held", k => /^preset\d+$/.test(k)],
-  ["Palettes, whatever is held", k => /^palette\d+$/.test(k)],
+  ["Favourite palettes, whatever is held", k => /^palette\d+$/.test(k)],
   ["Layer looks, whatever is held", k => /^layer\d+$/.test(k)],
   ["Brightness", k => /^bright\d+$/.test(k) || isSlider(k)],
   ["Other", k => true],
