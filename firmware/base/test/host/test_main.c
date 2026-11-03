@@ -37,8 +37,6 @@ static void live(ctl_t *c, int body, int eyes, int fins)
     ctl_set_live(c, &s, 128, 1);
 }
 
-static ctl_key_t num_key_of(int n) { return n <= 8 ? (ctl_key_t)(KEY_NUM1 + n - 1) : (ctl_key_t)(KEY_NUM9 + n - 9); }
-
 static void test_standby_fills_from_live(void)
 {
     ctl_t c;
@@ -197,38 +195,58 @@ static void test_pages_and_brightness(void)
     CHECK(c.page == PAGE_PRESETS);
 }
 
-// The palette viewer: all of WLED's palettes, CTL_PALETTE_ROWS to a set; the arrows step through the sets.
-static void test_palette_sets(void)
+// The palette viewer: all of WLED's palettes in a list that goes round,
+// CTL_PALETTE_ROWS on the screen; UP/DOWN scroll by one (by themselves while
+// held), PAGEUP/PAGEDOWN and LEFT/RIGHT by a screenful.
+static void test_palette_scroll(void)
 {
     ctl_t c;
     ctl_init(&c, 0);
     live(&c, 1, 1, 0);
-    const int sets = (WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS;
+    const int R = CTL_PALETTE_ROWS, N = WLED_PALETTE_COUNT;
     tap(&c, KEY_DOWN);                          // no palettes showing: the arrows do nothing
-    CHECK(c.pal_set == 0);
+    CHECK(c.pal_first == 0);
     press(&c, KEY_MOD_PALETTE);
     tap(&c, KEY_DOWN);
-    CHECK(c.pal_set == 1 && ctl_set_palette(&c, 1) == CTL_PALETTE_ROWS);
+    CHECK(c.pal_first == 1 && ctl_set_palette(&c, 1) == 1 && ctl_set_palette(&c, R) == R);
     press(&c, KEY_NUM2);
-    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, CTL_PALETTE_ROWS + 1)));
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, 2)));
     release(&c, KEY_NUM2);
-    tap(&c, KEY_LEFT);
-    tap(&c, KEY_UP);                            // round to the last set
-    CHECK(c.pal_set == sets - 1);
-    const int last = WLED_PALETTE_COUNT - (sets - 1) * CTL_PALETTE_ROWS;   // palettes in the last set
-    CHECK(ctl_set_palette(&c, last) == WLED_PALETTE_COUNT - 1);
-    if (last < CTL_PALETTE_ROWS) {
-        CHECK(ctl_set_palette(&c, last + 1) == -1);
-        CHECK(press(&c, num_key_of(last + 1)) == 0);
-        release(&c, num_key_of(last + 1));
-    }
+    CHECK(ctl_set_palette(&c, R + 1) == -1);
+    tap(&c, KEY_PAGE_DOWN);
+    CHECK(c.pal_first == 1 + R);
+    tap(&c, KEY_PAGE_UP);
+    tap(&c, KEY_LEFT);                          // round to the end: the last palettes, then the first
+    CHECK(c.pal_first == N + 1 - R);
+    CHECK(ctl_set_palette(&c, R) == 0 && ctl_set_palette(&c, R - 1) == N - 1);
     tap(&c, KEY_RIGHT);
-    CHECK(c.pal_set == 0);
+    tap(&c, KEY_UP);
+    CHECK(c.pal_first == 0);
+    tap(&c, KEY_UP);
+    CHECK(c.pal_first == N - 1);
+    // DOWN held: one at once, then by itself after the delay, faster later
+    c.pal_first = 0;
+    press(&c, KEY_DOWN);
+    const uint32_t t0 = now;
+    CHECK(c.pal_first == 1);
+    for (now = t0; now < t0 + CTL_SCROLL_DELAY_MS - 50; now += 50) ctl_tick(&c, now, acts);
+    CHECK(c.pal_first == 1);
+    for (; now < t0 + CTL_SCROLL_DELAY_MS + 3 * CTL_SCROLL_REPEAT_MS; now += 10) ctl_tick(&c, now, acts);
+    CHECK(c.pal_first == 4);                    // one at the delay, two more a repeat apart
+    for (; now < t0 + CTL_SCROLL_FAST_MS; now += 10) ctl_tick(&c, now, acts);
+    const int slow = c.pal_first;
+    for (; now < t0 + CTL_SCROLL_FAST_MS + 10 * CTL_SCROLL_FAST_REPEAT_MS; now += 10) ctl_tick(&c, now, acts);
+    CHECK(c.pal_first - slow >= 9);             // faster now
+    release(&c, KEY_DOWN);
+    const int stopped = c.pal_first;
+    now += 1000;
+    ctl_tick(&c, now, acts);
+    CHECK(c.pal_first == stopped);
     release(&c, KEY_MOD_PALETTE);
     // the page works the same way
     c.page = PAGE_PALETTES;
     tap(&c, KEY_DOWN);
-    CHECK(c.pal_set == 1);
+    CHECK(c.pal_first == stopped + 1);
     CHECK(!strcmp(ctl_palette_name(&c, 44), "Orange & Teal") && ctl_palette_name(&c, WLED_PALETTE_COUNT) == NULL);
 }
 
@@ -1010,7 +1028,7 @@ int main(void)
     test_targets();
     test_pages_and_brightness();
     test_modifiers_and_own_keys();
-    test_palette_sets();
+    test_palette_scroll();
     test_palettes();
     test_layers();
     test_standby_layers();

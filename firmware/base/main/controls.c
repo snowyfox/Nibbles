@@ -20,6 +20,7 @@ static const char *const key_names[] = {
     "bright1", "bright2", "bright3", "bright4", "bright5", "bright6", "bright7", "bright8",
     "polepower",
     "left", "right", "up", "down",
+    "pageup", "pagedown",
 };
 _Static_assert(sizeof(key_names) / sizeof(key_names[0]) == KEY_COUNT, "a name for every key");
 
@@ -50,12 +51,15 @@ const char *ctl_palette_name(const ctl_t *c, int palette)
     return palette >= 0 && palette < WLED_PALETTE_COUNT ? wled_palettes[palette].name : NULL;
 }
 
-#define PAL_SETS ((WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS)
-
 int ctl_set_palette(const ctl_t *c, int n)
 {
-    const int id = c->pal_set * CTL_PALETTE_ROWS + n - 1;
-    return n >= 1 && n <= CTL_PALETTE_ROWS && id < WLED_PALETTE_COUNT ? id : -1;
+    return n >= 1 && n <= CTL_PALETTE_ROWS ? (c->pal_first + n - 1) % WLED_PALETTE_COUNT : -1;
+}
+
+// The viewer's list moves by d palettes, round.
+static void pal_scroll(ctl_t *c, int d)
+{
+    c->pal_first = ((c->pal_first + d) % WLED_PALETTE_COUNT + WLED_PALETTE_COUNT) % WLED_PALETTE_COUNT;
 }
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms)
@@ -579,10 +583,14 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
         case KEY_POLE_POWER:
             if (down) emit(&o, ACT_POLE_POWER, 0, 0, 0);
             break;
-        case KEY_LEFT: case KEY_RIGHT: case KEY_UP: case KEY_DOWN:
-            if (down && ctl_mode(c) == PAGE_PALETTES) {   // the palette viewer: the set before or after, round
-                const int step = key == KEY_LEFT || key == KEY_UP ? PAL_SETS - 1 : 1;
-                c->pal_set = (c->pal_set + step) % PAL_SETS;
+        case KEY_LEFT: case KEY_RIGHT: case KEY_PAGE_UP: case KEY_PAGE_DOWN:   // the palette viewer: a screenful
+            if (down && ctl_mode(c) == PAGE_PALETTES)
+                pal_scroll(c, key == KEY_LEFT || key == KEY_PAGE_UP ? -CTL_PALETTE_ROWS : CTL_PALETTE_ROWS);
+            break;
+        case KEY_UP: case KEY_DOWN:                                             // one, then by itself while held
+            if (down && ctl_mode(c) == PAGE_PALETTES) {
+                pal_scroll(c, key == KEY_UP ? -1 : 1);
+                c->scroll_next_ms = now_ms + CTL_SCROLL_DELAY_MS;
             }
             break;
         case KEY_FIN_SENSOR:
@@ -689,6 +697,15 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)
             bumps_off(c, &o);
         }
     }
+    // UP or DOWN held (not both) with palettes showing: scroll by itself, faster after a while
+    if (!c->locked && ctl_mode(c) == PAGE_PALETTES && c->down[KEY_UP] != c->down[KEY_DOWN]) {
+        const ctl_key_t k = c->down[KEY_UP] ? KEY_UP : KEY_DOWN;
+        if ((int32_t)(now_ms - c->scroll_next_ms) >= 0) {
+            pal_scroll(c, k == KEY_UP ? -1 : 1);
+            c->scroll_next_ms = now_ms + (now_ms - c->down_ms[k] >= CTL_SCROLL_FAST_MS ? CTL_SCROLL_FAST_REPEAT_MS : CTL_SCROLL_REPEAT_MS);
+        }
+        c->last_key_ms = now_ms;   // scrolling counts as using the keys (no auto-lock)
+    }
     if (!c->locked && c->autolock_ms && now_ms - c->last_key_ms >= c->autolock_ms && !c->bump_slots) {
         bool any = false;
         for (int k = 1; k < KEY_COUNT; k++) any |= c->down[k];
@@ -772,7 +789,7 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     rgb[KEY_MOD_LAYER] = c->down[KEY_MOD_LAYER] ? 0xffffff : 0x006050;
     rgb[KEY_MOD_BRIGHT] = c->down[KEY_MOD_BRIGHT] ? 0xffffff : 0x504000;
     rgb[KEY_POLE_POWER] = c->down[KEY_POLE_POWER] ? 0xff0000 : 0x301000;
-    for (int k = KEY_LEFT; k <= KEY_DOWN; k++)   // lit while they do something: palettes showing
+    for (int k = KEY_LEFT; k <= KEY_PAGE_DOWN; k++)   // lit while they do something: palettes showing
         rgb[k] = c->down[k] ? 0xffffff : ctl_mode(c) == PAGE_PALETTES ? 0x404040 : C_OFF;
     for (int k = KEY_ALL; k <= KEY_FINS; k++) {
         const ctl_target_t t = key_target((ctl_key_t)k);

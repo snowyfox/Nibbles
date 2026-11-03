@@ -95,9 +95,9 @@ void display_eye_test(int preset, int state);
 void display_graph_restore(const int8_t pct[DISPLAY_GRAPH_COLUMNS]);
 // The palette viewer (2026-11-03), over every page while the numbers are
 // palettes (PALETTE held, or the palette page): WLED's palettes from
-// set * CTL_PALETTE_ROWS, numbered 1-16 as the keys pick them, with the
+// first (round the list), numbered 1.. as the keys pick them, with the
 // target's Live one red and Standby's green. held: bit n-1 while number n is
 // down. Any task, at every key change; cheap.
-void display_palettes(bool on, int set, uint32_t held);
+void display_palettes(bool on, int first, uint32_t held);
 // A one-line message for the event strip (the last command's result, etc.).
 void display_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

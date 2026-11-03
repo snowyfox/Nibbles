@@ -53,8 +53,8 @@ static const char *TAG = "display";
 
 static esp_lcd_panel_handle_t panel;
 static SemaphoreHandle_t chunk_done;
-static uint16_t *chunk_buf;   // DMA-capable, internal RAM
-static uint8_t *rotated;      // the frame in the panel's native orientation
+static uint16_t *chunk_bufs[2];   // DMA-capable, internal RAM: one fills while the other goes out
+static uint8_t *rotated;      // the frame in the panel's native orientation (landscape only)
 
 // Screenshots for checking the layout from a computer (serial "shot").
 static volatile bool shot_wanted;
@@ -79,32 +79,79 @@ static bool on_chunk_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_d
     return woken == pdTRUE;
 }
 
+// For the log line: time from LVGL starting a frame to it being sent, and in ui_update.
+static int64_t refr_start_us, refr_us;
+static void on_refr(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_REFR_START) refr_start_us = esp_timer_get_time();
+    else refr_us += esp_timer_get_time() - refr_start_us;
+}
+static int64_t ui_us;
+static const uint16_t *pv_row(int y, int *x0, int *w);   // the palette viewer's list, put in each frame
+static uint32_t flush_count;
+static int64_t flush_us;   // time spent sending frames, for the log
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
 {
-    // Full-frame render mode: px holds the whole screen and LVGL keeps it
-    // between frames, redrawing only what changed, so it must not be modified
-    // here. Rotate (or copy) into the panel's orientation, then byte-swap that.
-    const int32_t w = lv_area_get_width(area), h = lv_area_get_height(area);
+    // px is the whole screen, kept by LVGL between frames, so it must not be
+    // modified here. Portrait renders in direct mode: LVGL redraws only what
+    // changed (calling this once per changed area) and the panel, which takes
+    // whole frames, gets the frame after the last one. Landscape renders in full
+    // mode (LVGL can't rotate in direct mode): every frame is drawn whole.
+    if (!lv_display_flush_is_last(disp)) {
+        lv_display_flush_ready(disp);
+        return;
+    }
+    (void)area;
+    const int64_t t0 = esp_timer_get_time();
+    const int32_t w = lv_display_get_horizontal_resolution(disp), h = lv_display_get_vertical_resolution(disp);
     if (shot_wanted && shot_buf) {
         memcpy(shot_buf, px, w * h * 2);
+        for (int y = 0; y < h; y++) {
+            int x0, lw;
+            const uint16_t *l = pv_row(y, &x0, &lw);
+            if (l) memcpy(shot_buf + (y * w + x0) * 2, l, lw * 2);
+        }
         shot_w = w;
         shot_h = h;
         shot_wanted = false;
         xSemaphoreGive(shot_ready);
     }
+    // Portrait is already the panel's orientation: send straight from the
+    // frame. Each chunk is byte-swapped into internal RAM while the one before
+    // it goes out (2026-11-03: 32 ms a frame through a rotated copy before).
     const lv_color_format_t cf = lv_display_get_color_format(disp);
-    if (lv_display_get_rotation(disp) == LV_DISPLAY_ROTATION_0)
-        memcpy(rotated, px, FRAME_BYTES);  // already the panel's orientation
-    else
+    const uint8_t *src = px;
+    if (lv_display_get_rotation(disp) != LV_DISPLAY_ROTATION_0) {
         lv_draw_sw_rotate(px, rotated, w, h, lv_draw_buf_width_to_stride(w, cf),
                           lv_draw_buf_width_to_stride(PANEL_W, cf), lv_display_get_rotation(disp), cf);
-    lv_draw_sw_rgb565_swap(rotated, PANEL_W * PANEL_H);
-    const uint8_t *src = rotated;
-    for (int y = 0; y < PANEL_H; y += CHUNK_ROWS, src += CHUNK_BYTES) {
-        memcpy(chunk_buf, src, CHUNK_BYTES);
-        esp_lcd_panel_draw_bitmap(panel, 0, y, PANEL_W, y + CHUNK_ROWS, chunk_buf);
-        xSemaphoreTake(chunk_done, portMAX_DELAY);
+        src = rotated;
     }
+    int in_flight = 0, cur = 0;
+    for (int y = 0; y < PANEL_H; y += CHUNK_ROWS, src += CHUNK_BYTES, cur ^= 1) {
+        if (in_flight == 2) {   // the older one (this buffer) must be out first
+            xSemaphoreTake(chunk_done, portMAX_DELAY);
+            in_flight--;
+        }
+        const uint32_t *in = (const uint32_t *)src;
+        uint32_t *out = (uint32_t *)chunk_bufs[cur];
+        for (int i = 0; i < CHUNK_BYTES / 4; i++) {
+            const uint32_t v = in[i];
+            out[i] = (v & 0x00ff00ffu) << 8 | (v >> 8 & 0x00ff00ffu);   // two pixels, each byte-swapped
+        }
+        for (int r = 0; r < CHUNK_ROWS; r++) {   // the palette list over it, at its scroll position
+            int x0, lw;
+            const uint32_t *l = (const uint32_t *)pv_row(y + r, &x0, &lw);
+            if (!l) continue;
+            uint32_t *o = (uint32_t *)(chunk_bufs[cur] + r * PANEL_W + x0);
+            for (int i = 0; i < lw / 2; i++) o[i] = (l[i] & 0x00ff00ffu) << 8 | (l[i] >> 8 & 0x00ff00ffu);
+        }
+        esp_lcd_panel_draw_bitmap(panel, 0, y, PANEL_W, y + CHUNK_ROWS, chunk_bufs[cur]);
+        in_flight++;
+    }
+    while (in_flight--) xSemaphoreTake(chunk_done, portMAX_DELAY);
+    flush_count++;
+    flush_us += esp_timer_get_time() - t0;
     lv_display_flush_ready(disp);
 }
 
@@ -130,10 +177,11 @@ static void backlight_init(int percent)
 
 static esp_err_t panel_init(void)
 {
-    chunk_done = xSemaphoreCreateBinary();
-    chunk_buf = heap_caps_malloc(CHUNK_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    rotated = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
-    ESP_RETURN_ON_FALSE(chunk_done && chunk_buf && rotated, ESP_ERR_NO_MEM, TAG, "no memory");
+    chunk_done = xSemaphoreCreateCounting(2, 0);
+    for (int i = 0; i < 2; i++) chunk_bufs[i] = heap_caps_malloc(CHUNK_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (DISPLAY_ROTATION != LV_DISPLAY_ROTATION_0) rotated = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(chunk_done && chunk_bufs[0] && chunk_bufs[1] && (rotated || DISPLAY_ROTATION == LV_DISPLAY_ROTATION_0),
+                        ESP_ERR_NO_MEM, TAG, "no memory");
 
     const spi_bus_config_t bus = {
         .sclk_io_num = PIN_PCLK,
@@ -1345,44 +1393,51 @@ static void main_update(const display_status_t *s)
 
 
 // ------------------------------------------------------------------ the palette viewer
-// A full screen over the pages: a title with the set and the arrows, then
-// CTL_PALETTE_ROWS rows, each the key's number, the palette's name and its
-// colours as WLED blends its 16 (a CRGBPalette16, wled_palettes.h).
+// A full screen over the pages: a title with the place in the list, then
+// CTL_PALETTE_ROWS rows, each the key's number (fixed), the palette's name and
+// its colours as WLED blends its 16 (a CRGBPalette16, wled_palettes.h). The
+// names and colours are drawn one row beyond each end in a list that slides:
+// a move of one row (UP/DOWN) scrolls it into place; a screenful jumps.
 #define PV_TOP     44
 #define PV_ROW     ((640 - PV_TOP) / CTL_PALETTE_ROWS)   // 74 for 8 rows, 37 for 16
-#define PV_BAR_X   30
-#define PV_BAR_W   (172 - PV_BAR_X - 4)
+#define PV_LIST    (CTL_PALETTE_ROWS + 2)                 // rows drawn: one above and one below the screen
+#define PV_LIST_X  28                                     // the list's left edge: the numbers stay left of it
+#define PV_LIST_W  (172 - PV_LIST_X)
+#define PV_BAR_X   2                                      // within the list
+#define PV_BAR_W   (PV_LIST_W - PV_BAR_X - 4)
 #define PV_BAR_Y   18                                     // within the row, under the name
 #define PV_BAR_H   (PV_ROW - PV_BAR_Y - 4)
-#define PV_SETS    ((WLED_PALETTE_COUNT + CTL_PALETTE_ROWS - 1) / CTL_PALETTE_ROWS)
+#define PV_ANIM_MS 150                                    // a one-row scroll; quicker when steps come faster
 
 static portMUX_TYPE pv_lock = portMUX_INITIALIZER_UNLOCKED;
-static struct { bool on; int set; uint32_t held; } pv_want;
+static struct { bool on; int first; uint32_t held; } pv_want;
 static struct {
-    lv_obj_t *root, *title, *range, *target, *canvas;
-    lv_obj_t *num[CTL_PALETTE_ROWS], *name[CTL_PALETTE_ROWS];
+    lv_obj_t *root, *range, *target, *canvas;   // canvas: hidden, only to draw the names into px
+    lv_obj_t *num[CTL_PALETTE_ROWS];
     uint16_t *px;
     bool on;
-    int set;                  // drawn; -1 none yet
+    int first;                // drawn; -1 none yet
+    int64_t last_step_us;
     uint32_t held;
     int16_t live, stby;       // the target's palettes as last marked
     uint8_t tgt;
-} pv = { .set = -1, .live = -2, .stby = -2, .tgt = 0xff };
+} pv = { .first = -1, .live = -2, .stby = -2, .tgt = 0xff };
 
-void display_palettes(bool on, int set, uint32_t held)
+void display_palettes(bool on, int first, uint32_t held)
 {
     taskENTER_CRITICAL(&pv_lock);
     pv_want.on = on;
-    pv_want.set = set;
+    pv_want.first = first;
     pv_want.held = held;
     taskEXIT_CRITICAL(&pv_lock);
 }
 
 static uint16_t rgb565(int r, int g, int b) { return (uint16_t)((r & 0xf8) << 8 | (g & 0xfc) << 3 | b >> 3); }
+static int pv_wrap(int i) { return (i % WLED_PALETTE_COUNT + WLED_PALETTE_COUNT) % WLED_PALETTE_COUNT; }
 
 static void pv_build(void)
 {
-    pv.px = heap_caps_calloc(172 * (640 - PV_TOP), 2, MALLOC_CAP_SPIRAM);
+    pv.px = heap_caps_calloc(PV_LIST_W * PV_LIST * PV_ROW, 2, MALLOC_CAP_SPIRAM);
     if (!pv.px) return;
     pv.root = lv_obj_create(screen);
     lv_obj_remove_style_all(pv.root);
@@ -1391,40 +1446,50 @@ static void pv_build(void)
     lv_obj_set_style_bg_color(pv.root, lv_color_hex(COL_BG), 0);
     lv_obj_set_style_bg_opa(pv.root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(pv.root, LV_OBJ_FLAG_SCROLLABLE);
-    pv.title = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 6, 3, 100);
-    lv_label_set_text(pv.title, "PALETTES");
+    lv_obj_t *title = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 6, 3, 100);
+    lv_label_set_text(title, "PALETTES");
     pv.target = at(pv.root, &lv_font_montserrat_14, COL_TEXT, 100, 4, 66);
     lv_obj_set_style_text_align(pv.target, LV_TEXT_ALIGN_RIGHT, 0);
     pv.range = at(pv.root, &lv_font_montserrat_12, COL_TITLE, 6, 24, 160);
+    // The list isn't an LVGL object: flush_cb copies it into each frame at the
+    // scroll position (pv_y), so a scroll costs no drawing. The canvas only
+    // gives the names somewhere to be drawn into px.
     pv.canvas = lv_canvas_create(pv.root);
-    lv_canvas_set_buffer(pv.canvas, pv.px, 172, 640 - PV_TOP, LV_COLOR_FORMAT_RGB565);
-    lv_obj_set_pos(pv.canvas, 0, PV_TOP);
+    lv_obj_add_flag(pv.canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_canvas_set_buffer(pv.canvas, pv.px, PV_LIST_W, PV_LIST * PV_ROW, LV_COLOR_FORMAT_RGB565);
     for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
-        const int y = PV_TOP + i * PV_ROW;
-        pv.num[i] = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 2, y + PV_BAR_Y + (PV_BAR_H - 20) / 2, 24);
+        pv.num[i] = at(pv.root, &lv_font_montserrat_16, COL_TEXT, 2, PV_TOP + i * PV_ROW + PV_BAR_Y + (PV_BAR_H - 20) / 2, 24);
         lv_obj_set_style_text_align(pv.num[i], LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_radius(pv.num[i], 4, 0);
         lv_obj_set_style_bg_opa(pv.num[i], LV_OPA_TRANSP, 0);
         lv_label_set_text_fmt(pv.num[i], "%d", i + 1);
-        pv.name[i] = at(pv.root, &lv_font_montserrat_12, COL_TEXT, PV_BAR_X, y + 2, PV_BAR_W);
     }
     lv_obj_add_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
 }
 
-// The rows for a set: names and colour bars.
-static void pv_draw(int set)
+static void pv_frame(void);
+
+// The list for a top row: list row i is palette first - 1 + i, round. The
+// names are drawn into the canvas too, so a scroll moves one picture (2026-11-03:
+// labels redrawn every frame held it to ~15 frames a second).
+static void pv_draw(int first)
 {
-    memset(pv.px, 0, 172 * (640 - PV_TOP) * 2);
-    for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
-        const int id = set * CTL_PALETTE_ROWS + i;
-        const bool have = id < WLED_PALETTE_COUNT;
-        if (have) lv_obj_remove_flag(pv.num[i], LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(pv.num[i], LV_OBJ_FLAG_HIDDEN);
-        if (!have) { lv_label_set_text(pv.name[i], ""); continue; }
-        const wled_palette_t *p = &wled_palettes[id];
-        lv_label_set_text_fmt(pv.name[i], "%s%s", p->name, p->kind == WLED_PAL_DEFAULT ? " (effect's own)" : "");
-        lv_obj_set_style_text_color(pv.name[i], lv_color_hex(p->kind == WLED_PAL_DYNAMIC ? COL_TITLE : COL_TEXT), 0);
-        uint16_t *row = pv.px + (i * PV_ROW + PV_BAR_Y) * 172;
+    memset(pv.px, 0, PV_LIST_W * PV_LIST * PV_ROW * 2);
+    lv_layer_t layer;
+    lv_canvas_init_layer(pv.canvas, &layer);
+    for (int i = 0; i < PV_LIST; i++) {
+        const wled_palette_t *p = &wled_palettes[pv_wrap(first - 1 + i)];
+        char name[48];
+        snprintf(name, sizeof(name), "%s%s", p->name, p->kind == WLED_PAL_DEFAULT ? " (effect's own)" : "");
+        lv_draw_label_dsc_t d;
+        lv_draw_label_dsc_init(&d);
+        d.font = &lv_font_montserrat_12;
+        d.color = lv_color_hex(p->kind == WLED_PAL_DYNAMIC ? COL_TITLE : COL_TEXT);
+        d.text = name;
+        d.text_local = 1;
+        const lv_area_t a = { PV_BAR_X, i * PV_ROW + 2, PV_BAR_X + PV_BAR_W - 1, i * PV_ROW + PV_BAR_Y - 1 };
+        lv_draw_label(&layer, &d, &a);
+        uint16_t *row = pv.px + (i * PV_ROW + PV_BAR_Y) * PV_LIST_W;
         for (int x = 0; x < PV_BAR_W; x++) {
             uint16_t c;
             if (p->kind == WLED_PAL_DYNAMIC) {
@@ -1436,28 +1501,60 @@ static void pv_draw(int set)
                 c = rgb565((a[0] * (16 - lo) + b[0] * lo) / 16, (a[1] * (16 - lo) + b[1] * lo) / 16,
                            (a[2] * (16 - lo) + b[2] * lo) / 16);
             }
-            for (int y = 0; y < PV_BAR_H; y++) row[y * 172 + PV_BAR_X + x] = c;
+            for (int y = 0; y < PV_BAR_H; y++) row[y * PV_LIST_W + PV_BAR_X + x] = c;
         }
     }
-    lv_label_set_text_fmt(pv.range, "Set %d of %d   " LV_SYMBOL_UP " " LV_SYMBOL_DOWN, set + 1, PV_SETS);
-    lv_obj_invalidate(pv.canvas);
+    lv_canvas_finish_layer(pv.canvas, &layer);
+    pv_frame();
+    const int last = pv_wrap(first + CTL_PALETTE_ROWS - 1);
+    lv_label_set_text_fmt(pv.range, "%d-%d of %d   " LV_SYMBOL_UP " " LV_SYMBOL_DOWN, first + 1, last + 1, WLED_PALETTE_COUNT);
+}
+
+// Where the list is: its row 0 at PV_TOP + pv_y (-PV_ROW at rest; a one-row
+// scroll slides from 0 or -2 * PV_ROW to that). Display task only.
+static int pv_y = -PV_ROW;
+static volatile bool pv_compose;   // flush_cb puts the list in the frame
+
+// Asks LVGL for a frame (the list changed or moved): one pixel under the list.
+static void pv_frame(void)
+{
+    const lv_area_t a = { PV_LIST_X, PV_TOP, PV_LIST_X, PV_TOP };
+    lv_obj_invalidate_area(pv.root, &a);
+}
+
+static void pv_anim_y(void *var, int32_t y)
+{
+    (void)var;
+    pv_y = y;
+    pv_frame();
+}
+
+// For flush_cb: the list's pixels for screen row y from x = PV_LIST_X, or
+// NULL where the list isn't.
+static const uint16_t *pv_row(int y, int *x0, int *w)
+{
+    const int r = y - PV_TOP - pv_y;
+    if (!pv_compose || y < PV_TOP || y >= PV_TOP + CTL_PALETTE_ROWS * PV_ROW || r < 0 || r >= PV_LIST * PV_ROW) return NULL;
+    *x0 = PV_LIST_X;
+    *w = PV_LIST_W;
+    return pv.px + r * PV_LIST_W;
 }
 
 // Which numbers are held, and the target's Live and Standby palettes.
-static void pv_mark(const display_status_t *s)
+static void pv_mark(const display_status_t *s, uint32_t held)
 {
     const bool fins = s->target == TGT_FINS, eyes = s->target == TGT_EYES;
     const int16_t live = eyes ? -1 : fins ? s->layers.fins_pal : s->layers.body_pal;
     const int16_t stby = eyes ? -1 : fins ? s->stby_layers.fins_pal : s->stby_layers.body_pal;
-    if (live == pv.live && stby == pv.stby && pv.held == pv_want.held && s->target == pv.tgt) return;
+    if (live == pv.live && stby == pv.stby && pv.held == held && s->target == pv.tgt) return;
     pv.live = live;
     pv.stby = stby;
     pv.tgt = s->target;
-    pv.held = pv_want.held;
+    pv.held = held;
     lv_label_set_text(pv.target, eyes ? "EYES: none" : ctl_target_name((ctl_target_t)s->target));
     for (int i = 0; i < CTL_PALETTE_ROWS; i++) {
-        const int id = pv.set * CTL_PALETTE_ROWS + i;
-        const bool l = id == live, st = id == stby, h = pv.held >> i & 1;
+        const int id = pv_wrap(pv.first + i);
+        const bool l = id == live, st = id == stby, h = held >> i & 1;
         const uint32_t bg = h ? 0xffffff : l && st ? 0xffa000 : l ? COL_LIVE : st ? COL_STANDBY : 0;
         lv_obj_set_style_bg_opa(pv.num[i], bg ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
         lv_obj_set_style_bg_color(pv.num[i], lv_color_hex(bg), 0);
@@ -1465,26 +1562,61 @@ static void pv_mark(const display_status_t *s)
     }
 }
 
-// On the display task, every loop: show, hide, redraw, mark.
+// On the display task, every loop: show, hide, scroll, mark.
 static void pv_show(const display_status_t *s)
 {
     if (!pv.root) return;
     taskENTER_CRITICAL(&pv_lock);
     const bool on = pv_want.on;
-    const int set = pv_want.set;
+    const int first = pv_want.first;
+    const uint32_t held = pv_want.held;
     taskEXIT_CRITICAL(&pv_lock);
     if (on != pv.on) {
         pv.on = on;
-        if (on) lv_obj_remove_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+        // The pages under it are hidden too: LVGL would draw them under it every frame.
+        // A faster refresh while it shows, for smooth scrolling (frames cost little here).
+        lv_timer_t *refr = lv_display_get_refr_timer(lv_display_get_default());
+        if (on) {
+            lv_obj_remove_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(pages, LV_OBJ_FLAG_HIDDEN);
+            if (refr) lv_timer_set_period(refr, 15);
+        } else {
+            lv_obj_remove_flag(pages, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(pv.root, LV_OBJ_FLAG_HIDDEN);
+            lv_anim_delete(&pv_y, pv_anim_y);
+            if (refr) lv_timer_set_period(refr, LV_DEF_REFR_PERIOD);
+        }
+        pv_compose = on;
+        if (on) pv.first = -1;   // straight to where it is, no slide
     }
     if (!on) return;
-    if (set != pv.set) {
-        pv.set = set;
-        pv_draw(set);
+    if (first != pv.first) {
+        const int d = pv.first < 0 ? 0 : pv_wrap(first - pv.first);
+        const int step = d == 1 ? 1 : d == WLED_PALETTE_COUNT - 1 ? -1 : 0;
+        pv.first = first;
+        pv_draw(first);
+        lv_anim_delete(&pv_y, pv_anim_y);
+        if (step) {
+            // Drawn for the new top row; start where the old one was and slide into place.
+            const int64_t now = esp_timer_get_time();
+            const int gap_ms = (int)((now - pv.last_step_us) / 1000);
+            pv.last_step_us = now;
+            const int ms = gap_ms < PV_ANIM_MS + 20 ? (gap_ms > 30 ? gap_ms - 20 : 30) : PV_ANIM_MS;
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, &pv_y);
+            lv_anim_set_exec_cb(&a, pv_anim_y);
+            lv_anim_set_values(&a, step > 0 ? 0 : -2 * PV_ROW, -PV_ROW);
+            lv_anim_set_duration(&a, ms);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+            lv_anim_start(&a);
+        } else {
+            pv_y = -PV_ROW;
+            pv_frame();
+        }
         pv.live = pv.stby = -2;   // mark again
     }
-    pv_mark(s);
+    pv_mark(s, held);
 }
 
 static void ui_build(void)
@@ -1704,7 +1836,9 @@ static void display_task(void *arg)
             event_new = false;
             memcpy(ev, event_text, sizeof(ev));
             taskEXIT_CRITICAL(&lock);
+            const int64_t tu = esp_timer_get_time();
             ui_update(&s);
+            ui_us += esp_timer_get_time() - tu;
             if (new_event || (last_bump && !s.bump_action)) {
                 set_event_text(ev, COL_TITLE);
             }
@@ -1723,8 +1857,10 @@ static void display_task(void *arg)
             page_wanted = -1;
         }
         if (shot_wanted) lv_obj_invalidate(screen);
-        for (int i = 0; i < SHARK_VIEWS; i++) shark_draw_view(i);
-        fins_key_show();
+        if (!pv.on) {   // under the palette viewer they can't be seen: its scrolling gets the frames
+            for (int i = 0; i < SHARK_VIEWS; i++) shark_draw_view(i);
+            fins_key_show();
+        }
         const int64_t t_lv = esp_timer_get_time();
         const uint32_t wait = lv_timer_handler();
         const int64_t t_end = esp_timer_get_time();
@@ -1733,14 +1869,22 @@ static void display_task(void *arg)
         lv_busy_us += t_end - now;
         if (lv_us > lv_max_us) lv_max_us = lv_us;
         if (t_end - shark_log_us > 10000000) {
-            ESP_LOGI(TAG, "sharks: Live %lu in, %lu drawn; Standby %lu in, %lu drawn; screen busy %d%%, longest refresh %d ms",
+            ESP_LOGI(TAG, "sharks: Live %lu in, %lu drawn; Standby %lu in, %lu drawn; screen busy %d%%, longest refresh %d ms, "
+                          "%lu frames, %d ms each to send, %d ms each to draw+send; ui %d ms/s",
                      (unsigned long)shark[SHARK_LIVE].rx_frames, (unsigned long)shark[SHARK_LIVE].drawn,
                      (unsigned long)shark[SHARK_STANDBY].rx_frames, (unsigned long)shark[SHARK_STANDBY].drawn,
-                     shark_log_us ? (int)(lv_busy_us * 100 / (t_end - shark_log_us)) : 0, (int)(lv_max_us / 1000));
+                     shark_log_us ? (int)(lv_busy_us * 100 / (t_end - shark_log_us)) : 0, (int)(lv_max_us / 1000),
+                     (unsigned long)flush_count, flush_count ? (int)(flush_us / flush_count / 1000) : 0,
+                     flush_count ? (int)(refr_us / flush_count / 1000) : 0, (int)(ui_us / 10000));
+            refr_us = ui_us = 0;
+            flush_count = 0;
+            flush_us = 0;
             shark_log_us = t_end;
             lv_busy_us = lv_max_us = 0;
         }
-        vTaskDelay(pdMS_TO_TICKS(wait < 10 ? 10 : wait > UPDATE_MS ? UPDATE_MS : wait));
+        // At least 10 ms between rounds, 2 under the palette viewer (its frames are cheap: smooth scrolling).
+        const uint32_t min_ms = pv_compose ? 2 : 10;
+        vTaskDelay(pdMS_TO_TICKS(wait < min_ms ? min_ms : wait > UPDATE_MS ? UPDATE_MS : wait));
     }
 }
 
@@ -1757,8 +1901,11 @@ esp_err_t display_start(display_action_cb_t on_action)
     lv_display_set_rotation(disp, DISPLAY_ROTATION);
     uint8_t *buf = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(buf, ESP_ERR_NO_MEM, TAG, "no memory for the frame");
-    lv_display_set_buffers(disp, buf, NULL, FRAME_BYTES, LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(disp, buf, NULL, FRAME_BYTES,
+                           DISPLAY_ROTATION == LV_DISPLAY_ROTATION_0 ? LV_DISPLAY_RENDER_MODE_DIRECT : LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(disp, flush_cb);
+    lv_display_add_event_cb(disp, on_refr, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(disp, on_refr, LV_EVENT_REFR_READY, NULL);
     ui_build();
     if (touch_init() == ESP_OK) {
         lv_indev_t *touch = lv_indev_create();

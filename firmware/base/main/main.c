@@ -345,7 +345,7 @@ static void palettes_show(const ctl_t *c)
         const ctl_key_t k = n <= 8 ? (ctl_key_t)(KEY_NUM1 + n - 1) : (ctl_key_t)(KEY_NUM9 + n - 9);
         if (c->down[k]) held |= 1u << (n - 1);
     }
-    display_palettes(!c->locked && ctl_mode(c) == PAGE_PALETTES, c->pal_set, held);
+    display_palettes(!c->locked && ctl_mode(c) == PAGE_PALETTES, c->pal_first, held);
 }
 
 static void on_key(ctl_key_t key, bool down)
