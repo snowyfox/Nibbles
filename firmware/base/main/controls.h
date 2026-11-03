@@ -1,12 +1,17 @@
-// The keypad's logic: Live / Standby like a video switcher, targets, pages,
-// bumps and the keys' LED colours. Everything is a bump until it's latched:
-// hold a number (or TAKE) to show it, tap LATCH while holding to keep it.
-// PAGE cycles what the numbers are: presets 1-8, presets 9-16, palettes (on
-// the target's own layer, the effect keeps running) and layer looks (WLED
-// presets NL_LAYER_PRESET_BASE + n on the target's overlay; LATCH on the one
-// that's live switches it off). Standby holds palettes and layer looks too:
-// LATCH held first, then a number, cues one (a layer look already in Standby
-// is cued off); TAKE previews and takes them with Standby's presets. Plain C with no ESP-IDF calls, so it runs
+// The keypad's logic: Live / Standby like a video switcher, targets, number
+// keys, modifiers, bumps and the keys' LED colours. Everything is a bump until
+// it's latched: hold a number (or TAKE) to show it, tap LATCH while holding to keep it.
+// What the numbers 1-16 do (2026-11-03): presets 1-16, or, with a modifier held
+// (as hotkeys on a computer), PALETTE: palettes 1-8, LAYER: layer looks 1-16
+// (WLED presets NL_LAYER_PRESET_BASE + n on the target's overlay; LATCH on the
+// one that's live switches it off), BRIGHT (or PAGE): brightness in eighths
+// (1-8). PAGE tapped still cycles what the numbers do with no modifier held
+// (presets, palettes, layer looks), for a keypad without the modifier keys.
+// Every one of those also has a key of its own that does it whatever is held
+// (PRESET1-16, PALETTE1-8, LAYER1-16, BRIGHT1-8), for a keyboard mapping.
+// Standby holds palettes and layer looks too: LATCH held first, then a number,
+// cues one (a layer look already in Standby is cued off); TAKE previews and
+// takes them with Standby's presets. Plain C with no ESP-IDF calls, so it runs
 // in the host tests (test/host); main.c feeds it key events and telemetry and
 // carries out the actions it returns.
 #pragma once
@@ -14,12 +19,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define CTL_NUMBERS  16    // number keys
+#define CTL_PRESETS  16    // presets the keys reach (WLED preset id; eye preset index + 1; fin preset)
+#define CTL_PALETTES 8     // palettes the keys reach (palettes[])
+#define CTL_LAYERS   16    // layer looks (NL_LAYER_PRESET_COUNT)
+#define CTL_BRIGHTS  8     // brightness steps (eighths)
+
 // Logical keys (where each physical key lands is set in config.h, KEYPAD_MAP).
 typedef enum {
     KEY_NONE = 0,
     KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8,
     KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS,  // target selectors
-    KEY_PAGE,        // tap: next page (presets 1-8, 9-16, palettes, layers); hold + number: brightness
+    KEY_PAGE,        // tap: next page (presets, palettes, layers); hold + number: brightness
     KEY_LATCH,       // tap while a number or TAKE is held: keep it (it becomes Live);
                      // held first, then a number: cue that preset (palette, layer look) in Standby;
                      // + TAKE: Standby = Live
@@ -28,6 +39,18 @@ typedef enum {
     KEY_TAKE,        // held: show Standby while held; + a tap of LATCH: swap Standby and Live
     KEY_FLASH,       // bump while held
     KEY_UNLOCK,      // hold: lock or unlock the keypad
+    // Added 2026-11-03, after the first keys so their order (the LED list) stays.
+    KEY_NUM9, KEY_NUM10, KEY_NUM11, KEY_NUM12, KEY_NUM13, KEY_NUM14, KEY_NUM15, KEY_NUM16,
+    KEY_MOD_PALETTE, // held: the numbers are palettes
+    KEY_MOD_LAYER,   // held: the numbers are layer looks
+    KEY_MOD_BRIGHT,  // held: the numbers 1-8 set the brightness in eighths (as PAGE held)
+    // Keys that do one thing whatever the page or the modifiers (bump while
+    // held and LATCH, or cue with LATCH held first, as the numbers do)
+    KEY_PRESET1, KEY_PRESET_LAST = KEY_PRESET1 + CTL_PRESETS - 1,
+    KEY_PALETTE1, KEY_PALETTE_LAST = KEY_PALETTE1 + CTL_PALETTES - 1,
+    KEY_LAYER1, KEY_LAYER_LAST = KEY_LAYER1 + CTL_LAYERS - 1,
+    KEY_BRIGHT1, KEY_BRIGHT_LAST = KEY_BRIGHT1 + CTL_BRIGHTS - 1,
+    KEY_POLE_POWER,  // toggle the pole's power, on a USB-C supply (as PAGE + BLACKOUT)
     KEY_COUNT
 } ctl_key_t;
 
@@ -57,7 +80,7 @@ typedef enum {
     ACT_BUMP_END,    // slot
     ACT_SLOT_LOOK,   // target = WLED layer slot (nl_slot_t), value = layer preset (0: switch the slot off)
     ACT_SLOT_PALETTE, // target = WLED layer slot, value = palette
-    ACT_POLE_POWER,  // PAGE + BLACKOUT: toggle the pole's power (main checks there's a USB-C supply)
+    ACT_POLE_POWER,  // PAGE + BLACKOUT or POLEPOWER: toggle the pole's power (main checks there's a USB-C supply)
     ACT_AB_HOLD,     // two brains: value 1 show the Standby brain on the LEDs while held, 0 back
     ACT_AB_TAKE,     // two brains: swap Live and Standby on the controller
     ACT_BRIGHTNESS_STANDBY, // two brains: value = 0..255, the Standby brain only (from main)
@@ -74,17 +97,18 @@ typedef struct {
 
 #define CTL_MAX_ACTIONS      8
 #define CTL_LOCK_HOLD_MS     1000    // UNLOCK held this long locks or unlocks
-#define CTL_PAGE_SIZE        8
 
+// What the numbers do: PAGE cycles the first PAGE_COUNT; ctl_mode also gives
+// PAGE_BRIGHT while BRIGHT is held.
 typedef enum {
-    PAGE_PRESETS = 0,    // presets 1-8
-    PAGE_PRESETS2,       // presets 9-16
+    PAGE_PRESETS = 0,    // presets 1-16
     PAGE_PALETTES,
     PAGE_LAYERS,
-    PAGE_COUNT
+    PAGE_COUNT,
+    PAGE_BRIGHT = PAGE_COUNT,
 } ctl_page_t;
 
-// WLED palettes on the palette page's keys 1-8 (main can change them before use).
+// WLED palettes on palette keys 1-8 (main can change them before use).
 #define CTL_DEFAULT_PALETTES { 6, 8, 9, 11, 36, 40, 44, 51 }  // Party, Lava, Ocean, Rainbow, Icefire, Magenta, Orange & Teal, Atlantica
 #define CTL_DEFAULT_PALETTE_NAMES { "Party", "Lava", "Ocean", "Rainbow", "Icefire", "Magenta", "Orange & Teal", "Atlantica" }
 
@@ -106,7 +130,7 @@ typedef struct {
     ctl_key_t target_key;            // target key being held, or KEY_NONE
     bool target_used;                // a number was pressed while it was held: momentary
     int page;                        // ctl_page_t
-    uint8_t palettes[CTL_PAGE_SIZE];  // WLED palette on each key of the palette page
+    uint8_t palettes[CTL_PALETTES];   // WLED palette on each palette key
     ctl_layers_t layers;
     bool page_used;                  // a number was pressed while PAGE was held: brightness, no page flip
     bool locked;
@@ -116,8 +140,8 @@ typedef struct {
     bool down[KEY_COUNT];
     uint32_t down_ms[KEY_COUNT];
     ctl_key_t num_bump;              // number key held (bumping its preset), or KEY_NONE
-    int num_n, num_preset;           // its number (1-8) and preset (with the page) when pressed
-    int num_page;                    // the page it was pressed on
+    int num_preset;                  // what it shows: preset, palette or layer preset
+    int num_kind;                    // what kind of thing that is (controls.c, FN_*)
     ctl_layers_t num_layers;         // the layers before it (WLED reports a layer bump as live)
     bool take_preview;               // TAKE is down and the Standby bumps are on
     ctl_layers_t take_layers;        // the layers when TAKE went down (WLED reports its preview as live)
@@ -182,5 +206,7 @@ const char *ctl_key_name(ctl_key_t key);
 ctl_key_t ctl_key_by_name(const char *name);
 const char *ctl_target_name(ctl_target_t t);
 const char *ctl_page_name(int page);
-// A palette's name if it's one of the palette page's (as set by ctl_init), else NULL.
+// What the numbers do now: the page, or what the modifier held makes them (for the screen).
+int ctl_mode(const ctl_t *c);
+// A palette's name if it's one of the palette keys' (as set by ctl_init), else NULL.
 const char *ctl_palette_name(const ctl_t *c, int palette);

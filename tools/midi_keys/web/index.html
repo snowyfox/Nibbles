@@ -71,6 +71,8 @@ tr.sel td:last-child { box-shadow: inset -2px 0 0 var(--sel), inset 0 2px 0 var(
 .led { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); display: inline-block; }
 pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 12px; overflow-x: auto; max-height: 260px; overflow-y: auto; margin: 0; }
 .tablewrap { overflow-x: auto; }
+tr.group td { cursor: default; background: var(--bg); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; padding-top: 14px; }
+.chip .mod { color: var(--accent); font-weight: 700; }
 @media (max-width: 640px) { .what { display: none; } }
 </style>
 </head>
@@ -125,17 +127,46 @@ pre { background: var(--card); border: 1px solid var(--line); border-radius: 10p
 "use strict";
 // What each base key does (firmware/base/main/controls.h).
 const WHAT = {
-  "1": "Preset / palette / layer 1 (bump while held)", "2": "Number 2", "3": "Number 3", "4": "Number 4",
-  "5": "Number 5", "6": "Number 6", "7": "Number 7", "8": "Number 8",
   all: "Target: the whole shark", body: "Target: body (WLED)", eyes: "Target: eyes", fins: "Target: fins",
-  page: "Tap: next page (1-8, 9-16, palettes, layers); hold + number: brightness",
+  page: "Tap: next page for the numbers (presets, palettes, layer looks); hold + number: brightness",
   latch: "Tap while a number or TAKE is held: keep it; held first + number: cue in Standby; + TAKE: Standby = Live",
   blackout: "Blackout while held; with PAGE held: pole power (on USB-C)",
   finsensor: "Tap: fins follow their real angle, or stay at the modelled angle",
   take: "Held: show Standby; + tap LATCH: swap Standby and Live",
   flash: "Flash while held",
   unlock: "Hold 1 s: lock or unlock the keypad",
+  palette: "Modifier: hold, then a number 1-8 for that palette",
+  layer: "Modifier: hold, then a number 1-16 for that layer look",
+  bright: "Modifier: hold, then a number 1-8 for the brightness in eighths",
+  polepower: "Toggle the pole's power (only on a USB-C supply)",
 };
+let PALETTES = [];           // the palette keys' names, from the firmware
+function what(k) {
+  if (WHAT[k]) return WHAT[k];
+  let m;
+  if ((m = /^(\d+)$/.exec(k))) {
+    const n = +m[1];
+    return `Preset ${n} (bump while held)` + (n <= 8 ? `; with PALETTE: palette ${n}` : "") +
+      `; with LAYER: layer look ${n}` + (n <= 8 ? `; with BRIGHT: brightness ${n}/8` : "");
+  }
+  if ((m = /^preset(\d+)$/.exec(k))) return `Preset ${m[1]}, whatever is held (bump while held)`;
+  if ((m = /^palette(\d+)$/.exec(k))) return `Palette ${m[1]}` + (PALETTES[m[1] - 1] ? `: ${PALETTES[m[1] - 1]}` : "") + ", on the target's own layer";
+  if ((m = /^layer(\d+)$/.exec(k))) return `Layer look ${m[1]} (WLED preset ${100 + +m[1]}) over the target; LATCH on the live one turns it off`;
+  if ((m = /^bright(\d+)$/.exec(k))) return `Brightness ${m[1]}/8 (${Math.floor(m[1] * 255 / 8)})`;
+  return "";
+}
+// The table's sections, in order; a key goes in the first that takes it.
+const GROUPS = [
+  ["Numbers (presets; with a modifier held, what it says)", k => /^\d+$/.test(k)],
+  ["Modifiers (hold, as on a computer)", k => MODS.includes(k)],
+  ["Targets", k => ["all", "body", "eyes", "fins"].includes(k)],
+  ["Switcher", k => ["latch", "take", "flash", "blackout", "finsensor", "unlock", "polepower"].includes(k)],
+  ["Presets, whatever is held", k => /^preset\d+$/.test(k)],
+  ["Palettes, whatever is held", k => /^palette\d+$/.test(k)],
+  ["Layer looks, whatever is held", k => /^layer\d+$/.test(k)],
+  ["Brightness", k => /^bright\d+$/.test(k) || isSlider(k)],
+  ["Other", k => true],
+];
 const SLIDERS = { brightness: "WLED brightness, 0 (off) to 255; to the Live brain, Standby follows" };
 const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const CC_NAMES = { 1: "mod wheel", 7: "volume slider", 64: "sustain pedal", 66: "sostenuto pedal", 67: "soft pedal" };
@@ -152,6 +183,11 @@ const SLIDER_H = 4;
 const SLIDER_JUMP = 20;
 
 let keys = [];               // the base's key names, in its order
+let MODS = ["palette", "layer", "bright", "page"];   // base modifiers a combination can hold
+let activeFor = {};          // MIDI trigger held -> the base keys it holds down
+let learnMods = new Set();   // learning: modifiers held for a combination
+let learnHeld = new Set();   // learning: their MIDI triggers
+let learnUsed = false;       // learning: a combination was recorded while they were held
 let mapping = { buttons: {}, sliders: {} };
 let learning = null;         // control waiting for a MIDI key or slider
 let selected = null;         // control whose MIDI keys the picture shows
@@ -170,7 +206,11 @@ const controls = () => [...keys, ...Object.keys(SLIDERS)];
 const trigList = c => (isSlider(c) ? mapping.sliders : mapping.buttons)[c] || [];
 const title = c => c === "brightness" ? "BRIGHTNESS" : c.toUpperCase();
 const noteName = v => `${NOTE[v % 12]}${Math.floor(v / 12) - 1}`;
+// A trigger: "note:60", or a combination "layer+note:60" (modifiers held, then the key).
+const splitTrig = t => { const p = t.split("+"); return { mods: p.slice(0, -1), base: p[p.length - 1] }; };
 const label = t => {
+  const s = splitTrig(t);
+  if (s.mods.length) return s.mods.map(title).join(" + ") + " + " + label(s.base);
   const [kind, n] = t.split(":"); const v = +n;
   if (kind === "note") return `${noteName(v)} (${v})`;
   return CC_NAMES[v] || "CC " + v;
@@ -185,6 +225,21 @@ function post(path, body) {
 }
 
 const buttonsFor = t => keys.filter(k => (mapping.buttons[k] || []).includes(t));
+const heldMods = () => MODS.filter(m => pressed.has(m));
+// What a MIDI trigger does now: the combination for the modifiers held (the
+// one holding the most of them), else its plain mapping.
+function resolve(t) {
+  const held = new Set(heldMods());
+  let best = [], bestN = 0;
+  for (const k of keys) for (const x of mapping.buttons[k] || []) {
+    const s = splitTrig(x);
+    if (s.base !== t || !s.mods.length || !s.mods.every(m => held.has(m))) continue;
+    if (s.mods.length > bestN) { best = [k]; bestN = s.mods.length; }
+    else if (s.mods.length === bestN) best.push(k);
+  }
+  return bestN ? best : buttonsFor(t);
+}
+const isHeld = k => Object.values(activeFor).some(l => l.includes(k));
 const slidersFor = t => Object.keys(SLIDERS).filter(s => (mapping.sliders[s] || []).includes(t));
 const controlsFor = t => [...buttonsFor(t), ...slidersFor(t)];
 
@@ -196,28 +251,53 @@ function setKey(name, down) {
   if (row) row.classList.toggle("pressed", down);
 }
 
+function stopLearning() { learning = null; learnMods.clear(); learnHeld.clear(); learnUsed = false; }
+
 function assign(control, t) {
   for (const k of keys) mapping.buttons[k] = (mapping.buttons[k] || []).filter(x => x !== t);
   for (const s of Object.keys(SLIDERS)) mapping.sliders[s] = (mapping.sliders[s] || []).filter(x => x !== t);
   const list = isSlider(control) ? mapping.sliders : mapping.buttons;
   (list[control] = list[control] || []).push(t);
-  learning = null;
+  stopLearning();
   selected = control;
   save(); render();
 }
 
 function showLast(t, what) {
-  const c = controlsFor(t);
+  const c = (what === "up" ? activeFor[t] || [] : what === "down" ? resolve(t) : []).concat(slidersFor(t));
   $("lastMidi").textContent = `Last: ${label(t)} ${what}` + (c.length ? ` → ${c.map(title).join(", ")}` : " (not mapped)");
 }
 
-// A key or pedal went down or up: every base key it is mapped to follows, but
-// a base key with two triggers (a key and the pedal) stays down while either is.
+// Learning a key: a MIDI key that is a modifier's is held as that modifier;
+// another key pressed meanwhile records the combination ("LAYER + E4"). A
+// modifier's key tapped alone is mapped by itself.
+function learnTrigger(t, down) {
+  const mod = buttonsFor(t).find(k => MODS.includes(k) && k !== learning);
+  if (down && mod) { learnMods.add(mod); learnHeld.add(t); render(); return; }
+  if (down) {
+    const mods = MODS.filter(m => learnMods.has(m));
+    if (mods.length) learnUsed = true;
+    return assign(learning, [...mods, t].join("+"));
+  }
+  if (!learnHeld.has(t)) return;
+  learnHeld.delete(t);
+  learnMods.delete(mod);
+  if (!learnUsed && !learnHeld.size) assign(learning, t);
+  else render();
+}
+
+// A key or pedal went down or up. Down: it holds down what it does now (a
+// combination if its modifiers are held, else its plain mapping); up lets go
+// of the same keys, whatever was let go of in between. A base key held by two
+// triggers (a key and the pedal) stays down while either is.
 function trigger(t, down) {
   showLast(t, down ? "down" : "up");
-  if (learning && down && !isSlider(learning)) return assign(learning, t);
+  if (learning && !isSlider(learning)) return learnTrigger(t, down);
+  if (down === triggerDown.has(t)) return;
   down ? triggerDown.add(t) : triggerDown.delete(t);
-  for (const k of buttonsFor(t)) setKey(k, (mapping.buttons[k] || []).some(x => triggerDown.has(x)));
+  const ks = down ? resolve(t) : activeFor[t] || [];
+  if (down) activeFor[t] = ks; else delete activeFor[t];
+  for (const k of ks) setKey(k, isHeld(k));
   drawKeyboard();
 }
 
@@ -303,6 +383,7 @@ function onMidi(e) {
 
 function releaseAll() {
   triggerDown.clear();
+  activeFor = {};
   for (const k of [...pressed]) setKey(k, false);
   post("/api/allup", {});
   drawKeyboard();
@@ -315,11 +396,11 @@ function drawKeyboard() {
   const notes = []; for (let n = LOW; n <= HIGH; n++) notes.push(n);
   const whites = notes.filter(n => !BLACK.has(n % 12));
   svg.setAttribute("viewBox", `0 0 ${whites.length * WW + 1} ${WH + 1}`);
-  const selTrig = selected ? trigList(selected) : [];
+  const selTrig = selected ? trigList(selected).map(x => splitTrig(x).base) : [];
   const css = getComputedStyle(document.documentElement);
   const col = v => css.getPropertyValue(v).trim();
   let out = "";
-  const keyFor = n => buttonsFor(`note:${n}`)[0];
+  const keyFor = n => resolve(`note:${n}`)[0];   // with the modifiers held, what the key does then
   const fill = (n, black) => {
     const t = `note:${n}`;
     if (triggerDown.has(t)) return col("--press");
@@ -357,9 +438,11 @@ function drawKeyboard() {
   }
   svg.innerHTML = out;
   const outside = selTrig.filter(t => t.startsWith("note:") && (+t.slice(5) < LOW || +t.slice(5) > HIGH));
+  const mods = heldMods();
   $("kbdHint").textContent = outside.length
     ? `${title(selected)} is also on ${outside.map(label).join(", ")}, outside this keyboard's range at the centre octave.`
-    : "Click a row below to see its keys here, or click a key here to find its row. Keys being pressed light up yellow.";
+    : mods.length ? `Holding ${mods.map(title).join(" + ")}: the keys show what they do with it.`
+    : "Click a row below to see its keys here, or click a key here to find its row. Keys being pressed light up yellow. Hold a modifier to see its combinations.";
   drawSide();
 }
 
@@ -390,7 +473,7 @@ $("kbd").addEventListener("click", e => {
   const g = e.target.closest(".key");
   if (!g) return;
   const t = `note:${g.dataset.note}`;
-  const c = controlsFor(t)[0];
+  const c = resolve(t)[0];
   $("lastMidi").textContent = `${label(t)}` + (c ? ` → ${title(c)}` : " (not mapped)");
   if (c) { if (selected !== c) select(c); document.querySelector(`tr[data-key="${CSS.escape(c)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 });
@@ -450,7 +533,24 @@ async function startMidi() {
 function render() {
   const rows = $("rows");
   rows.innerHTML = "";
-  for (const k of controls()) {
+  const placed = new Set();
+  const ordered = [];
+  for (const [name, takes] of GROUPS) {
+    const ks = controls().filter(k => !placed.has(k) && takes(k));
+    if (!ks.length) continue;
+    ks.forEach(k => placed.add(k));
+    ordered.push(name, ...ks.map(k => ({ k })));
+  }
+  for (const item of ordered) {
+    if (typeof item === "string") {
+      const g = document.createElement("tr");
+      g.className = "group";
+      g.innerHTML = `<td colspan="5"></td>`;
+      g.firstChild.textContent = item;
+      rows.appendChild(g);
+      continue;
+    }
+    const k = item.k;
     const slider = isSlider(k);
     const tr = document.createElement("tr");
     tr.dataset.key = k;
@@ -459,29 +559,41 @@ function render() {
     const trig = trigList(k);
     tr.innerHTML = `<td class="name">${title(k)}</td><td class="what"></td><td class="trig"></td>` +
       `<td><button class="learn"></button></td><td><span class="led"></span></td>`;
-    tr.querySelector(".what").textContent = slider ? SLIDERS[k] : WHAT[k] || "";
+    tr.querySelector(".what").textContent = slider ? SLIDERS[k] : what(k);
     const cell = tr.querySelector(".trig");
     if (!trig.length) cell.innerHTML = `<span class="none">not mapped</span>`;
     for (const t of trig) {
       const chip = document.createElement("span");
       chip.className = "chip";
-      chip.textContent = label(t);
+      const st = splitTrig(t);
+      if (st.mods.length) {
+        const m = document.createElement("span");
+        m.className = "mod"; m.textContent = st.mods.map(title).join(" + ") + " +";
+        chip.append(m, " " + label(st.base));
+      } else chip.textContent = label(t);
       const x = document.createElement("button");
       x.textContent = "×"; x.title = "Remove";
       x.onclick = e => {
         e.stopPropagation();
         const list = slider ? mapping.sliders : mapping.buttons;
         list[k] = trig.filter(y => y !== t);
-        if (!slider && triggerDown.has(t)) { triggerDown.delete(t); setKey(k, false); }
+        const b = splitTrig(t).base;
+        if (!slider && activeFor[b] && activeFor[b].includes(k)) {
+          activeFor[b] = activeFor[b].filter(x => x !== k);
+          setKey(k, isHeld(k));
+        }
         save(); render();
       };
       chip.appendChild(x);
       cell.appendChild(chip);
     }
     const b = tr.querySelector(".learn");
-    b.textContent = learning === k ? (slider ? "Move a slider… (Esc)" : "Press a key… (Esc)") : (slider ? "Add slider" : "Add key");
+    b.textContent = learning !== k ? (slider ? "Add slider" : "Add key")
+      : slider ? "Move a slider… (Esc)"
+      : learnMods.size ? `${MODS.filter(m => learnMods.has(m)).map(title).join(" + ")} + … (Esc)` : "Press a key, or hold a modifier and press one… (Esc)";
+    b.title = slider ? "" : "Press a MIDI key to map it. For a combination, hold a modifier's MIDI key (PALETTE, LAYER, BRIGHT, PAGE) and press another.";
     b.classList.toggle("learning", learning === k);
-    b.onclick = e => { e.stopPropagation(); learning = learning === k ? null : k; render(); };
+    b.onclick = e => { e.stopPropagation(); const was = learning; stopLearning(); learning = was === k ? null : k; render(); };
     if (slider) tr.querySelector(".led").remove();
     tr.onclick = () => select(k);
     rows.appendChild(tr);
@@ -502,7 +614,7 @@ function paintLeds() {
 }
 
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && learning) { learning = null; render(); }
+  if (e.key === "Escape" && learning) { stopLearning(); render(); }
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawKeyboard);
 
@@ -543,7 +655,7 @@ async function poll() {
         (b.held.length ? ` · held: ${b.held.join(", ")}` : "")
       : `${b.error || ""} — looking for USB ${b.serial}`;
     // a base that comes back has nothing held: forget what we think is held
-    if (wasConnected === false && b.connected) { triggerDown.clear(); pressed.clear(); render(); }
+    if (wasConnected === false && b.connected) { triggerDown.clear(); pressed.clear(); activeFor = {}; render(); }
     wasConnected = b.connected;
     if (JSON.stringify(s.leds) !== JSON.stringify(leds)) { leds = s.leds; paintLeds(); }
     const log = $("log");
@@ -561,10 +673,12 @@ addEventListener("pagehide", () => navigator.sendBeacon("/api/allup", new Blob([
   try {
     const s = await (await fetch("/api/status")).json();
     keys = s.keys;
+    if (s.modifiers) MODS = s.modifiers;
+    PALETTES = s.palettes || [];
     mapping = (await (await fetch("/api/mapping")).json()).mapping;
     if (!mapping.sliders) mapping.sliders = (await (await fetch("/api/mapping/default")).json()).mapping.sliders || {};
   } catch (_) {
-    keys = ["1","2","3","4","5","6","7","8","all","body","eyes","fins","page","latch","blackout","finsensor","take","flash","unlock"];
+    keys = [];   // the bridge isn't running: nothing to map until it is
   }
   mapping.buttons = mapping.buttons || {};
   mapping.sliders = mapping.sliders || {};

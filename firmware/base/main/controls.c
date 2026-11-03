@@ -5,10 +5,21 @@
 
 #define SLOT_BIT(t) (1u << (t))
 
-static const char *const key_names[KEY_COUNT] = {
+// Also read by tools/midi_keys/server.py (the names in quotes, in order).
+static const char *const key_names[] = {
     "none", "1", "2", "3", "4", "5", "6", "7", "8",
     "all", "body", "eyes", "fins", "page", "latch", "blackout", "finsensor", "take", "flash", "unlock",
+    "9", "10", "11", "12", "13", "14", "15", "16",
+    "palette", "layer", "bright",
+    "preset1", "preset2", "preset3", "preset4", "preset5", "preset6", "preset7", "preset8",
+    "preset9", "preset10", "preset11", "preset12", "preset13", "preset14", "preset15", "preset16",
+    "palette1", "palette2", "palette3", "palette4", "palette5", "palette6", "palette7", "palette8",
+    "layer1", "layer2", "layer3", "layer4", "layer5", "layer6", "layer7", "layer8",
+    "layer9", "layer10", "layer11", "layer12", "layer13", "layer14", "layer15", "layer16",
+    "bright1", "bright2", "bright3", "bright4", "bright5", "bright6", "bright7", "bright8",
+    "polepower",
 };
+_Static_assert(sizeof(key_names) / sizeof(key_names[0]) == KEY_COUNT, "a name for every key");
 
 const char *ctl_key_name(ctl_key_t key) { return key < KEY_COUNT ? key_names[key] : "?"; }
 
@@ -27,15 +38,15 @@ const char *ctl_target_name(ctl_target_t t)
 
 const char *ctl_page_name(int page)
 {
-    static const char *names[] = { "1-8", "9-16", "PALETTE", "LAYER" };
-    return page >= 0 && page < PAGE_COUNT ? names[page] : "?";
+    static const char *names[] = { "PRESET", "PALETTE", "LAYER", "BRIGHT" };
+    return page >= 0 && page <= PAGE_BRIGHT ? names[page] : "?";
 }
 
 const char *ctl_palette_name(const ctl_t *c, int palette)
 {
-    static const char *const names[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTE_NAMES;
-    static const uint8_t defaults[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTES;
-    for (int i = 0; i < CTL_PAGE_SIZE; i++)
+    static const char *const names[CTL_PALETTES] = CTL_DEFAULT_PALETTE_NAMES;
+    static const uint8_t defaults[CTL_PALETTES] = CTL_DEFAULT_PALETTES;
+    for (int i = 0; i < CTL_PALETTES; i++)
         if (c->palettes[i] == palette && defaults[i] == palette) return names[i];
     return NULL;
 }
@@ -43,7 +54,7 @@ const char *ctl_palette_name(const ctl_t *c, int palette)
 void ctl_init(ctl_t *c, uint32_t autolock_ms)
 {
     memset(c, 0, sizeof(*c));
-    static const uint8_t pals[CTL_PAGE_SIZE] = CTL_DEFAULT_PALETTES;
+    static const uint8_t pals[CTL_PALETTES] = CTL_DEFAULT_PALETTES;
     memcpy(c->palettes, pals, sizeof(pals));
     c->layers = c->standby_layers = (ctl_layers_t){ -1, -1, -1, -1 };
     c->live.fins = c->standby.fins = -1;
@@ -160,8 +171,64 @@ static ctl_target_t key_target(ctl_key_t k)
     return k == KEY_BODY ? TGT_BODY : k == KEY_EYES ? TGT_EYES : k == KEY_FINS ? TGT_FINS : TGT_ALL;
 }
 
-static bool is_num(ctl_key_t k) { return k >= KEY_NUM1 && k <= KEY_NUM8; }
-static bool preset_page(int page) { return page == PAGE_PRESETS || page == PAGE_PRESETS2; }
+// What a number or a key of its own stands for.
+enum { FN_NONE = 0, FN_PRESET, FN_PALETTE, FN_LAYER, FN_BRIGHT };
+typedef struct {
+    int kind;
+    int n;           // 1-based: preset, palette key, layer look, brightness eighth
+} fn_t;
+
+// The number key's number (1-16), or 0.
+static int num_of(ctl_key_t k)
+{
+    if (k >= KEY_NUM1 && k <= KEY_NUM8) return k - KEY_NUM1 + 1;
+    if (k >= KEY_NUM9 && k <= KEY_NUM16) return k - KEY_NUM9 + 9;
+    return 0;
+}
+static ctl_key_t num_key(int n) { return n <= 8 ? (ctl_key_t)(KEY_NUM1 + n - 1) : (ctl_key_t)(KEY_NUM9 + n - 9); }
+
+int ctl_mode(const ctl_t *c)
+{
+    if (c->down[KEY_MOD_BRIGHT]) return PAGE_BRIGHT;
+    if (c->down[KEY_MOD_PALETTE]) return PAGE_PALETTES;
+    if (c->down[KEY_MOD_LAYER]) return PAGE_LAYERS;
+    return c->page;
+}
+
+static fn_t fn_make(int kind, int n)
+{
+    const int max = kind == FN_PRESET ? CTL_PRESETS : kind == FN_PALETTE ? CTL_PALETTES : kind == FN_LAYER ? CTL_LAYERS : CTL_BRIGHTS;
+    return n >= 1 && n <= max ? (fn_t){ kind, n } : (fn_t){ FN_NONE, 0 };
+}
+
+// Number n as things stand: PAGE held is brightness (as ever), else the mode.
+static fn_t number_fn(const ctl_t *c, int n)
+{
+    const int mode = c->down[KEY_PAGE] ? PAGE_BRIGHT : ctl_mode(c);
+    return fn_make(mode == PAGE_PALETTES ? FN_PALETTE : mode == PAGE_LAYERS ? FN_LAYER : mode == PAGE_BRIGHT ? FN_BRIGHT : FN_PRESET, n);
+}
+
+// A key of its own (PRESET3, LAYER12, ...), whatever is held.
+static fn_t key_fn(ctl_key_t k)
+{
+    if (k >= KEY_PRESET1 && k <= KEY_PRESET_LAST) return fn_make(FN_PRESET, k - KEY_PRESET1 + 1);
+    if (k >= KEY_PALETTE1 && k <= KEY_PALETTE_LAST) return fn_make(FN_PALETTE, k - KEY_PALETTE1 + 1);
+    if (k >= KEY_LAYER1 && k <= KEY_LAYER_LAST) return fn_make(FN_LAYER, k - KEY_LAYER1 + 1);
+    if (k >= KEY_BRIGHT1 && k <= KEY_BRIGHT_LAST) return fn_make(FN_BRIGHT, k - KEY_BRIGHT1 + 1);
+    return (fn_t){ FN_NONE, 0 };
+}
+
+// What it means to WLED: the preset, the palette, the layer preset, the brightness.
+static int fn_value(const ctl_t *c, fn_t f)
+{
+    switch (f.kind) {
+        case FN_PRESET:  return f.n;
+        case FN_PALETTE: return c->palettes[f.n - 1];
+        case FN_LAYER:   return NL_LAYER_PRESET_BASE + f.n;
+        case FN_BRIGHT:  return f.n * 255 / CTL_BRIGHTS;
+        default:         return 0;
+    }
+}
 
 // Palettes and layers: which of WLED's layers the target means. The body's go
 // to the body (the fins show it while they follow it); the fins' to the fins'
@@ -169,10 +236,9 @@ static bool preset_page(int page) { return page == PAGE_PRESETS || page == PAGE_
 static bool on_body(const ctl_t *c, ctl_target_t t) { (void)c; return t == TGT_ALL || t == TGT_BODY; }
 static bool on_fins(const ctl_t *c, ctl_target_t t) { return t == TGT_FINS || (t == TGT_ALL && c->live.fins > 0); }
 
-// A palette (palette page) or a layer look (layer page) while the number is held.
-static void bump_layered(ctl_t *c, out_t *o, int page, int value)
+// A palette or a layer look while its key is held.
+static void bump_layered(ctl_t *c, out_t *o, bool pal, int value)
 {
-    const bool pal = page == PAGE_PALETTES;
     const uint8_t action = pal ? NL_BUMP_PALETTE : NL_BUMP_LAYER;
     if (on_body(c, c->target)) bump_on(c, o, TGT_BODY, action, nl_slot_arg(pal ? NL_SLOT_BODY : NL_SLOT_BODY_OVER, (uint8_t)value));
     if (on_fins(c, c->target)) bump_on(c, o, TGT_FINS, action, nl_slot_arg(pal ? NL_SLOT_FINS : NL_SLOT_FINS_OVER, (uint8_t)value));
@@ -187,7 +253,7 @@ static void latch_layered(ctl_t *c, out_t *o)
     const int v = c->num_preset;
     const ctl_layers_t old = c->num_layers;
     ctl_layers_t *q = &c->standby_layers;
-    if (c->num_page == PAGE_PALETTES) {
+    if (c->num_kind == FN_PALETTE) {
         if (on_body(c, c->target)) {
             emit(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, 0, v);
             c->layers.body_pal = v;
@@ -221,11 +287,10 @@ static void latch_layered(ctl_t *c, out_t *o)
 }
 static bool is_target(ctl_key_t k) { return k >= KEY_ALL && k <= KEY_FINS; }
 
-// Number key n (1-8) on the current page, cued in Standby for the target.
+// A preset cued in Standby for the target.
 // A new preset in Standby comes with its own palette and layers.
-static void stage(ctl_t *c, int n)
+static void stage(ctl_t *c, int preset)
 {
-    const int preset = n + c->page * CTL_PAGE_SIZE;
     ctl_layers_t *q = &c->standby_layers;
     const bool body = c->target == TGT_ALL || c->target == TGT_BODY, fins = c->target == TGT_ALL || c->target == TGT_FINS;
     switch (c->target) {
@@ -241,19 +306,18 @@ static void stage(ctl_t *c, int n)
 // Palette or layer look n cued in Standby for the target: the body's, and the
 // fins' when Standby has them on a fin preset (or they're the target). A layer
 // look Standby already has is cued off.
-static void stage_layered(ctl_t *c, int n)
+static void stage_layered(ctl_t *c, fn_t f)
 {
     if (c->target == TGT_EYES) return;
     ctl_layers_t now;
     ctl_standby_layers(c, &now);
     ctl_layers_t *q = &c->standby_layers;
     const bool body = on_body(c, c->target), fins = c->target == TGT_FINS || (c->target == TGT_ALL && c->standby.fins > 0);
-    if (c->page == PAGE_PALETTES) {
-        const int v = c->palettes[n - 1];
+    const int v = fn_value(c, f);
+    if (f.kind == FN_PALETTE) {
         if (body) q->body_pal = v;
         if (fins) q->fins_pal = v;
     } else {
-        const int v = NL_LAYER_PRESET_BASE + n;
         if (body) q->body_layer = now.body_layer == v ? 0 : v;
         if (fins) q->fins_layer = now.fins_layer == v ? 0 : v;
     }
@@ -264,7 +328,7 @@ static void stage_layered(ctl_t *c, int n)
 // What was Live drops into Standby, one TAKE away.
 static void latch_number(ctl_t *c, out_t *o)
 {
-    if (!preset_page(c->num_page)) { latch_layered(c, o); return; }
+    if (c->num_kind != FN_PRESET) { latch_layered(c, o); return; }
     const ctl_scene_t old = c->live;
     const int p = c->num_preset;
     if ((c->target == TGT_ALL || c->target == TGT_BODY) && p != c->live.body) {
@@ -415,6 +479,29 @@ static void take_release(ctl_t *c, out_t *o, bool commit)
     c->take_preview = false;
 }
 
+// A number or a key of its own went down: brightness at once; with LATCH held
+// first, cue it in Standby, unseen; else show it while held (LATCH keeps it).
+static void fn_press(ctl_t *c, out_t *o, ctl_key_t key, fn_t f)
+{
+    if (f.kind == FN_NONE) return;   // e.g. PALETTE + 12: there's no palette 12
+    if (f.kind == FN_BRIGHT) {
+        emit(o, ACT_BRIGHTNESS, TGT_BODY, 0, fn_value(c, f));
+        return;
+    }
+    if (c->down[KEY_LATCH]) {
+        if (f.kind == FN_PRESET) stage(c, f.n);
+        else stage_layered(c, f);
+        return;
+    }
+    if (c->num_bump != KEY_NONE) bumps_off(c, o);
+    c->num_bump = key;
+    c->num_kind = f.kind;
+    c->num_preset = fn_value(c, f);
+    c->num_layers = c->layers;
+    if (f.kind == FN_PRESET) bump_target(c, o, c->target, NL_BUMP_PRESET, c->num_preset);
+    else bump_layered(c, o, f.kind == FN_PALETTE, c->num_preset);
+}
+
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out)
 {
     out_t o = { out, 0 };
@@ -447,30 +534,11 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             if (c->target_used) c->target = c->target_before;  // held: momentary
             c->target_key = KEY_NONE;
         }
-    } else if (is_num(key)) {
-        const int n = key - KEY_NUM1 + 1;
+    } else if (num_of(key) || key_fn(key).kind != FN_NONE) {
         if (down) {
             if (c->target_key != KEY_NONE) c->target_used = true;
-            if (c->down[KEY_PAGE]) {                      // brightness in eighths
-                c->page_used = true;
-                emit(&o, ACT_BRIGHTNESS, TGT_BODY, 0, n * 255 / CTL_PAGE_SIZE);
-            } else if (c->down[KEY_LATCH]) {              // LATCH first: cue it in Standby, unseen
-                if (preset_page(c->page)) stage(c, n);
-                else stage_layered(c, n);
-            } else {                                      // show it while held
-                if (c->num_bump != KEY_NONE) bumps_off(c, &o);
-                c->num_bump = key;
-                c->num_n = n;
-                c->num_page = c->page;
-                c->num_layers = c->layers;
-                if (preset_page(c->page)) {
-                    c->num_preset = n + c->page * CTL_PAGE_SIZE;
-                    bump_target(c, &o, c->target, NL_BUMP_PRESET, c->num_preset);
-                } else {
-                    c->num_preset = c->page == PAGE_PALETTES ? c->palettes[n - 1] : NL_LAYER_PRESET_BASE + n;
-                    bump_layered(c, &o, c->page, c->num_preset);
-                }
-            }
+            if (c->down[KEY_PAGE]) c->page_used = true;
+            fn_press(c, &o, key, num_of(key) ? number_fn(c, num_of(key)) : key_fn(key));
         } else if (c->num_bump == key) {
             c->num_bump = KEY_NONE;
             bumps_off(c, &o);
@@ -491,6 +559,9 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
                 emit(&o, ACT_POLE_POWER, 0, 0, 0);
             } else if (down) bump_target(c, &o, c->target, key == KEY_FLASH ? NL_BUMP_FLASH : NL_BUMP_BLACKOUT, 0);
             else if (!c->take_preview && c->num_bump == KEY_NONE) bumps_off(c, &o);
+            break;
+        case KEY_POLE_POWER:
+            if (down) emit(&o, ACT_POLE_POWER, 0, 0, 0);
             break;
         case KEY_FIN_SENSOR:
             if (down) {
@@ -627,6 +698,36 @@ static uint32_t dim(uint32_t rgb, int pct)
     return r << 16 | g << 8 | b;
 }
 
+// A number's or a key of its own's colour when it isn't pressed.
+static uint32_t fn_color(const ctl_t *c, fn_t f, const ctl_layers_t *sb)
+{
+    if (f.kind == FN_NONE) return C_OFF;
+    if (f.kind == FN_BRIGHT) {   // a meter: the step nearest the brightness bright, those below dim
+        const int level = (c->brightness * CTL_BRIGHTS + 127) / 255;
+        return f.n == level ? 0xffd000 : f.n < level ? 0x302400 : C_IDLE;
+    }
+    if (f.kind == FN_PRESET) {
+        const int preset = f.n;
+        bool live = false, stby = false;
+        switch (c->target) {
+            case TGT_ALL:  live = preset == c->live.body || preset == c->live.eyes;
+                           stby = preset == c->standby.body || preset == c->standby.eyes; break;
+            case TGT_BODY: live = preset == c->live.body; stby = preset == c->standby.body; break;
+            case TGT_EYES: live = preset == c->live.eyes; stby = preset == c->standby.eyes; break;
+            case TGT_FINS: live = preset == c->live.fins; stby = preset == c->standby.fins; break;
+        }
+        return live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : preset > 8 ? C_PAGE2 : C_IDLE;
+    }
+    if (c->target == TGT_EYES) return C_OFF;   // the eyes have no layers
+    const bool pal = f.kind == FN_PALETTE;
+    const int v = fn_value(c, f);
+    const bool live = (on_body(c, c->target) && v == (pal ? c->layers.body_pal : c->layers.body_layer)) ||
+                      (c->target == TGT_FINS && v == (pal ? c->layers.fins_pal : c->layers.fins_layer));
+    const bool stby = (on_body(c, c->target) && v == (pal ? sb->body_pal : sb->body_layer)) ||
+                      (c->target == TGT_FINS && v == (pal ? sb->fins_pal : sb->fins_layer));
+    return live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : pal ? C_PALETTE : C_LAYER;
+}
+
 void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
 {
     for (int k = 0; k < KEY_COUNT; k++) rgb[k] = C_OFF;
@@ -635,44 +736,25 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
         rgb[KEY_UNLOCK] = c->down[KEY_UNLOCK] ? 0xff2020 : C_LOCKED;
         return;
     }
-    // Number keys: the target's Live preset (palette, layer look) red, its
-    // Standby one green, both amber.
+    // Numbers and keys of their own: the target's Live preset (palette, layer
+    // look) red, its Standby one green, both amber; white while pressed.
     ctl_layers_t sb;
     ctl_standby_layers(c, &sb);
-    for (int n = 1; n <= CTL_PAGE_SIZE && !preset_page(c->page); n++) {
-        const bool pal = c->page == PAGE_PALETTES;
-        const int v = pal ? c->palettes[n - 1] : NL_LAYER_PRESET_BASE + n;
-        const bool live = (on_body(c, c->target) && v == (pal ? c->layers.body_pal : c->layers.body_layer)) ||
-                          (c->target == TGT_FINS && v == (pal ? c->layers.fins_pal : c->layers.fins_layer));
-        const bool stby = (on_body(c, c->target) && v == (pal ? sb.body_pal : sb.body_layer)) ||
-                          (c->target == TGT_FINS && v == (pal ? sb.fins_pal : sb.fins_layer));
-        uint32_t col = live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : pal ? C_PALETTE : C_LAYER;
-        if (c->target == TGT_EYES) col = C_OFF;   // the eyes have no layers
-        if (c->down[KEY_NUM1 + n - 1]) col = 0xffffff;
-        rgb[KEY_NUM1 + n - 1] = col;
+    for (int n = 1; n <= CTL_NUMBERS; n++) {
+        const ctl_key_t k = num_key(n);
+        rgb[k] = c->down[k] ? 0xffffff : fn_color(c, number_fn(c, n), &sb);
     }
-    for (int n = 1; n <= CTL_PAGE_SIZE && preset_page(c->page); n++) {
-        const int preset = n + c->page * CTL_PAGE_SIZE;
-        int live = 0, stby = 0;
-        switch (c->target) {
-            case TGT_ALL:  live = preset == c->live.body || preset == c->live.eyes;
-                           stby = preset == c->standby.body || preset == c->standby.eyes; break;
-            case TGT_BODY: live = preset == c->live.body; stby = preset == c->standby.body; break;
-            case TGT_EYES: live = preset == c->live.eyes; stby = preset == c->standby.eyes; break;
-            case TGT_FINS: live = preset == c->live.fins; stby = preset == c->standby.fins; break;
-        }
-        uint32_t col = c->page ? C_PAGE2 : C_IDLE;
-        if (live && stby) col = C_BOTH;
-        else if (live) col = C_LIVE;
-        else if (stby) col = C_STANDBY;
-        if (c->down[KEY_NUM1 + n - 1]) col = 0xffffff;
-        rgb[KEY_NUM1 + n - 1] = col;
-    }
+    for (int k = KEY_PRESET1; k <= KEY_BRIGHT_LAST; k++)
+        rgb[k] = c->down[k] ? 0xffffff : fn_color(c, key_fn((ctl_key_t)k), &sb);
+    rgb[KEY_MOD_PALETTE] = c->down[KEY_MOD_PALETTE] ? 0xffffff : 0x601060;
+    rgb[KEY_MOD_LAYER] = c->down[KEY_MOD_LAYER] ? 0xffffff : 0x006050;
+    rgb[KEY_MOD_BRIGHT] = c->down[KEY_MOD_BRIGHT] ? 0xffffff : 0x504000;
+    rgb[KEY_POLE_POWER] = c->down[KEY_POLE_POWER] ? 0xff0000 : 0x301000;
     for (int k = KEY_ALL; k <= KEY_FINS; k++) {
         const ctl_target_t t = key_target((ctl_key_t)k);
         rgb[k] = t == c->target ? target_color(t) : dim(target_color(t), 12);
     }
-    static const uint32_t page_cols[PAGE_COUNT] = { C_IDLE, 0x2040ff, 0xc020c0, 0x00c0a0 };
+    static const uint32_t page_cols[PAGE_COUNT] = { C_IDLE, 0xc020c0, 0x00c0a0 };
     rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : page_cols[c->page];
     // LATCH: lit while there's something held to keep (a number or TAKE).
     rgb[KEY_LATCH] = c->down[KEY_LATCH] ? 0xffffff : (c->num_bump != KEY_NONE || c->take_preview) ? (blink ? 0xffd000 : 0x403400) : C_IDLE;

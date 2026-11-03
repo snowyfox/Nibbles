@@ -12,6 +12,8 @@ then open http://localhost:8090/ in Chrome (Web MIDI) and allow MIDI.
   ioreg, and found again when it comes back after a restart or a replug.
   Opening the port can restart the base: give it ~15 s to find the radio.
 - The key mapping lives in mapping.json next to this file (the page edits it).
+  A trigger can also be a combination: a MIDI key pressed while base
+  modifiers are held ("layer+note:64"), which the page resolves itself.
 - A slider (the KeyStudio's volume slider, CC 7) sets WLED's brightness:
   "wled bri N" (0..255) to the base, which sends it to the Live brain (the
   Standby brain follows within a second).
@@ -36,6 +38,7 @@ WEB = os.path.join(HERE, "web")
 MAPPING = os.path.join(HERE, "mapping.json")
 DEFAULT_MAPPING = os.path.join(HERE, "mapping.default.json")
 CONTROLS_C = os.path.join(REPO, "firmware", "base", "main", "controls.c")
+CONTROLS_H = os.path.join(REPO, "firmware", "base", "main", "controls.h")
 
 BASE_SERIAL = "80:45:6B:35:D0:14"   # the base's USB serial number (its MAC)
 LOG_LINES = 60
@@ -47,7 +50,7 @@ def key_names():
     firmware, so a new key shows up here by itself)."""
     try:
         src = open(CONTROLS_C).read()
-        m = re.search(r"key_names\[KEY_COUNT\]\s*=\s*\{(.*?)\};", src, re.S)
+        m = re.search(r"key_names\[[A-Z_]*\]\s*=\s*\{(.*?)\};", src, re.S)
         names = re.findall(r'"([^"]+)"', m.group(1))
         if names and names[0] == "none":
             return names[1:]
@@ -57,7 +60,21 @@ def key_names():
             "latch", "blackout", "finsensor", "take", "flash", "unlock"]
 
 
+def palette_names():
+    """The palette keys' names (CTL_DEFAULT_PALETTE_NAMES in controls.h)."""
+    try:
+        src = open(CONTROLS_H).read()
+        m = re.search(r"CTL_DEFAULT_PALETTE_NAMES\s*\{(.*?)\}", src)
+        return re.findall(r'"([^"]+)"', m.group(1))
+    except (OSError, AttributeError):
+        return []
+
+
 KEYS = key_names()
+# Base keys a mapping can hold for a combination ("layer+note:64"): the base's
+# modifiers, as hotkeys on a computer (controls.h).
+MODIFIERS = [k for k in ("palette", "layer", "bright", "page") if k in KEYS]
+PALETTES = palette_names()
 SLIDERS = ["brightness"]
 
 
@@ -219,13 +236,21 @@ def read_mapping():
     return {"buttons": {}}, True
 
 
+def valid_trigger(t):
+    """A MIDI key or pedal ("note:60", "cc:64"), or one pressed while base
+    modifiers are held ("layer+note:60", "palette+layer+note:60")."""
+    *mods, last = t.split("+")
+    return (re.fullmatch(r"(note|cc):\d{1,3}", last) is not None
+            and all(m in MODIFIERS for m in mods) and len(set(mods)) == len(mods))
+
+
 def valid_mapping(m):
     if not isinstance(m, dict) or not isinstance(m.get("buttons"), dict):
         return False
     for name, triggers in m["buttons"].items():
         if name not in KEYS or not isinstance(triggers, list):
             return False
-        if not all(isinstance(t, str) and re.fullmatch(r"(note|cc):\d{1,3}", t) for t in triggers):
+        if not all(isinstance(t, str) and valid_trigger(t) for t in triggers):
             return False
     sliders = m.get("sliders", {})
     if not isinstance(sliders, dict):
@@ -268,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
                          "serial": BASE_SERIAL, "held": sorted(base.down), "sent": base.sent,
                          "wled_bri": base.wled_bri},
                 "keys": KEYS,
+                "modifiers": MODIFIERS,
+                "palettes": PALETTES,
                 "leds": base.leds,
                 "log": base.log[-25:],
             })

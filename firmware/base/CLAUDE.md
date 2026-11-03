@@ -67,19 +67,34 @@ file. Until the hardware exists, all of it can be driven from USB serial.
     to preset 80 shows that). Fins get their own bump slot.
   - **Everything is a bump until it's latched** (the user's design,
     2026-10-28): holding a number key shows that preset on the target
-    (page 2: 9-16) and it goes back on release. Tap **LATCH** while holding
+    (numbers 1-16 are presets 1-16) and it goes back on release. Tap **LATCH** while holding
     it to keep it: commands go out, then the bumps let go, and the old Live
     drops into Standby.
   - **TAKE** held shows Standby (bumps) and goes back on release; tap LATCH
     while holding it to keep the swap (Standby then holds the old Live, so
     TAKE + LATCH again goes back).
-  - **PAGE** cycles what the numbers are (2026-10-29): presets 1-8,
-    presets 9-16, **palettes** and **layers** (the page name is in the target
-    box; the PAGE key's LED is white / blue / magenta / teal).
+  - **Numbers, modifiers and keys of their own** (2026-11-03, the user's
+    design for building a keymap; `controls.h`): number keys **1-16** (9-16
+    replaced the old "9-16" page). Held modifiers change what the numbers do,
+    as hotkeys on a computer: **PALETTE** + 1-8 palettes, **LAYER** + 1-16
+    layer looks, **BRIGHT** (or PAGE held, as before) + 1-8 brightness in
+    eighths. A modifier alone does nothing; letting go of it while a number
+    is held changes nothing. Every one of those also has a **key of its
+    own** that does it whatever is held or paged: PRESET1-16, PALETTE1-8,
+    LAYER1-16, BRIGHT1-8, and POLEPOWER (= PAGE + BLACKOUT). They bump,
+    latch and cue (LATCH held first) exactly like the numbers. The new keys
+    come after UNLOCK in `ctl_key_t`, so the first 19 keep their order
+    (`LEDS` lines, the simulator). The screen's page name shows the
+    modifier held (`ctl_mode`). Brightness keys light as a meter.
+  - **PAGE** cycles what the numbers are with no modifier held (2026-10-29,
+    for a keypad without modifier keys): presets, **palettes** and
+    **layers** (the page name is in the target box; the PAGE key's LED is
+    white / magenta / teal). Numbers with nothing to do (PALETTE + 9-16)
+    are dark and do nothing.
     - **Palettes:** the 8 WLED palettes in `CTL_DEFAULT_PALETTES` (Party,
       Lava, Ocean, Rainbow, Icefire, Magenta, Orange & Teal, Atlantica) go on
       the target's own layer. The effect keeps running.
-    - **Layers:** the layer looks (WLED presets 101-108,
+    - **Layers:** the layer looks (WLED presets 101-116,
       `NL_LAYER_PRESET_BASE` + n) go on the target's overlay.
     - **Which layers the target means:** BODY means the body's layer and
       overlay (WLED layer slots 0 and 2). FINS means the fins' (slots 1 and 3,
@@ -237,7 +252,8 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   its state above the event line (event now 466).
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
-  finsensor, take, flash, unlock, latch), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
+  finsensor, take, flash, unlock, 9-16, palette, layer, bright, preset1-16,
+  palette1-8, layer1-16, bright1-8, polepower), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
   `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).

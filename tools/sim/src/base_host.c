@@ -68,5 +68,5 @@ const char *base_key_name(int key) { return ctl_key_name((ctl_key_t)key); }
 const char *base_target_name(int t) { return ctl_target_name((ctl_target_t)t); }
 const char *base_page_name(int p) { return ctl_page_name(p); }
 // The palette page's palette on key n (1-8) and its name ("" if not one of the defaults)
-int base_palette(int n) { return n >= 1 && n <= CTL_PAGE_SIZE ? ctl.palettes[n - 1] : -1; }
+int base_palette(int n) { return n >= 1 && n <= CTL_PALETTES ? ctl.palettes[n - 1] : -1; }
 const char *base_palette_name(int pal) { const char *s = ctl_palette_name(&ctl, pal); return s ? s : ""; }

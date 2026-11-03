@@ -171,11 +171,9 @@ static void test_pages_and_brightness(void)
     ctl_t c;
     ctl_init(&c, 0);
     live(&c, 1, 1, 0);
-    tap(&c, KEY_PAGE);
-    CHECK(c.page == 1);
-    press(&c, KEY_NUM1);
+    press(&c, KEY_NUM9);                        // numbers 9-16 are presets 9-16
     CHECK(has(ACT_BUMP, TGT_BODY, 9));
-    release(&c, KEY_NUM1);
+    release(&c, KEY_NUM9);
     // PAGE held + number: brightness, and the page doesn't flip
     press(&c, KEY_PAGE);
     press(&c, KEY_NUM8);
@@ -184,14 +182,80 @@ static void test_pages_and_brightness(void)
     press(&c, KEY_NUM4);
     CHECK(has(ACT_BRIGHTNESS, -1, 127));
     release(&c, KEY_NUM4);
+    CHECK(press(&c, KEY_NUM12) == 0);           // no twelfth eighth
+    release(&c, KEY_NUM12);
     release(&c, KEY_PAGE);
-    CHECK(c.page == 1);
+    CHECK(c.page == PAGE_PRESETS);
     tap(&c, KEY_PAGE);
     CHECK(c.page == PAGE_PALETTES);
     tap(&c, KEY_PAGE);
     CHECK(c.page == PAGE_LAYERS);
     tap(&c, KEY_PAGE);
     CHECK(c.page == PAGE_PRESETS);
+}
+
+// Modifiers held change what the numbers do, as hotkeys; keys of their own
+// do one thing whatever is held.
+static void test_modifiers_and_own_keys(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    const ctl_layers_t l0 = { 11, -1, 0, 0 };
+    ctl_set_layers(&c, &l0);
+    // LAYER held + 12: layer look 12, bump then LATCH, as on the layer page
+    press(&c, KEY_MOD_LAYER);
+    CHECK(ctl_mode(&c) == PAGE_LAYERS && c.page == PAGE_PRESETS);
+    press(&c, KEY_NUM12);
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY_OVER, NL_LAYER_PRESET_BASE + 12)));
+    release(&c, KEY_MOD_LAYER);                 // letting go of the modifier first changes nothing
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_SLOT_LOOK, NL_SLOT_BODY_OVER, NL_LAYER_PRESET_BASE + 12));
+    release(&c, KEY_LATCH);
+    release(&c, KEY_NUM12);
+    CHECK(c.layers.body_layer == NL_LAYER_PRESET_BASE + 12 && ctl_mode(&c) == PAGE_PRESETS);
+    // PALETTE held + 3: the third palette; + 9: none
+    press(&c, KEY_MOD_PALETTE);
+    press(&c, KEY_NUM3);
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, c.palettes[2])));
+    release(&c, KEY_NUM3);
+    CHECK(press(&c, KEY_NUM9) == 0);
+    release(&c, KEY_NUM9);
+    uint32_t rgb[KEY_COUNT];
+    ctl_led_colors(&c, now, rgb);
+    CHECK(rgb[KEY_NUM9] == 0 && rgb[KEY_MOD_PALETTE] == 0xffffff);
+    release(&c, KEY_MOD_PALETTE);
+    // BRIGHT held: brightness
+    press(&c, KEY_MOD_BRIGHT);
+    press(&c, KEY_NUM2);
+    CHECK(has(ACT_BRIGHTNESS, -1, 63));
+    release(&c, KEY_NUM2);
+    release(&c, KEY_MOD_BRIGHT);
+    // Keys of their own ignore the page and the modifiers
+    c.page = PAGE_LAYERS;
+    press(&c, KEY_MOD_PALETTE);
+    press(&c, KEY_PRESET1 + 13);                // PRESET14
+    CHECK(has(ACT_BUMP, TGT_BODY, 14) && has(ACT_BUMP, TGT_EYES, 14));
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_PRESET, TGT_BODY, 14) && c.live.body == 14);
+    release(&c, KEY_LATCH);
+    release(&c, KEY_PRESET1 + 13);
+    release(&c, KEY_MOD_PALETTE);
+    press(&c, KEY_PALETTE1 + 4);
+    CHECK(has(ACT_BUMP, TGT_BODY, nl_slot_arg(NL_SLOT_BODY, c.palettes[4])));
+    release(&c, KEY_PALETTE1 + 4);
+    press(&c, KEY_LATCH);                       // LATCH first: cue a layer look in Standby
+    CHECK(press(&c, KEY_LAYER1 + 15) == 0 && c.standby_layers.body_layer == NL_LAYER_PRESET_BASE + 16);
+    release(&c, KEY_LAYER1 + 15);
+    release(&c, KEY_LATCH);
+    press(&c, KEY_BRIGHT1 + 7);
+    CHECK(has(ACT_BRIGHTNESS, -1, 255));
+    release(&c, KEY_BRIGHT1 + 7);
+    CHECK(press(&c, KEY_POLE_POWER) == 1 && acts[0].type == ACT_POLE_POWER);
+    release(&c, KEY_POLE_POWER);
+    // LEDs: the live preset's own key is red on any page
+    ctl_led_colors(&c, now, rgb);
+    CHECK(rgb[KEY_PRESET1 + 13] == 0xff1010 && rgb[KEY_PRESET1] != 0xff1010);
 }
 
 static void layers(ctl_t *c, int body_pal, int fins_pal, int body_layer, int fins_layer)
@@ -906,6 +970,7 @@ int main(void)
     test_latch_first_cues_standby();
     test_targets();
     test_pages_and_brightness();
+    test_modifiers_and_own_keys();
     test_palettes();
     test_layers();
     test_standby_layers();

@@ -966,7 +966,7 @@ void app_main(void)
             .standby = c.standby,
             .brightness = c.brightness,
             .target = c.target,
-            .page = c.page,
+            .page = (uint8_t)ctl_mode(&c),
             .layers = c.layers,
             .diff = ctl_standby_diff(&c),
             .keys_locked = c.locked,

@@ -54,6 +54,25 @@ doesn't have.
 
 ## Mapping
 
+- **Every base key has a row**, in sections: numbers 1-16, the modifiers
+  (PALETTE, LAYER, BRIGHT, PAGE), targets, the switcher keys, then keys of
+  their own for each preset (PRESET1-16), palette (PALETTE1-8), layer look
+  (LAYER1-16) and brightness step (BRIGHT1-8), and POLEPOWER. None has to be
+  mapped. A number does what the base's held modifier says (LAYER held + 3:
+  layer look 3); a key of its own does its one thing whatever is held.
+- **Combinations**, like hotkeys: a row can be mapped to a MIDI key pressed
+  while modifiers are held, e.g. LAYER3 on "LAYER + E4". To record one, click
+  **Add key**, hold the modifier's MIDI key (it must be mapped to the
+  modifier already) and press the other key; tapping the modifier's key alone
+  maps that key itself. The same MIDI key can have its plain mapping and
+  combinations: with the modifiers held, the combination wins (the one with
+  the most modifiers), else the plain one, so E4 alone can stay number 3.
+  The modifier itself still goes to the base, so a MIDI key with no
+  combination does what the base makes of it (LAYER + number 3: layer look
+  3). A key let go of releases what it pressed, even if the modifier went
+  first. Holding a modifier relabels the keyboard picture with what each
+  key does with it. Saved as `"layer+note:64"` in the button's list.
+
 - `mapping.default.json` is the default; your changes save to `mapping.json`
   (not committed). **Reset to default mapping** goes back.
 - **Add key**, then press a piano key (or the sustain pedal) to map it; Esc
