@@ -31,8 +31,6 @@ h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; colo
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 .sub { color: var(--muted); font-size: 13px; margin-top: 4px; word-break: break-word; }
-/* lines that change while keys are played stay one line, so nothing below moves */
-.line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 select, button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.learning { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -60,6 +58,7 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
 tbody tr { cursor: pointer; }
+tr.pressed td { background: color-mix(in srgb, var(--press) 30%, transparent); }
 tr.sel td { box-shadow: inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
 tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--sel), inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
 tr.sel td:last-child { box-shadow: inset -2px 0 0 var(--sel), inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
@@ -84,13 +83,12 @@ pre { background: var(--card); border: 1px solid var(--line); border-radius: 10p
       <h2>MIDI keyboard</h2>
       <div class="state"><span class="dot" id="midiDot"></span><span id="midiState">Starting…</span></div>
       <div class="sub"><select id="midiIn" hidden></select></div>
-      <div class="sub line" id="lastMidi">Last: nothing yet</div>
+      <div class="sub" id="lastMidi">Last: nothing yet</div>
     </div>
     <div class="card">
       <h2>Base station</h2>
       <div class="state"><span class="dot" id="baseDot"></span><span id="baseState">Asking the bridge…</span></div>
       <div class="sub" id="baseSub"></div>
-      <div class="sub line" id="baseHeld">Held: nothing</div>
     </div>
   </div>
 
@@ -194,6 +192,8 @@ function setKey(name, down) {
   if (down === pressed.has(name)) return;
   down ? pressed.add(name) : pressed.delete(name);
   post("/api/key", { name, down });
+  const row = document.querySelector(`tr[data-key="${CSS.escape(name)}"]`);
+  if (row) row.classList.toggle("pressed", down);
 }
 
 function assign(control, t) {
@@ -454,6 +454,7 @@ function render() {
     const slider = isSlider(k);
     const tr = document.createElement("tr");
     tr.dataset.key = k;
+    if (pressed.has(k)) tr.classList.add("pressed");
     if (selected === k) tr.classList.add("sel");
     const trig = trigList(k);
     tr.innerHTML = `<td class="name">${title(k)}</td><td class="what"></td><td class="trig"></td>` +
@@ -538,9 +539,9 @@ async function poll() {
     $("baseState").textContent = b.connected ? "Connected" : "Not connected";
     $("baseSub").textContent = b.connected
       ? `${b.port} (USB ${b.serial}) · ${b.sent} commands sent` +
-        (b.wled_bri !== null && b.wled_bri !== undefined ? ` · WLED brightness ${b.wled_bri}` : "")
+        (b.wled_bri !== null && b.wled_bri !== undefined ? ` · WLED brightness ${b.wled_bri}` : "") +
+        (b.held.length ? ` · held: ${b.held.join(", ")}` : "")
       : `${b.error || ""} — looking for USB ${b.serial}`;
-    $("baseHeld").textContent = `Held: ${b.held.length ? b.held.map(title).join(", ") : "nothing"}`;
     // a base that comes back has nothing held: forget what we think is held
     if (wasConnected === false && b.connected) { triggerDown.clear(); pressed.clear(); render(); }
     wasConnected = b.connected;
