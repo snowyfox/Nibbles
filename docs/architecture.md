@@ -252,7 +252,9 @@ boards or ports once installed. Plan for programming and powering them:
   4. Rollback: a new image is marked good only after it boots and renders
      normally; otherwise the bootloader goes back to the previous one, so a
      bad update can't leave an eye dead on the pole.
-  The base could get the same later.
+  The base has it now (2026-11-02, `firmware/base/CLAUDE.md`, "Updates
+  without USB"): two slots, rollback, Wi-Fi upload, and a mirror board fed
+  over a cable, with the same text protocol the eyes could reuse.
 - **Fins: independent effects and following the real fin angle** (2026-09-26;
   not started). The shark's WLED is a 2D matrix (side view, `wled/README.md`
   "2D map"); the usermod already copies partner LEDs each frame.

@@ -18,8 +18,11 @@ CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_40=y
 
-# The app outgrew the default 1 MB partition; this board has 16 MB of flash
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# Two 6 MB app slots for updates over Wi-Fi or the mirror cable (partitions.csv,
+# main/ota.c); a new image that doesn't come up properly is rolled back.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # The main loop copies the keypad state and builds the screen status on its
 # stack; the default 3.5 KB overflowed once Standby got palettes and layers.

@@ -19,6 +19,23 @@
 #define BTN_BUMP_TARGET      (NL_TARGET_EYES | NL_TARGET_WLED)  // who the bump key flashes
 #define BTN_BUMP_GPIO        16
 
+// ---------------------------------------------------------------- mirror board
+// A second 3.49 up the pole shows the base's screen and gets its firmware
+// from this board over a cable (mirror_link.c, 2026-11-02). Same firmware;
+// "role mirror" over USB makes a board the mirror. The main board's end is
+// off until "mirror link on" (it takes GPIO 0, the BOOT key, and GPIO 4).
+// The 3.49 has no spare header pin free of parts: GPIO 0 has C58 (100 nF,
+// the BOOT key's) and GPIO 4 has C10 (100 nF, the battery ADC's) to ground,
+// which round a fast signal off. Remove both on the main board for 1 Mbaud
+// (or drop MIRROR_BAUD to 19200, slow for updates: ~15 min).
+#define MIRROR_UART          1
+#define MIRROR_BAUD          1000000
+#define MIRROR_MAIN_TX_GPIO  0      // main board: to the mirror's RX (header A1)
+#define MIRROR_MAIN_RX_GPIO  4      // main board: from the mirror's TX (header A5)
+#define MIRROR_SIDE_TX_GPIO  43     // mirror board: to the main's RX (header B5)
+#define MIRROR_SIDE_RX_GPIO  44     // mirror board: from the main's TX (header B6)
+#define MIRROR_HELLO_MS      2000   // the main asks the mirror for its build this often
+
 // Status screen: LV_DISPLAY_ROTATION_0 or _180 = portrait (cards stacked),
 // _90 or _270 = landscape (cards side by side); each pair picks which way up.
 #define DISPLAY_ROTATION     LV_DISPLAY_ROTATION_0

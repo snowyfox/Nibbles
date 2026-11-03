@@ -19,6 +19,8 @@
 #include "freertos/task.h"
 #include "keypad.h"
 #include "logger.h"
+#include "mirror_link.h"
+#include "ota.h"
 #include "rtc.h"
 #include "nibbles_espnow.h"
 #include "nvs_flash.h"
@@ -329,11 +331,17 @@ static void run_ctl_actions(const ctl_action_t *a, int n)
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
+// PAGE held 5 s while the keys are locked turns the Wi-Fi update on or off
+// (locked, PAGE does nothing else). Set when it goes down; -1 once used.
+static volatile int64_t page_locked_since;
+#define WIFI_KEY_HOLD_US 5000000
+
 static void on_key(ctl_key_t key, bool down)
 {
     ctl_action_t a[CTL_MAX_ACTIONS];
     if (key == KEY_FIN_SENSOR) display_fin_key(down);
     xSemaphoreTake(ctl_mutex, portMAX_DELAY);
+    if (key == KEY_PAGE) page_locked_since = down && ctl.locked ? esp_timer_get_time() : 0;
     const int n = ctl_key(&ctl, key, down, now_ms(), a);
     xSemaphoreGive(ctl_mutex);
     ESP_LOGI(TAG, "key %s %s", ctl_key_name(key), down ? "down" : "up");
@@ -477,8 +485,10 @@ static void timed_bump_task(void *arg)
 // The board's own keys and the touch pads; also sends every bump's keepalives.
 static void buttons_task(void *arg)
 {
+    // With the mirror cable on, GPIO 0 (BOOT) is its output, not a key.
+    const bool next_key = !(mirror_link_enabled() && BTN_NEXT_GPIO == MIRROR_MAIN_TX_GPIO);
     const gpio_config_t io = {
-        .pin_bit_mask = (1ULL << BTN_NEXT_GPIO) | (1ULL << BTN_BUMP_GPIO),
+        .pin_bit_mask = (next_key ? 1ULL << BTN_NEXT_GPIO : 0) | (1ULL << BTN_BUMP_GPIO),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
@@ -488,7 +498,7 @@ static void buttons_task(void *arg)
     int held_arg = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(10));
-        const int n = gpio_get_level(BTN_NEXT_GPIO);
+        const int n = next_key ? gpio_get_level(BTN_NEXT_GPIO) : 1;
         if (n == 0 && prev_next == 1) {
             const action_t a = { DISPLAY_TAP_EYES, 0, { 0 } };
             xQueueSend(actions, &a, 0);
@@ -569,12 +579,15 @@ static void shot_task(void *arg)
     for (;;) display_screenshot(ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 2);
 }
 
+static void console_reply(void *ctx, const char *line) { printf("%s\n", line); }
+
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    cfg.rx_buffer_size = 4096;   // whole "ota data" lines (about 1 KB) without dropping bytes
     if (usb_serial_jtag_driver_install(&cfg) != ESP_OK) vTaskDelete(NULL);
     usb_serial_jtag_vfs_use_driver();
-    char line[48];
+    static char line[OTA_LINE_MAX + 64];   // "ota data" lines are about 1 KB
     size_t n = 0;
     for (;;) {
         uint8_t c;
@@ -585,6 +598,45 @@ static void console_task(void *arg)
         }
         line[n] = 0;
         n = 0;
+        if (!strcmp(line, "ota wifi on") || !strcmp(line, "ota wifi off")) {
+            if (!mirror_is_mirror()) ota_wifi_set(line[10] == 'n');
+            continue;
+        }
+        if (ota_command(line, console_reply, NULL)) continue;
+        if (!strcmp(line, "role mirror") || !strcmp(line, "role base")) {
+            const bool m = line[5] == 'm';
+            printf("ROLE %s%s\n", m ? "mirror" : "base", mirror_set_role(m) ? ", restarting" : ": could not save");
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+        if (!strcmp(line, "mirror")) {
+            char text[96];
+            mirror_link_text(text, sizeof(text));
+            printf("MIRROR %s; build here %s\n", text, ota_build_id());
+            continue;
+        }
+        if (mirror_is_mirror()) {   // the mirror board has none of the base's jobs
+            if (!strcmp(line, "shot") || !strcmp(line, "shot rle")) {
+                if (!shot_task_handle) xTaskCreate(shot_task, "shot", 4096, NULL, 2, &shot_task_handle);
+                if (shot_task_handle) xTaskNotify(shot_task_handle, line[4] ? 2 : 1, eSetValueWithOverwrite);
+            } else if (line[0]) printf("mirror board commands: ota ..., mirror, shot, role base|mirror\n");
+            continue;
+        }
+        if (!strcmp(line, "mirror push")) { mirror_link_push(); printf("MIRROR sending at the next hello\n"); continue; }
+        if (!strcmp(line, "mirror link on") || !strcmp(line, "mirror link off")) {
+            const bool on = line[13] == 'n';
+            printf("MIRROR link %s%s\n", on ? "on" : "off", mirror_link_enable(on) ? ", from the next restart" : ": could not save");
+            continue;
+        }
+        if (!strncmp(line, "wifi set ", 9)) {   // "wifi set SSID PASSWORD" (the SSID has no spaces; the password is the rest)
+            char ssid[33] = "";
+            const char *pass = line + 9;
+            const char *sp = strchr(pass, ' ');
+            const size_t sl = sp ? (size_t)(sp - pass) : strlen(pass);
+            if (sl && sl < sizeof(ssid)) { memcpy(ssid, pass, sl); pass = sp ? sp + 1 : ""; }
+            printf("WIFI %s\n", ssid[0] && ota_wifi_save(ssid, pass) ? "saved" : "not saved (wifi set SSID PASSWORD)");
+            continue;
+        }
         if (!strcmp(line, "next")) send_preset(NL_OP_PRESET_NEXT);
         else if (!strcmp(line, "prev")) send_preset(NL_OP_PRESET_PREV);
         else if (!strncmp(line, "set ", 4)) send_preset_index(atoi(line + 4));
@@ -703,12 +755,41 @@ static void name_of(char out[NL_NAME_LEN], char cache[][NL_NAME_LEN], int count,
     out[NL_NAME_LEN - 1] = 0;
 }
 
+// The mirror board: the screen and the cable to the main board, nothing else
+// (no radio, power board, keypads or logger).
+static void mirror_touch(display_action_t a, bool pressed, int value) {}
+
+static void mirror_main(void)
+{
+    ESP_LOGI(TAG, "role: mirror (\"role base\" over USB to change)");
+    if (display_start(mirror_touch) != ESP_OK) ESP_LOGE(TAG, "no display");
+    mirror_link_side_start();
+    xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
+    char shown[64] = "", text[64];
+    for (;;) {
+        const display_status_t ds = { 0 };
+        display_update(&ds);
+        ota_progress_text(text, sizeof(text));
+        if (!text[0]) snprintf(text, sizeof(text), "MIRROR %s, main %s", ota_build_id(), mirror_main_heard() ? "heard" : "not heard");
+        if (strcmp(text, shown)) {
+            display_event("%s", text);
+            memcpy(shown, text, sizeof(shown));
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
         nvs_flash_init();
+    }
+    ota_start();
+    if (mirror_is_mirror()) {
+        mirror_main();
+        return;
     }
     const nl_espnow_config_t cfg = {
         .role = NL_ROLE_BASE,
@@ -726,6 +807,7 @@ void app_main(void)
     actions = xQueueCreate(16, sizeof(action_t));
     timed_bumps = xQueueCreate(1, sizeof(timed_bump_t));
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
+    ota_wifi_init();   // the Wi-Fi netif before the radio starts Wi-Fi
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     if (power_start() != ESP_OK) ESP_LOGE(TAG, "no power board bus");
     rtc_start();
@@ -735,8 +817,10 @@ void app_main(void)
     xTaskCreate(actions_task, "actions", 4096, NULL, 4, NULL);
     xTaskCreate(timed_bump_task, "timed_bump", 3072, NULL, 4, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
+    mirror_link_main_start();
 
     int64_t next_battery = 0;
+    char update_shown[100] = "";
     for (int n = 0;; n++) {
         vTaskDelay(pdMS_TO_TICKS(50));
         const int64_t now = esp_timer_get_time();
@@ -838,7 +922,27 @@ void app_main(void)
             nl_espnow_broadcast(NL_MSG_BATTERY, &b, sizeof(b));
         }
 
+        // PAGE held under the lock: the Wi-Fi update on or off
+        const int64_t pls = page_locked_since;
+        if (pls > 0 && now - pls >= WIFI_KEY_HOLD_US) {
+            page_locked_since = -1;
+            ota_wifi_set(!ota_wifi_on());
+        }
+
         if (n % 5) continue;  // the screen every 250 ms
+        {   // updates on the event line: this board's, then the Wi-Fi's, then the mirror's
+            char text[100], mt[96];
+            ota_progress_text(text, sizeof(text));
+            if (!text[0]) ota_wifi_text(text, sizeof(text));
+            if (!text[0]) {
+                mirror_link_text(mt, sizeof(mt));
+                if (!strncmp(mt, "Mirror update", 13)) snprintf(text, sizeof(text), "%s", mt);
+            }
+            if (strcmp(text, update_shown)) {
+                if (text[0]) display_event("%s", text);
+                memcpy(update_shown, text, sizeof(update_shown));
+            }
+        }
         nl_espnow_stats_t st;
         nl_espnow_get_stats(&st);
         display_status_t ds = {

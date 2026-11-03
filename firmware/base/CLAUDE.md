@@ -307,8 +307,57 @@ Earlier features, still there (`main/main.c`):
   differ). Commands are unicast with an ack and up to 3 tries of
   60 ms.
 
-Partition table: ESP-IDF's "single app, large" (1.5 MB app); the app outgrew
-the default 1 MB one when the preset page was added.
+## Updates without USB, and the mirror board (2026-11-02)
+
+- **Partition table** (`partitions.csv`): two 6 MB app slots (`ota_0`,
+  `ota_1`) and `otadata`; nvs where it always was, so settings survive. The
+  image is ~1.4 MB. Changing to it needed one USB flash per board (done on the
+  base prototype 2026-11-02; a 2 MB backup from before is in `wled/backup/base/`).
+  `idf.py flash` still works as before (it resets `otadata` to boot `ota_0`);
+  **don't use `app-flash`** once a board has been updated: it writes `ota_0`
+  while the board may be booting `ota_1`.
+- **Rollback** (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, `main/ota.c`): a new
+  image is on trial until it has run `OTA_GOOD_AFTER_S` (30 s); a restart before
+  that goes back to the old one. Tested on the board: kept after 30 s; a reset
+  during the trial went back.
+- **The protocol** (`main/ota.h`), text lines over the USB console or the
+  mirror cable: `ota begin SIZE`, `ota data OFF CRC32 BASE64` (768 bytes a line,
+  zlib's CRC-32), `ota end`, `ota abort`, `ota status` (slot, build = first 16
+  hex digits of the ELF's SHA-256, size, "on trial"). `tools/base_ota.py usb
+  PORT` sends `build/nibbles_base.bin` this way (~100 s over USB, tested);
+  `status PORT` shows the slot and build. The USB console's receive buffer is
+  4 KB for these lines (at 256 bytes it dropped bytes).
+- **Wi-Fi** (main board only, off unless asked): `wifi set SSID PASSWORD`
+  (saved in NVS; the user types it, Claude doesn't), then `ota wifi on`, or
+  **PAGE held 5 s while the keys are locked** (locked, PAGE does nothing else;
+  again turns it off). It joins on the radio's channel, so ESP-NOW keeps
+  working, and serves `GET /` (version) and `POST /ota` (the raw .bin:
+  `tools/base_ota.py wifi IP`, or `curl --data-binary @nibbles_base.bin
+  http://IP/ota`). The page-1 event line shows `Update: http://IP/`. The netif
+  is made before the radio starts Wi-Fi (`ota_wifi_init`). **Not yet tested
+  against a real network** (needs the password); the key combo and the "no
+  network saved" path are.
+- **Mirror board** (`main/mirror_link.c`): a second 3.49 up the pole runs the
+  same firmware with `role mirror` (USB serial; `role base` back; saved in
+  NVS). It runs only the screen and the cable: no radio, power board, keypads
+  or logger, and shows `MIRROR <build>, main heard|not heard` on the event line
+  (the screen's contents aren't mirrored yet). Tested on the base prototype
+  (then set back to `role base`).
+  - Cable: UART1 at `MIRROR_BAUD` (1 Mbaud), 8N1, 3.3 V. Main board TX GPIO 0
+    (header A1) and RX GPIO 4 (A5); mirror TX GPIO 43 (B5), RX GPIO 44 (B6);
+    crossed, plus ground. **The main board needs two capacitors removed for
+    1 Mbaud**: C58 (100 nF on GPIO 0, the BOOT key's) and C10 (100 nF on GPIO 4,
+    the battery ADC's). Every header GPIO on the 3.49 is either used (1, 2, 3,
+    5, 43, 44; 38-41 SD; 19/20 USB; 47/48 its own I2C) or has one of these.
+    GPIO 0 is a strapping pin, so the mirror never transmits unasked and only
+    drives the main's GPIO 4.
+  - The main's end is off until `mirror link on` (then a restart; the BOOT key
+    stops being "next preset"). Every 2 s it sends `hello`; the mirror answers
+    `MIRROR <build> ready|busy`. If the builds differ, the main sends its own
+    running image with the protocol above (once per build per boot), so one
+    update to the main updates both. `mirror` shows the state, `mirror push`
+    sends anyway. **The push over the cable is untested** (no second 3.49);
+    the main end was switched on with nothing attached ("no mirror", no harm).
 
 Build: `idf.py -C firmware/base build`, flash to the base board's port
 (check its serial number, 28:84:85:91:27:08, first).
