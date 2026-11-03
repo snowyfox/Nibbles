@@ -258,8 +258,7 @@ Earlier features, still there (`main/main.c`):
   wrap (portrait) or end in "..." (landscape), never scroll. Three cards (EYES: preset, state,
   link, both fps, bpm, hype bar; WLED: on/preset, brightness, effect, palette,
   fps, LEDs, brightness bar; RADIO: channel, anchoring/locked/scanning,
-  counters) and an event line (last command result, held bump, which also
-  outlines the screen). Stale cards grey out after 2 s. `DISPLAY_ROTATION`
+  counters) and an event line (last command result, held bump). Stale cards grey out after 2 s. `DISPLAY_ROTATION`
   picks the layout and which way up. Panel notes: frames go out whole in 64-row QSPI chunks
   (the AXS15231B takes whole frames in order); LVGL renders full-frame in
   the chosen orientation and `flush_cb` copies (rotation 0) or rotates into a separate buffer and byte-swaps that

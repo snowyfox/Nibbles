@@ -1346,10 +1346,7 @@ static void ui_build(void)
 {
     screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(COL_BG), 0);
-    lv_obj_set_style_border_color(screen, lv_color_hex(COL_WARN), 0);
-    lv_obj_set_style_border_width(screen, 0, 0);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_post(screen, true, 0);  // the bump outline goes over the pages
 
     // Four pages side by side: the main page (power and the shark), swipe left
     // for Live and Standby, again for the preset grid, again for the details
@@ -1530,8 +1527,8 @@ static void ui_update(const display_status_t *s)
     lv_label_set_text_fmt(radio_card.line2, "rx %lu  tx %lu  fail %lu", (unsigned long)s->rx, (unsigned long)s->tx,
                           (unsigned long)s->tx_fail);
 
-    // A held bump outlines the whole screen.
-    lv_obj_set_style_border_width(screen, s->bump_action ? 4 : 0, 0);
+    // A held bump shows on the event line (no outline: a border on the
+    // screen shrinks its content area and moves every page by its width).
     if (s->bump_action) {
         char text[32];
         snprintf(text, sizeof(text), "BUMP  %s", bump_name(s->bump_action));
