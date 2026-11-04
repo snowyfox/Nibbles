@@ -1,0 +1,7 @@
+LCSC Part Number,Quantity,Comment,Designator
+C14663,4,100nF,"C1,C4"
+C45783,4,22uF,"C2,C3"
+C133062,10,From the power board (J9 + GPIO 43),"J1,J2,J3,J4,J5"
+C25803,2,100k,R1
+C22775,2,100R,R2
+C7484,2,SN74AHCT1G125DBVR,U1

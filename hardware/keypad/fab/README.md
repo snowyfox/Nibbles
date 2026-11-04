@@ -2,7 +2,7 @@
 
 Made by `export.sh` from the KiCad projects next to this folder. Close the board
 in KiCad first, then run `hardware/keypad/fab/export.sh key_upper` (or
-`key_column`, `key_hub` once they're routed). The script refills the zones,
+`key_column`, `key_hub`). The script refills the zones,
 and it stops if ERC, DRC or the schematic/PCB match has an error. Each board
 gets its own folder here.
 
@@ -16,25 +16,25 @@ gets its own folder here.
 Holes (M2 mounting holes) and solder jumpers have no LCSC number, so they're
 left out of the BOM and placement files.
 
-## Order settings (key_upper)
+## Order settings
 
 | Setting | Choose | Why |
 |---|---|---|
 | Layers | 2 | |
-| Dimensions | 18 x 76.2 mm (read from the files) | |
-| Thickness | 1.6 mm | the hotswap sockets and the MX pegs expect a 1.6 mm board |
+| Dimensions | key_upper 18 x 76.2, key_column 18 x 156.2, key_hub 48 x 24 mm (read from the files) | |
+| Thickness | 1.6 mm | the hotswap sockets and the MX pegs expect a 1.6 mm board (the hub too, for one setting) |
 | Copper | 1 oz | |
 | Min via hole / diameter | 0.3 mm / 0.6 mm | |
 | Via covering | Tented | |
 | Surface finish | HASL (lead-free) is fine; ENIG if it's cheap | TSSOP-16 at 0.65 mm pitch is the finest part |
 | Mark on PCB | Remove mark (or pick a spot on the front) | |
-| Stencil | **Bottom only** | every SMD part is on the back; the front paste layer is empty |
+| Stencil | Key boards: **bottom only**; hub: **top only** | each board has all its SMD parts on one side |
 
 ## Notes
 
-- **Every part is on the back**, including the SK6812MINI-E LEDs, which are
+- **Key boards: every part is on the back**, including the SK6812MINI-E LEDs, which are
   reverse-mount and shine through their cutouts to the front.
-- **SW1-SW3** in the files are the Kailh CPG151101S11 hotswap sockets, which
+- **SW1-SW3** (SW1-SW8 on key_column) in the files are the Kailh CPG151101S11 hotswap sockets, which
   solder to the back. The Box Navy switches press into them from the front;
   they aren't on the BOM. The CPL puts the sockets on the bottom layer.
 - Rotations in the CPL are KiCad's. If JLCPCB assembles, check each part in
@@ -44,3 +44,7 @@ left out of the BOM and placement files.
 - **Address jumpers:** JP1-JP3 (A0-A2) are bridged 1-2 as made, which gives
   address 0x38. Give every key board on the bus its own address: cut 1-2 and
   bridge 2-3 to set a bit to 1 (see `../README.md`).
+- **The hub** has everything on the front. Its BOM line for the five GH
+  connectors carries J1's value ("From the power board"); the LCSC number is
+  what counts. JP1-JP4 are open as made: bridge one to skip a port (JP1 skips
+  J2, JP2 J3, JP3 J4, JP4 J5).

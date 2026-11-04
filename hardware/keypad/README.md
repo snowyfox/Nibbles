@@ -3,8 +3,8 @@
 Physical buttons for the base station, replacing the 3.49's touch screen as
 the main input (see `firmware/base/`). Three small 2-layer boards, made by
 `tools/hardware/make_keypad_kicad.py` (run with KiCad's Python; see its
-header). `key_upper` is laid out and routed (DRC clean apart from
-silkscreen); `key_column` and `key_hub` are placed but not routed yet. Once a board has
+header). All three are laid out and routed: `key_upper` and `key_column`
+are DRC clean apart from silkscreen, `key_hub` fully clean. Once a board has
 been edited in KiCad, edit it there, not by rerunning the script, which
 overwrites the project.
 
@@ -62,11 +62,15 @@ Pins 1-6 are the power board's GH6 keypad pinout (J9, J11).
 - Everything is on the back: one-sided assembly, hand-solderable (0603,
   TSSOP-16, the LED's 4 pads). The front only has the switch holes.
 - M2 holes at both ends.
-- Routing plan (the switch pads are set up for it): key lines from each
-  socket's right pad down the **front's right edge** (8 lanes at 0.15/0.15
-  mm fit between the switch pegs and the edge); +5V down the **front's
-  left edge**, with a via to each LED; GND pours on both sides; the LED
-  chain on the back past each socket.
+- Routing (laid out by hand on `key_upper`): everything on the back, GND
+  pours on both sides. KEY1-3 and the LED data in run down the **back's
+  right edge** (only four lanes fit past the socket pads). `key_column` is
+  `key_upper`'s layout copied key by key, with the electronics 80 mm lower
+  (a scratch script, 2026-11-02); its KEY4-8 lines leave each socket pad
+  by a via and run down the **front's right edge** in 0.15 mm lanes
+  (four of them squeeze between SW8's hole and D8's window), round the
+  west end of the front +5V trace and back through vias under U1's
+  KEY5-8 pins; KEY4 drops beside U1 pin 7.
 
 ## Parts (LCSC, in stock 2026-10-28)
 
@@ -84,7 +88,6 @@ Pins 1-6 are the power board's GH6 keypad pinout (J9, J11).
 ## Checks
 
 ERC clean and the schematic matches the board (DRC's parity check) for all
-three. DRC also reports the unrouted connections, silkscreen overlaps,
-a starved thermal and a small isolated pour, which go once it's routed and
-the silk is tidied. The board edge clearance is 0.2 mm: KiCad's own
+three. DRC is clean on the hub; on the key boards it still lists silkscreen
+clipped by solder mask, which the fab trims. The board edge clearance is 0.2 mm: KiCad's own
 SK6812MINI-E footprint puts its pads 0.25 mm from its cutout.
