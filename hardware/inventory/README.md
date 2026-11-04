@@ -18,3 +18,4 @@ Order log:
 |---|---|---|
 | 2026-11-01 | LCSC | Everything in `hardware/fab/combined-LCSC-order.csv` as of that day (58 lines, about $242 before shipping). Not the optional cable parts. |
 | 2026-11-02 | JLCPCB | The bare PCBs: shipped 2026-11-02, DHL tracking 9816452192. |
+| 2026-11-04 | Amazon | Solder paste: Chip Quik NC191AX50 (Sn63/Pb37) and SMDLTLFPT4 (low-temp Sn42/Bi57.6/Ag0.4), one of each. |

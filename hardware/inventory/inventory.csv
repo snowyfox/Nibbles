@@ -57,3 +57,5 @@ C48260,TPD1E10B06DPYR,TI,TPD1E10B06DPYR,X1-SON-2(0.6x1),power,20,0,10,10,0.0451,
 C8545,2N7002,JSCJ,MOSFET N-CH 60V 115mA SOT-23,SOT-23,power,50,0,10,40,0.0167,LCSC,2026-11-01,Ordered,
 C8678,SS34,MDD(Microdiode Semiconductor),DIODE SCHOTTKY 40V SMA(DO-214AC),SMA(DO-214AC),power,20,0,5,15,0.0354,LCSC,2026-11-01,Ordered,
 C41430893,CPG151101S11-16,HanElectricity,Kailh CPG151101S11 hotswap socket (for the Box Navy switches),"SMD,14.5x5.9mm",socket,90,0,55,35,0.0450,LCSC,2026-11-01,Ordered,
+,NC191AX50,Chip Quik,"Solder paste Sn63/Pb37 no-clean (ROL0), T4, 90% metal, 50 g jar",50 g jar,consumable,1,0,1,0,,Amazon,2026-11-04,Ordered,"Top side of every board (stencil, hot plate); melts 183 C. Fridge 3-8 C, don't freeze, 4 h to warm before use; >12 months refrigerated, >6 months not"
+,SMDLTLFPT4,Chip Quik,"Low-temp solder paste Sn42/Bi57.6/Ag0.4 no-clean (REL0), T4, 87% metal, 15 g syringe",5 cc syringe,consumable,1,0,1,0,,Amazon,2026-11-04,Ordered,"Power board underside small passives (hot air, after the top); melts 138 C; never mix with leaded joints. Fridge 3-8 C, 4 h to warm; >6 months refrigerated, only >2 months not"
