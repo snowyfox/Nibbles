@@ -71,9 +71,14 @@ What it buys:
 
 Gain and size:
 
-- Aim for about **5–8 dBi with a 60–90° beam**. Higher gain means a bigger
-  panel and a narrow beam that punishes misalignment and pole flex, and the
-  extra signal isn't needed at 2.5 m.
+- Aim for about **5–9 dBi with a beam of 40° or more**. Pole movement is
+  not a reason to want a wide beam: swaying or tilting moves both ends
+  together, and only bending turns them away from each other, by about the
+  tip deflection ÷ pole length (10 cm of bend over 3 m is about 2°, 30 cm
+  about 6°). A narrower beam is better at keeping the crowd out. The real
+  limits are size (higher gain means a bigger panel) and the eyes, which sit
+  beside the brains and must stay inside the base's beam; the extra signal
+  isn't needed at 2.5 m.
 - Legal: 20 dBm + 8 dBi = 28 dBm EIRP, under the FCC's 36 dBm limit for
   2.4 GHz (Part 15.247).
 
