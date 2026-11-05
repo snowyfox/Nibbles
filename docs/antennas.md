@@ -112,9 +112,26 @@ Two brains need two antennas, one each, both facing down.
   to the board. The U.FL stays plugged in and the antenna comes off for the
   checked bag. U.FL is only rated for about 30 matings and breaks easily under
   strain. A 10–15 cm pigtail loses about 0.5 dB, negligible.
-- The aluminium pole runs alongside the signal path. That causes some
-  reflections but no real loss at this range, so mounting the patches a few
-  centimetres off the pole is fine.
+- The pole is graphite (carbon fibre: conductive and lossy at 2.4 GHz; top
+  section 20.6 mm across, `docs/pole.md`) and runs alongside the signal path.
+  That causes some reflections but no real loss at this range, so mounting
+  the antennas a few centimetres off the pole is fine.
+
+Two Yagis at the top (one per brain):
+
+- **Opposite sides of the pole, same height**, each about 3–5 cm off it.
+  That puts them about 8–12 cm apart (roughly one wavelength, 12.3 cm), with
+  the pole between them. Closer than about 6 cm (half a wavelength) side by
+  side, each detunes the other and skews its beam.
+- **Not one above the other on the same side:** the lower board would sit in
+  the upper one's beam.
+- **Strips parallel to each other and to the base antenna's**, and keep the
+  first few centimetres past the director end clear of wires, LED strips and
+  the brain boards. Run the coax up from the connector end (the back of the
+  beam), not across the elements.
+- **Each brain hearing the other strongly is fine:** they share one channel,
+  so they take turns rather than talk over each other, and at 10 cm the
+  signal is far below what would damage a receiver.
 
 ## The other links
 
