@@ -92,6 +92,8 @@ Gain and size:
 | Brains (if room) | same panel as the base | matched pair is simplest |
 | Brains (tight space) | [Taoglas WPC.25A.07.0150C](https://www.taoglas.com/datasheets/WPC.25A.07.0150C.pdf) | 25 × 25 mm ceramic patch, 150 mm cable to an IPEX MHF1 plug (fits the board directly), circularly polarized. Gain listed inconsistently: current datasheet 5 dBic, older revisions ([Mouser copy](https://www.mouser.com/datasheet/2/398/WPC.25A.07.0150C-1220953.pdf)) and distributors 0.5 dBi peak / −2.5 dBi average. Likely needs a ground plane behind it. The weaker option |
 
+| Base or brains | Generic printed Yagi (Amazon: "2.4Ghz Antenna, High Gain 2.4G Directional Video Antenna for Yagi 10.5dB 2.35-2.55GHZ") | 50 × 100 mm board, folded dipole + reflector + 3 directors, edge SMA jack; beam off the director end. Listed 10.5 dB; expect about 7–8 dBi from three directors. Stands along the pole; boards at both ends with elements parallel (linear polarization) |
+
 Two brains need two antennas, one each, both facing down.
 
 ## Polarization
