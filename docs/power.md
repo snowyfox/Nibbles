@@ -92,6 +92,11 @@ Worst case over the dock cable is lights at full plus quick charging, around
 - **4S1P Vapcell F63** (21700, 6250 mAh typical, 3.6 V nominal, 12.5 A max
   continuous, 2.0 A standard / 3.5 A quick charge, 2.5 V minimum, charge
   0–45 °C). Cells measure 21.6 × 71.0 mm, slightly larger than nominal 21700.
+- Layout (likely, 2026-11-05): **2 × 2**, two cells side by side with two
+  more stacked on them, about 44 × 44 × 71 mm before the BMS and wrap. Wrap:
+  PVC battery heat shrink, **100 mm flat width** (90 mm minimum), about
+  150 mm per layer, two layers; fish paper on the positive ends and between
+  the BMS and the nickel.
 - Energy: 4 × 3.6 V × 6.25 Ah = **90 Wh**, about 80 Wh usable.
 - Last year's pack used F60s (6000 mAh, otherwise the same ratings). **Never
   mix models, ages or batches inside one pack.**
