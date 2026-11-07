@@ -297,7 +297,10 @@ header { flex: none; }
 .card dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 8px 0 0; font-size: 14px; }
 .card dt { color: var(--muted); }
 .card dd { margin: 0; }
-svg { width: 100%; height: auto; display: block; margin-top: 10px; background: var(--panel); }
+/* the board stands upright (XT30 end at the top, like the microscope photos): map on the left, step details beside it */
+.cardgrid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
+svg { display: block; height: calc(100vh - 130px); height: calc(100dvh - 130px); min-height: 360px;
+  width: auto; background: var(--panel); }
 .nav { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); cursor: pointer; }
@@ -309,6 +312,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   header .sub { display: none; }
   .wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
   .view { order: -1; max-height: 62vh; max-height: 62dvh; }
+  .cardgrid { gap: 10px; }
+  svg { height: calc(62vh - 30px); height: calc(62dvh - 30px); min-height: 240px; }
 }
 </style>
 </head>
@@ -316,7 +321,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <header>
   <h1>Power + charger board: placement</h1>
   <div class="sub">One step per bag. Click a step (or use ← →); its parts light up on the map. Tick it when placed.
-  Map: XT30 end (J2, J5) on the left; top side as you look down on it, bottom side as you see it turned over top-to-bottom.</div>
+  Map: upright, XT30 end (J2, J5) at the top, as in the microscope photos; top side as you look down on it, bottom side as you see it turned over side to side.</div>
 </header>
 <div class="wrap">
   <div class="list" id="list"></div>
@@ -333,8 +338,9 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch
 let cur = 0;
 const [X0, Y0, X1, Y1] = D.box;
 const L = Y1 - Y0, W = X1 - X0, M = 3;
-// board long axis (KiCad y) runs left to right; top view keeps handedness, bottom view is turned over
-function tx(x, y, bottom) { return [y - Y0 + M, bottom ? x - X0 + M : X1 - x + M]; }
+// board long axis (KiCad y) runs top to bottom, XT30 end up, as KiCad draws it and as in the microscope photos;
+// the bottom view is the board turned over side to side (mirrored left-right)
+function tx(x, y, bottom) { return [bottom ? X1 - x + M : x - X0 + M, y - Y0 + M]; }
 function rect(p, bottom, cls, extra) {
   const a = tx(p.x, p.y, bottom), b = tx(p.x + p.w, p.y + p.h, bottom);
   const x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), h = Math.abs(a[1] - b[1]);
@@ -350,7 +356,7 @@ function draw(step) {
   const hi = new Set(step.refs);
   const doneRefs = new Set();
   D.steps.forEach((s, i) => { if (done[i]) s.refs.forEach(r => doneRefs.add(r)); });
-  let s = `<svg viewBox="0 0 ${L + 2 * M} ${W + 2 * M}" xmlns="http://www.w3.org/2000/svg">`;
+  let s = `<svg viewBox="0 0 ${W + 2 * M} ${L + 2 * M}" style="aspect-ratio: ${W + 2 * M} / ${L + 2 * M}" xmlns="http://www.w3.org/2000/svg">`;
   const o = D.outline.map(([x, y]) => tx(x, y, side).map(v => v.toFixed(3)).join(",")).join(" ");
   s += `<polygon points="${o}" fill="var(--board)" stroke="var(--edge)" stroke-width=".4"/>`;
   for (const ref in D.parts) {
@@ -369,9 +375,14 @@ function draw(step) {
       if (q) { const c = tx(q.x + q.w / 2, q.y + q.h / 2, side);
         s += `<circle cx="${c[0].toFixed(3)}" cy="${c[1].toFixed(3)}" r=".55" fill="var(--pin1)" stroke="#000" stroke-width=".12"/>`; }
     }
+  }
+  // labels after every box, so a neighbouring highlight never covers one
+  for (const ref of step.refs) {
+    const p = D.parts[ref];
     const c = tx(p.bx + p.bw / 2, p.by + p.bh / 2, side);
-    const ly = c[1] < W / 2 + M ? c[1] + Math.abs(p.bw) / 2 + 2.6 : c[1] - Math.abs(p.bw) / 2 - 1.2;
-    s += `<text x="${c[0].toFixed(2)}" y="${Math.max(2.2, Math.min(W + 2 * M - .6, ly)).toFixed(2)}" font-size="2.1" font-weight="700" text-anchor="middle" fill="var(--label)" stroke="var(--edge)" stroke-width=".5" paint-order="stroke">${ref}</text>`;
+    const ly = c[1] < L / 2 + M ? c[1] + Math.abs(p.bh) / 2 + 2.6 : c[1] - Math.abs(p.bh) / 2 - 1.2;
+    const lx = Math.max(ref.length * .7, Math.min(W + 2 * M - ref.length * .7, c[0]));
+    s += `<text x="${lx.toFixed(2)}" y="${Math.max(2.2, Math.min(L + 2 * M - .6, ly)).toFixed(2)}" font-size="2.1" font-weight="700" text-anchor="middle" fill="var(--label)" stroke="var(--edge)" stroke-width=".5" paint-order="stroke">${ref}</text>`;
   }
   for (const ref of ["J2", "J5", "J3"]) {
     if (hi.has(ref)) continue;
@@ -391,14 +402,14 @@ function renderCard() {
   if (s.tip) rows.push(["Tip", s.tip]);
   const n = D.steps.filter((_, i) => done[i]).length;
   document.getElementById("card").innerHTML =
-    `<div class="sub">Step ${cur + 1} of ${D.steps.length} · ${esc(D.sides[s.side])}</div>
+    `<div class="cardgrid"><div class="map">${draw(s)}</div><div class="info">
+     <div class="sub">Step ${cur + 1} of ${D.steps.length} · ${esc(D.sides[s.side])}</div>
      <h2>${esc(vals.length > 28 ? s.pkg.split(" (")[0] : vals)}: ${s.refs.length} part${s.refs.length > 1 ? "s" : ""}</h2>
      <div class="refs">${s.refs.join("  ")}</div>
-     ${draw(s)}
      <div class="legend">Red: this step · blue: placed · grey-green: still to do · yellow dot: pin 1 / cathode / +</div>
      <div class="nav"><button id="prev">← Back</button><button class="primary" id="tick">${done[cur] ? "Untick" : "Placed, next →"}</button>
      <span class="prog">${n} of ${D.steps.length} done</span></div>
-     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${md(v)}</dd>`).join("")}</dl>`;
+     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${md(v)}</dd>`).join("")}</dl></div></div>`;
   document.getElementById("prev").onclick = () => go(cur - 1);
   document.getElementById("tick").onclick = () => { toggle(cur); if (done[cur]) go(cur + 1); };
 }
