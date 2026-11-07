@@ -65,9 +65,14 @@ package and the quantity. The C-number is what to go by.
   Check against the connector's moulded marks and your cables before soldering.
 - **Choose J6 or J10** for the 3.49: J6 (stacking headers) if the board
   stacks under the 3.49 on H1/H2, J10 (GH8 cable) otherwise. Same nets.
-- **Paste:** Sn63/Pb37 (NC191AX50) for the top. Out of the fridge 4 h before
-  use. Keep the low-temp SnBi paste off this board: bismuth and lead make a
-  joint that melts near 96 °C. The bottom is done with an iron and leaded wire.
+- **Paste:** Sn63/Pb37, type 4 (20-38 µm), no-clean, for the top: Sopagre
+  MN-1002 (used for the first board, 2026-11-06, while the Chip Quik
+  NC191AX50 was delayed) or the NC191AX50; both melt at 183 °C, same
+  profile. Out of the fridge 4 h before use (if it was refrigerated), stir
+  it for a minute, and reflow within about 4 h of printing: neither
+  datasheet's open time is known. Keep the low-temp SnBi paste off this
+  board: bismuth and lead make a joint that melts near 96 °C. The bottom is
+  done with an iron and leaded wire.
 - Kit: flux, tweezers, magnifier or microscope, meter, the programmable
   current-limited bench supply, IPA and a brush.
 - ESD: wrist strap on whenever the chips are out of their bags or the board
