@@ -7,3 +7,4 @@ sdkconfig.old
 wled/backup/
 __pycache__/
 .cache/
+hardware/power_charger_board/photos/
