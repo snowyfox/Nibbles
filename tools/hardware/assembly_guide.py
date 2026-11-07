@@ -273,8 +273,13 @@ body { margin: 0; background: var(--bg); color: var(--ink);
 header { padding: 14px 16px 6px; }
 h1 { font-size: 19px; margin: 0 0 2px; }
 .sub { color: var(--muted); font-size: 13px; }
-.wrap { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 14px; padding: 8px 16px 24px; }
-.list { max-height: calc(100vh - 90px); overflow-y: auto; padding-right: 4px; }
+/* the page itself never scrolls: the map card stays put and the step list scrolls on its own */
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+header { flex: none; }
+.wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 420px) 1fr;
+  grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 8px 16px 12px; }
+.list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .side { font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
   color: var(--muted); margin: 14px 0 6px; }
 .step { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; margin-bottom: 4px;
@@ -285,7 +290,7 @@ h1 { font-size: 19px; margin: 0 0 2px; }
 .step .n { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.8em; }
 .step .t { font-weight: 600; }
 .step .r { color: var(--muted); font-size: 13px; }
-.view { position: sticky; top: 8px; align-self: start; }
+.view { min-height: 0; min-width: 0; overflow-y: auto; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .card h2 { font-size: 17px; margin: 0 0 4px; }
 .card .refs { font-family: ui-monospace, Menlo, monospace; font-size: 14px; color: var(--accent); }
@@ -300,9 +305,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .legend { color: var(--muted); font-size: 13px; margin-top: 6px; }
 .prog { color: var(--muted); font-size: 13px; margin-left: auto; }
 @media (max-width: 760px) {
-  .wrap { grid-template-columns: 1fr; }
-  .view { position: static; order: -1; }
-  .list { max-height: none; }
+  header { padding-bottom: 2px; }
+  header .sub { display: none; }
+  .wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+  .view { order: -1; max-height: 62vh; max-height: 62dvh; }
 }
 </style>
 </head>
@@ -388,11 +394,11 @@ function renderCard() {
     `<div class="sub">Step ${cur + 1} of ${D.steps.length} · ${esc(D.sides[s.side])}</div>
      <h2>${esc(vals.length > 28 ? s.pkg.split(" (")[0] : vals)}: ${s.refs.length} part${s.refs.length > 1 ? "s" : ""}</h2>
      <div class="refs">${s.refs.join("  ")}</div>
-     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${md(v)}</dd>`).join("")}</dl>
      ${draw(s)}
      <div class="legend">Red: this step · blue: placed · grey-green: still to do · yellow dot: pin 1 / cathode / +</div>
      <div class="nav"><button id="prev">← Back</button><button class="primary" id="tick">${done[cur] ? "Untick" : "Placed, next →"}</button>
-     <span class="prog">${n} of ${D.steps.length} done</span></div>`;
+     <span class="prog">${n} of ${D.steps.length} done</span></div>
+     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${md(v)}</dd>`).join("")}</dl>`;
   document.getElementById("prev").onclick = () => go(cur - 1);
   document.getElementById("tick").onclick = () => { toggle(cur); if (done[cur]) go(cur + 1); };
 }
