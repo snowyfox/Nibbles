@@ -17,8 +17,14 @@ stencil, LCSC parts). Build one, bring it up, then build the rest.
   Check against the connector's moulded marks and your cables before soldering.
 - **Choose J6 or J10** for the 3.49: J6 (stacking headers) if the board
   stacks under the 3.49 on H1/H2, J10 (GH8 cable) otherwise. Same nets.
-- Kit: flux, tweezers, magnifier or microscope, meter, a current-limited
-  bench supply (strongly advised for the first power-up), IPA and a brush.
+- Kit: flux, tweezers, magnifier or microscope, meter, the programmable
+  current-limited bench supply, IPA and a brush.
+- ESD: wrist strap on whenever the ICs are out of their bags or the board is
+  in hand. The hot plate and hot air go on a heat-proof pad (silicone or
+  ceramic), not on the ESD mat: most mats are vinyl or rubber and are damaged
+  by heat.
+- Bench supply: set its over-voltage protection (OVP) to about 1 V above each
+  test voltage, and its current limit before connecting the board.
 
 ## Top side (stencil, hot plate)
 
