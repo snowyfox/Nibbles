@@ -69,8 +69,8 @@ package and the quantity. The C-number is what to go by.
   MN-1002 (used for the first board, 2026-11-06, while the Chip Quik
   NC191AX50 was delayed) or the NC191AX50; both melt at 183 °C, same
   profile. Out of the fridge 4 h before use (if it was refrigerated), stir
-  it for a minute, and reflow within about 4 h of printing: neither
-  datasheet's open time is known. Keep the low-temp SnBi paste off this
+  it for a minute or two. Stencil life (NC191AX50 datasheet): over 4 h at
+  50-70 % humidity, over 8 h in drier air; reflow within that. Keep the low-temp SnBi paste off this
   board: bismuth and lead make a joint that melts near 96 °C. The bottom is
   done with an iron and leaded wire.
 - Kit: flux, tweezers, magnifier or microscope, meter, the programmable
@@ -133,11 +133,17 @@ don't push parts around or press them in.
 | 44 | J9, J11 | JST-GH 6-pin (I2C ports) | fits one way |
 | 45 | J10 | JST-GH 8-pin (optional cable to the 3.49) | fits one way |
 
-**Reflow** on the hot plate (Sn63): about 150 °C for 60-90 s, then up to
-about 215-220 °C. This 4-layer board with heavy copper heats slowly: hold
+**Reflow** on the hot plate (Sn63). Chip Quik's NC191AX50 profile, board
+temperatures: 25 to 100 °C in about 30 s, a slow soak from 100 to 150 °C
+over about 90 s, up to 183 °C (melting) by about 150 s, peak 235 °C, and
+about 90 s in all above 183 °C. The plate reads hotter than the board top
+(this 4-layer, heavy-copper board lags 15-40 °C): soak with the plate at
+about 150-160 °C for 60-90 s, then set about 245-250 °C and watch. Hold
 until every joint has gone shiny, the QFNs have settled, and the big pads
-(R29, the FETs, L1/L2) have wetted, then about 20-30 s more. Slide it off
-onto the heat-proof pad; don't bump it while it cools.
+(R29, the FETs, L1/L2) have wetted, then about 20-30 s more. Switch off;
+cool on the plate or slide it level onto the heat-proof pad; don't bump it
+while the solder sets. Try the plate on a spare bare board with a few dots
+of leftover paste first, to learn the setting and time at which it melts.
 
 **Inspect** under magnification: bridges on U8, U6, U7 and the QFN edges;
 tombstoned (standing-up) 0402s; the orientation of every yellow-dot part.
