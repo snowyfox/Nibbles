@@ -74,6 +74,7 @@ static void keypad_task(void *arg)
         i2c_master_bus_add_device(bus, &cfg, &devs[b]);
     }
     uint8_t raw[NBOARDS], stable[NBOARDS];  // input register, bits low = pressed
+    uint8_t misses[NBOARDS] = { 0 };         // failed reads in a row
     memset(raw, 0xff, sizeof(raw));
     memset(stable, 0xff, sizeof(stable));
     int64_t next_probe = 0, next_leds = 0;
@@ -84,12 +85,21 @@ static void keypad_task(void *arg)
             next_probe = now + 2000000;
             for (int b = 0; b < NBOARDS; b++) {
                 if (found & 1 << b) continue;
+                // A probe alone isn't enough: a glitch on the bus can make an absent
+                // address seem to answer. The board must also give a real read.
                 if (i2c_master_probe(bus, boards[b].addr, 10) == ESP_OK) {
-                    found |= 1 << b;
                     if (boards[b].chip == KEYPAD_PCF8574) {   // all pins high: weak pull-ups, read as inputs
                         const uint8_t all = 0xff;
                         i2c_master_transmit(devs[b], &all, 1, 10);
                     }
+                    uint8_t reg = 0, in;
+                    const esp_err_t err = boards[b].chip == KEYPAD_PCF8574
+                                              ? i2c_master_receive(devs[b], &in, 1, 10)
+                                              : i2c_master_transmit_receive(devs[b], &reg, 1, &in, 1, 10);
+                    power_bus_after_read();
+                    if (err != ESP_OK) continue;
+                    found |= 1 << b;
+                    misses[b] = 0;
                     ESP_LOGI(TAG, "keypad board 0x%02x found (%d keys)", boards[b].addr, boards[b].keys);
                     leds_dirty = true;
                 }
@@ -104,7 +114,12 @@ static void keypad_task(void *arg)
                                                                    : i2c_master_transmit_receive(devs[b], &reg, 1, &in, 1, 10);
             power_bus_after_read();
             if (err != ESP_OK) {
-                ESP_LOGW(TAG, "keypad board 0x%02x lost", boards[b].addr);
+                // one failed read keeps the keys as they were; three in a row is a lost board
+                if (++misses[b] < 3) {
+                    ESP_LOGW(TAG, "keypad board 0x%02x read failed (%s), %d of 3", boards[b].addr, esp_err_to_name(err), misses[b]);
+                    continue;
+                }
+                ESP_LOGW(TAG, "keypad board 0x%02x lost (%s)", boards[b].addr, esp_err_to_name(err));
                 found &= ~(1 << b);
                 // whatever it had down comes up
                 for (int k = 0; k < boards[b].keys; k++)
@@ -112,6 +127,7 @@ static void keypad_task(void *arg)
                 raw[b] = stable[b] = 0xff;
                 continue;
             }
+            misses[b] = 0;
             // Debounce: a change counts once two reads in a row agree.
             const uint8_t settled = ~(in ^ raw[b]);           // bits that read the same twice
             const uint8_t changed = (stable[b] ^ in) & settled;

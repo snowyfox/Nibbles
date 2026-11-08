@@ -71,11 +71,31 @@ static i2c_master_dev_handle_t add_dev(uint8_t addr)
     return d;
 }
 
+static esp_err_t last_err;   // the latest failed read's error, for the log
+
 static esp_err_t rd(i2c_master_dev_handle_t d, uint8_t reg, uint8_t *buf, size_t n)
 {
     const esp_err_t err = i2c_master_transmit_receive(d, &reg, 1, buf, n, 20);
     power_bus_after_read();
+    if (err != ESP_OK) last_err = err;
     return err;
+}
+
+// One failed read isn't a lost chip: the bus (shared with the keypads, which
+// are probed while absent) now and then drops a transaction. A chip counts as
+// lost after this many failures in a row; until then its last readings stand.
+#define LOST_AFTER 3
+
+// Whether to give up on a chip after a failed read; logs either way.
+static bool give_up(const char *what, int *miss)
+{
+    if (++*miss < LOST_AFTER) {
+        ESP_LOGW(TAG, "%s read failed (%s), %d of %d", what, esp_err_to_name(last_err), *miss, LOST_AFTER);
+        return false;
+    }
+    ESP_LOGW(TAG, "%s lost (%s)", what, esp_err_to_name(last_err));
+    *miss = 0;
+    return true;
 }
 
 static esp_err_t rd16(i2c_master_dev_handle_t d, uint8_t reg, uint16_t *v)
@@ -220,6 +240,9 @@ static void simulate(power_status_t *s, sim_mode_t mode, double dt_s, double t_s
 static void power_task(void *arg)
 {
     bool bq_ok = false, ina_ok = false, exp_ok = false, cfg_ok = false;
+    int bq_miss = 0, ina_miss = 0, exp_miss = 0;
+    power_status_t last_bq = { 0 }, last_ina = { 0 };
+    bool efuse_pg = false;
     int64_t next_probe = 0;
     bool lights_off = false, pack_off = false;
     int64_t last_us = esp_timer_get_time();
@@ -268,8 +291,37 @@ static void power_task(void *arg)
                 }
             }
             s.docked = gpio_get_level(PIN_DOCK_DET);
-            if (bq_ok && !(bq_ok = bq_read(&s))) ESP_LOGW(TAG, "charger lost");
-            if (ina_ok && !(ina_ok = ina_read(&s))) ESP_LOGW(TAG, "current monitor lost");
+            if (bq_ok) {
+                if (bq_read(&s)) {
+                    bq_miss = 0;
+                    last_bq = s;
+                } else if (give_up("charger", &bq_miss)) bq_ok = false;
+                else {   // the last good charger readings
+                    s.chg_state = last_bq.chg_state;
+                    s.ts_flags = last_bq.ts_flags;
+                    s.fault0 = last_bq.fault0;
+                    s.fault1 = last_bq.fault1;
+                    s.ibus_ma = last_bq.ibus_ma;
+                    s.ibat_ma = last_bq.ibat_ma;
+                    s.vbus_mv = last_bq.vbus_mv;
+                    s.vbat_mv = last_bq.vbat_mv;
+                    s.vsys_mv = last_bq.vsys_mv;
+                    s.cell_c10 = last_bq.cell_c10;
+                    s.die_c10 = last_bq.die_c10;
+                    s.docked |= last_bq.vbus_mv > 0;
+                }
+            }
+            if (ina_ok) {
+                if (ina_read(&s)) {
+                    ina_miss = 0;
+                    last_ina = s;
+                } else if (give_up("current monitor", &ina_miss)) ina_ok = false;
+                else {
+                    s.light_mv = last_ina.light_mv;
+                    s.light_ma = last_ina.light_ma;
+                    s.light_mw = last_ina.light_mw;
+                }
+            }
             // The pack is only ever switched off while the dock can run the lights.
             want_pole_off = pole_off_stays(want_pole_off, bq_ok ? input_kind(s.vbus_mv) : INPUT_NONE);
             const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = !want_pack && s.docked;
@@ -283,7 +335,13 @@ static void power_task(void *arg)
                         ESP_LOGI(TAG, "lights %s, pack %s", lights_off ? "OFF" : "on", pack_off ? "OFF" : "on");
                     }
                 }
-                if (exp_ok && (exp_ok = rd(exp_dev, 0x00, &in, 1) == ESP_OK)) s.efuse_pg = in & EXP_EFUSE_PG;
+                if (exp_ok) {
+                    if (rd(exp_dev, 0x00, &in, 1) == ESP_OK) {
+                        exp_miss = 0;
+                        efuse_pg = in & EXP_EFUSE_PG;
+                    } else if (give_up("expander", &exp_miss)) exp_ok = false;
+                    s.efuse_pg = efuse_pg;
+                }
             }
             s.have_charger = bq_ok;
             s.charger_ok = bq_ok && cfg_ok;
