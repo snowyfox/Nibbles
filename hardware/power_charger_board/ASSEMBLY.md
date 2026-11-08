@@ -147,7 +147,10 @@ of leftover paste first, to learn the setting and time at which it melts.
 
 **Inspect** under magnification: bridges on U8, U6, U7 and the QFN edges;
 tombstoned (standing-up) 0402s; the orientation of every yellow-dot part.
-Fix with flux and the iron (leaded wire).
+Fix with flux and the iron (leaded wire). On U8, also look from a low angle
+between the leg roots under the body, above all pins 14 and 15 (SCL, SDA):
+on the first board a hidden join there shorted the I2C bus (section 6
+catches it).
 
 ## 4. Bottom side: by iron (steps 46-49)
 
@@ -174,6 +177,20 @@ LIGHT_BUS (TP8), LIGHT_OUT (TP9), +5V (TP10), +3V3 (TP11), REGN (TP14). None
 should read near 0 Ω (large caps make the reading climb; that's fine). Also
 DOCK_VIN to PACK_F, and +5V to +3V3: not shorted.
 
+**I2C, in diode mode** (low-ohm readings on this board creep up from 0 and
+can't be trusted; diode mode can). SDA is J10 pin 4 (or J6 A2), SCL J10 pin 5
+(or J6 A3), GND TP1:
+
+- SDA to SCL: not near 0 V.
+- Red on TP1, black on SDA, then on SCL: about 0.5 V each (the chips'
+  protection diodes).
+- Black on TP1, red on SDA, then on SCL: open (or well above 1 V).
+
+Under about 0.2 V in both directions means a short or a leak: don't power
+the board until it's found. On the first board U8 shorted SDA to SCL and U6
+leaked SCL to GND; the way to find which chip is to remove one at a time
+(U8 first, then U6; U2 last) and measure again after each.
+
 ## 7. First power: dock input only
 
 Nothing on J3 (pack), J5 (lights) or the 3.49.
@@ -190,12 +207,18 @@ Nothing on J3 (pack), J5 (lights) or the 3.49.
 
 ## 8. The 3.49
 
-1. Power off, attach the 3.49 (J6 or J10), power on from J2 again (limit
+1. Power off, attach the 3.49 (J6 or J10; only ever plug or unplug the J10
+   cable with the board and the 3.49 unpowered, so the I2C pins never see
+   power before ground), power on from J2 again (limit
    about 500 mA now: the 3.49 and its screen draw more). The 3.49 should
    boot from the board alone.
 2. On the base's USB serial: `sim off`, then `power`. The log should find
    the BQ25798 (0x6B), INA226 (0x40) and TCA9534 (0x20) and show sensible
    voltages. Try `lights off` / `lights on`: J5's voltage should switch.
+   If the log shows `i2c.master: probe device timeout`, a line is held low:
+   hold the 3.49's RST button (it stops the bus traffic) and measure SDA and
+   SCL to TP1; both should be 3.3 V. If one is low, power off and go back to
+   the I2C check in section 6.
 
 ## 9. Pack (bench supply first, then cells)
 
