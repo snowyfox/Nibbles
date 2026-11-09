@@ -49,6 +49,10 @@ button.learning { background: var(--accent); color: #fff; border-color: var(--ac
 .key { cursor: pointer; }
 .key text { pointer-events: none; }
 .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+/* docked: the keyboard stays at the top while the list scrolls behind it */
+.dock { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 8px 0 10px; margin: -8px 0 0; }
+.dock .card { box-shadow: 0 6px 14px -8px rgb(0 0 0 / .35); }
+tbody tr { scroll-margin-top: calc(var(--dock-h, 0px) + 8px); }
 @media (max-width: 640px) { .kbd { flex-direction: column; } .kbd .side { flex-direction: row; width: auto; } .kbd .side .ctl { flex: 1; } }
 
 /* the table */
@@ -94,7 +98,7 @@ tr.group td { cursor: default; background: var(--bg); font-size: 12px; text-tran
     </div>
   </div>
 
-  <div class="card">
+  <div class="dock" id="dock"><div class="card">
     <div class="kbd">
       <svg id="kbd" role="img" aria-label="The MIDI keyboard"></svg>
       <div class="side">
@@ -104,7 +108,7 @@ tr.group td { cursor: default; background: var(--bg); font-size: 12px; text-tran
       </div>
     </div>
     <p class="hint" id="kbdHint">Click a row below to see its keys here, or click a key here to find its row. Keys being pressed light up yellow.</p>
-  </div>
+  </div></div>
 
   <div class="toolbar">
     <button id="allUp" title="Send key up for every key held on the base">Release all keys</button>
@@ -125,6 +129,9 @@ tr.group td { cursor: default; background: var(--bg); font-size: 12px; text-tran
 
 <script>
 "use strict";
+// Rows scrolled to (a key clicked) land below the docked keyboard, not behind it.
+new ResizeObserver(([e]) => document.documentElement.style.setProperty("--dock-h", e.target.offsetHeight + "px"))
+  .observe(document.getElementById("dock"));
 // What each base key does (firmware/base/main/controls.h).
 const WHAT = {
   all: "Target: the whole shark", body: "Target: body (WLED)", eyes: "Target: eyes", fins: "Target: fins",
