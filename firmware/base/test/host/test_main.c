@@ -1073,6 +1073,90 @@ static void test_overlapping_keys_never_latch(void)
     CHECK(bad_perm == 0);
 }
 
+
+// Held bumps stack (the user's design, 2026-11-09): A, B, C, D held in that
+// order shows D; letting go of D shows C; letting go of a lower one changes
+// nothing showing; the last one up goes back to how it was.
+static const ctl_action_t *bump_on_body(void)
+{
+    for (int i = 0; i < nacts; i++)
+        if (acts[i].type == ACT_BUMP && acts[i].target == TGT_BODY) return &acts[i];
+    return NULL;
+}
+
+static void test_held_bumps_stack(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    live(&c, 1, 1, 0);
+    tap(&c, KEY_BODY);                           // body only: one slot, easy to follow
+    press(&c, KEY_NUM2);                         // A
+    press(&c, KEY_NUM3);                         // B
+    CHECK(bump_on_body() && bump_on_body()->value == 3 && !has(ACT_BUMP_END, -1, -10000));   // replaced, no gap back to Live
+    press(&c, KEY_NUM4);                         // C
+    press(&c, KEY_NUM5);                         // D
+    CHECK(bump_on_body() && bump_on_body()->value == 5);
+    release(&c, KEY_NUM5);                       // D up: C
+    CHECK(nacts == 1 && bump_on_body() && bump_on_body()->value == 4);
+    CHECK(release(&c, KEY_NUM3) == 0);           // B up: still C, stack A C
+    release(&c, KEY_NUM4);                       // C up: A
+    CHECK(nacts == 1 && bump_on_body() && bump_on_body()->value == 2);
+    release(&c, KEY_NUM2);                       // A up: as it was
+    CHECK(nacts == 1 && acts[0].type == ACT_BUMP_END && acts[0].target == TGT_BODY && c.nheld == 0);
+    CHECK(c.live.body == 1);
+
+    // A new key on top while others are held, then the bottom one goes first
+    press(&c, KEY_NUM2);
+    press(&c, KEY_NUM3);
+    CHECK(release(&c, KEY_NUM2) == 0);           // the bottom: nothing changes
+    press(&c, KEY_NUM6);
+    CHECK(bump_on_body()->value == 6);
+    release(&c, KEY_NUM6);
+    CHECK(bump_on_body() && bump_on_body()->value == 3);
+    release(&c, KEY_NUM3);
+    CHECK(acts[0].type == ACT_BUMP_END && c.nheld == 0);
+
+    // FLASH and BLACKOUT stack too: a preset held, FLASH over it and back
+    press(&c, KEY_NUM7);
+    press(&c, KEY_FLASH);
+    CHECK(bump_on_body() && bump_on_body()->bump == NL_BUMP_FLASH);
+    release(&c, KEY_FLASH);
+    CHECK(bump_on_body() && bump_on_body()->bump == NL_BUMP_PRESET && bump_on_body()->value == 7);
+    // LATCH keeps the newest number held, even with FLASH on top of it
+    press(&c, KEY_BLACKOUT);
+    press(&c, KEY_LATCH);
+    CHECK(has(ACT_PRESET, TGT_BODY, 7) && has(ACT_BUMP_END, TGT_BODY, -10000) && c.nheld == 0);
+    release(&c, KEY_LATCH);
+    CHECK(release(&c, KEY_BLACKOUT) == 0 && release(&c, KEY_NUM7) == 0);   // kept: their releases change nothing
+    CHECK(c.live.body == 7);
+
+    // A target per key: BODY's preset, then ALL's on top; letting go of ALL's
+    // shows BODY's again and lets the eyes go
+    press(&c, KEY_NUM2);                         // body (latched target)
+    press(&c, KEY_ALL);
+    press(&c, KEY_NUM3);                         // ALL held: body and eyes
+    CHECK(has(ACT_BUMP, TGT_EYES, 3));
+    release(&c, KEY_ALL);
+    release(&c, KEY_NUM3);
+    CHECK(has(ACT_BUMP, TGT_BODY, 2) && has(ACT_BUMP_END, TGT_EYES, -10000) && !has(ACT_BUMP_END, TGT_BODY, -10000));
+    release(&c, KEY_NUM2);
+    CHECK(has(ACT_BUMP_END, TGT_BODY, -10000) && c.nheld == 0);
+
+    // TAKE is part of the stack too
+    c.target = TGT_BODY;
+    c.standby.body = 9;
+    press(&c, KEY_NUM4);
+    press(&c, KEY_TAKE);
+    CHECK(bump_on_body() && bump_on_body()->value == 9);
+    press(&c, KEY_NUM5);
+    release(&c, KEY_NUM5);                       // back to TAKE's preview
+    CHECK(bump_on_body() && bump_on_body()->value == 9);
+    release(&c, KEY_TAKE);                       // back to the number under it
+    CHECK(bump_on_body() && bump_on_body()->value == 4 && !c.take_preview);
+    release(&c, KEY_NUM4);
+    CHECK(acts[0].type == ACT_BUMP_END && c.live.body == 7);
+}
+
 int main(void)
 {
     test_standby_fills_from_live();
@@ -1102,6 +1186,7 @@ int main(void)
     test_charger_limit();
     test_ab_take();
     test_overlapping_keys_never_latch();
+    test_held_bumps_stack();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;

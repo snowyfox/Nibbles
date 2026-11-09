@@ -70,6 +70,15 @@ file. Until the hardware exists, all of it can be driven from USB serial.
     (numbers 1-16 are presets 1-16) and it goes back on release. Tap **LATCH** while holding
     it to keep it: commands go out, then the bumps let go, and the old Live
     drops into Standby.
+  - **Held bumps stack** (2026-11-09, the user's design): keys held A, B,
+    C, D show D; letting go of D shows C; letting go of a lower one (A or B)
+    changes nothing showing and just takes it out; the last one up goes back
+    to how it was. Numbers, keys of their own, FLASH, BLACKOUT and TAKE all
+    stack (`ctl_t.held`, `CTL_BUMP_STACK`), each on the target it was pressed
+    on. The one underneath comes back as a direct replace (its bumps, then
+    END only for slots it doesn't use), so Live never shows in between.
+    LATCH keeps the newest held number or TAKE and empties the stack (their
+    releases then change nothing).
   - **TAKE** held shows Standby (bumps) and goes back on release; tap LATCH
     while holding it to keep the swap (Standby then holds the old Live, so
     TAKE + LATCH again goes back).

@@ -111,6 +111,7 @@ typedef struct {
 } ctl_action_t;
 
 #define CTL_MAX_ACTIONS      8
+#define CTL_BUMP_STACK       12      // bump keys held at once that are remembered (the oldest drop off)
 #define CTL_LOCK_HOLD_MS     1000    // UNLOCK held this long locks or unlocks
 
 // What the numbers do: PAGE cycles the first PAGE_COUNT; ctl_mode also gives
@@ -160,6 +161,14 @@ typedef struct {
     int num_preset;                  // what it shows: preset, palette or layer preset
     int num_kind;                    // what kind of thing that is (controls.c, FN_*)
     ctl_layers_t num_layers;         // the layers before it (WLED reports a layer bump as live)
+    ctl_target_t num_target;         // the target it was pressed on
+    // Bump keys held, in the order they went down (2026-11-09, the user's
+    // design): the newest shows; letting it go shows the one under it, letting
+    // go of any other just takes it out; the last one up goes back to how it
+    // was. Numbers, keys of their own, FLASH and BLACKOUT. LATCH empties it.
+    struct { ctl_key_t key; int8_t kind; int8_t target; int16_t value; } held[CTL_BUMP_STACK];
+    int nheld;
+    ctl_layers_t held_layers;        // the layers before the first of them
     bool take_preview;               // TAKE is down and the Standby bumps are on
     ctl_layers_t take_layers;        // the layers when TAKE went down (WLED reports its preview as live)
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on

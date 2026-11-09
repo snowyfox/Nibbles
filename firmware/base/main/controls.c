@@ -124,6 +124,12 @@ void ctl_standby_layers(const ctl_t *c, ctl_layers_t *out)
     out->fins_layer = q->fins_layer >= 0 ? q->fins_layer : fins_same ? l->fins_layer : 0;
 }
 
+// What a number or a key of its own stands for.
+// FN_PALETTE is a favourite (PALETTE1-8); FN_WLED_PALETTE any of WLED's, by
+// id + 1 (a number in palette mode: the viewer's set).
+enum { FN_NONE = 0, FN_PRESET, FN_PALETTE, FN_LAYER, FN_BRIGHT, FN_WLED_PALETTE,
+       FN_FLASH, FN_BLACKOUT, FN_TAKE };   // the last three: held bumps only (ctl_t.held)
+
 // ------------------------------------------------------------------ actions
 typedef struct {
     ctl_action_t *a;
@@ -165,6 +171,29 @@ static void bumps_off(ctl_t *c, out_t *o)
     c->ab_holding = false;
 }
 
+// The held number on top (what LATCH keeps), from the held bumps.
+static void held_sync(ctl_t *c)
+{
+    c->num_bump = KEY_NONE;
+    for (int i = c->nheld - 1; i >= 0; i--) {
+        const int k = c->held[i].kind;
+        if (k == FN_FLASH || k == FN_BLACKOUT || k == FN_TAKE) continue;
+        c->num_bump = c->held[i].key;
+        c->num_kind = k;
+        c->num_preset = c->held[i].value;
+        c->num_target = (ctl_target_t)c->held[i].target;
+        break;
+    }
+    c->num_layers = c->held_layers;
+}
+
+// Nothing held does anything any more (LATCH, the lock): their releases change nothing.
+static void held_clear(ctl_t *c)
+{
+    c->nheld = 0;
+    held_sync(c);
+}
+
 // A bump on the target's slots. A preset on ALL is the whole shark on that
 // preset, so fins running their own preset show the body's while it's held.
 // Flash and blackout on the body cover the fins (every WLED segment); on
@@ -182,10 +211,6 @@ static ctl_target_t key_target(ctl_key_t k)
     return k == KEY_BODY ? TGT_BODY : k == KEY_EYES ? TGT_EYES : k == KEY_FINS ? TGT_FINS : TGT_ALL;
 }
 
-// What a number or a key of its own stands for.
-// FN_PALETTE is a favourite (PALETTE1-8); FN_WLED_PALETTE any of WLED's, by
-// id + 1 (a number in palette mode: the viewer's set).
-enum { FN_NONE = 0, FN_PRESET, FN_PALETTE, FN_LAYER, FN_BRIGHT, FN_WLED_PALETTE };
 typedef struct {
     int kind;
     int n;           // 1-based: preset, favourite palette, layer look, brightness eighth, WLED palette id + 1
@@ -303,7 +328,7 @@ static void latch_layered(ctl_t *c, out_t *o)
         }
     }
     bumps_off(c, o);
-    c->num_bump = KEY_NONE;
+    held_clear(c);
 }
 static bool is_target(ctl_key_t k) { return k >= KEY_ALL && k <= KEY_FINS; }
 
@@ -381,22 +406,24 @@ static void latch_number(ctl_t *c, out_t *o)
         c->layers.fins_layer = 0;
     }
     bumps_off(c, o);
-    c->num_bump = KEY_NONE;   // its release changes nothing
+    held_clear(c);   // releases change nothing now
 }
 
-static void take_press(ctl_t *c, out_t *o)
+// Show Standby as bumps while TAKE is held; LATCH meanwhile keeps it. A
+// preset alone is a preset bump; with a palette or layer look cued, a
+// scene bump carries them together. Compared with the layers from before
+// TAKE went down (take_layers), as WLED reports bumps as live.
+static void take_show(ctl_t *c, out_t *o)
 {
-    // Show Standby as bumps while TAKE is held; LATCH meanwhile keeps it. A
-    // preset alone is a preset bump; with a palette or layer look cued, a
-    // scene bump carries them together.
+    const ctl_layers_t now_layers = c->layers;
+    c->layers = c->take_layers;
     const uint8_t diff = ctl_standby_diff(c);
-    const ctl_layers_t *q = &c->standby_layers, *l = &c->layers;
-    c->take_layers = *l;
+    c->layers = now_layers;
+    const ctl_layers_t *q = &c->standby_layers, *l = &c->take_layers;
     if (c->ab) {   // Two brains: Standby's body and fins are already running; just show them.
         emit(o, ACT_AB_HOLD, 0, 0, 1);
         c->ab_holding = true;
         if (diff & SLOT_BIT(TGT_EYES)) bump_on(c, o, TGT_EYES, NL_BUMP_PRESET, c->standby.eyes);
-        c->take_preview = true;
         return;
     }
     if (diff & SLOT_BIT(TGT_BODY)) {
@@ -411,7 +438,6 @@ static void take_press(ctl_t *c, out_t *o)
         else bump_scene(c, o, TGT_FINS, f ? NL_FIN_PRESET_BASE + c->standby.fins : 0, cue(q->fins_pal, l->fins_pal, f),
                         cue(q->fins_layer, l->fins_layer, f));
     }
-    c->take_preview = true;
 }
 
 // One side (body or fins) of TAKE: its preset if new, then the cued palette
@@ -499,6 +525,81 @@ static void take_release(ctl_t *c, out_t *o, bool commit)
     c->take_preview = false;
 }
 
+// ------------------------------------------------------------------ held bumps
+// Held bump i shows, on the target it was pressed on, replacing what showed:
+// its bumps first, then the slots it doesn't use let go, so Live never shows
+// in between.
+static void show_held(ctl_t *c, out_t *o, int i)
+{
+    const uint8_t old = c->bump_slots;
+    const bool was_ab = c->ab_holding;
+    c->bump_slots = 0;
+    c->ab_holding = false;
+    const ctl_target_t keep = c->target;
+    c->target = (ctl_target_t)c->held[i].target;
+    const int k = c->held[i].kind, v = c->held[i].value;
+    if (k == FN_TAKE) take_show(c, o);
+    else if (k == FN_FLASH || k == FN_BLACKOUT) bump_target(c, o, c->target, k == FN_FLASH ? NL_BUMP_FLASH : NL_BUMP_BLACKOUT, 0);
+    else if (k == FN_PRESET) bump_target(c, o, c->target, NL_BUMP_PRESET, v);
+    else bump_layered(c, o, is_pal(k), v);
+    c->target = keep;
+    for (uint8_t slot = TGT_BODY; slot <= TGT_FINS; slot++)
+        if (old & ~c->bump_slots & SLOT_BIT(slot)) emit(o, ACT_BUMP_END, slot, 0, 0);
+    if (was_ab && !c->ab_holding) emit(o, ACT_AB_HOLD, 0, 0, 0);
+}
+
+// A bump key went down: on top of the others held, and it shows.
+static void held_push(ctl_t *c, out_t *o, ctl_key_t key, int kind, int value)
+{
+    if (c->nheld == 0) c->held_layers = c->layers;
+    if (c->nheld == CTL_BUMP_STACK) {   // the oldest drops off
+        memmove(&c->held[0], &c->held[1], sizeof(c->held[0]) * (CTL_BUMP_STACK - 1));
+        c->nheld--;
+    }
+    c->held[c->nheld].key = key;
+    c->held[c->nheld].kind = (int8_t)kind;
+    c->held[c->nheld].target = (int8_t)c->target;
+    c->held[c->nheld].value = (int16_t)value;
+    c->nheld++;
+    held_sync(c);
+    show_held(c, o, c->nheld - 1);
+}
+
+// A bump key went up: the one under it shows if it was on top, else it just
+// leaves; the last one up goes back to how it was.
+static void held_release(ctl_t *c, out_t *o, ctl_key_t key)
+{
+    int i = c->nheld - 1;
+    while (i >= 0 && c->held[i].key != key) i--;
+    if (i < 0) return;   // not a bump (cued with LATCH held, or LATCH kept it)
+    const bool top = i == c->nheld - 1;
+    memmove(&c->held[i], &c->held[i + 1], sizeof(c->held[0]) * (size_t)(c->nheld - 1 - i));
+    c->nheld--;
+    held_sync(c);
+    if (!top) return;
+    if (c->nheld) show_held(c, o, c->nheld - 1);
+    else bumps_off(c, o);
+}
+
+// LATCH: keep the newest held number or TAKE (FLASH and BLACKOUT can't be kept).
+static void latch_held(ctl_t *c, out_t *o)
+{
+    for (int i = c->nheld - 1; i >= 0; i--) {
+        const int k = c->held[i].kind;
+        if (k == FN_FLASH || k == FN_BLACKOUT) continue;
+        if (k == FN_TAKE) {
+            take_release(c, o, true);
+        } else {
+            const ctl_target_t keep = c->target;
+            c->target = c->num_target;   // as it was pressed
+            latch_number(c, o);
+            c->target = keep;
+        }
+        held_clear(c);
+        return;
+    }
+}
+
 // A number or a key of its own went down: brightness at once; with LATCH held
 // first, cue it in Standby, unseen; else show it while held (LATCH keeps it).
 static void fn_press(ctl_t *c, out_t *o, ctl_key_t key, fn_t f)
@@ -513,13 +614,7 @@ static void fn_press(ctl_t *c, out_t *o, ctl_key_t key, fn_t f)
         else stage_layered(c, f);
         return;
     }
-    if (c->num_bump != KEY_NONE) bumps_off(c, o);
-    c->num_bump = key;
-    c->num_kind = f.kind;
-    c->num_preset = fn_value(c, f);
-    c->num_layers = c->layers;
-    if (f.kind == FN_PRESET) bump_target(c, o, c->target, NL_BUMP_PRESET, c->num_preset);
-    else bump_layered(c, o, is_pal(f.kind), c->num_preset);
+    held_push(c, o, key, f.kind, fn_value(c, f));
 }
 
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out)
@@ -536,9 +631,9 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
     }
     if (c->locked) {
         // Only releases of keys that were doing something when the lock came on matter.
-        if (!down && (c->bump_slots || c->take_preview)) {
+        if (!down && (c->bump_slots || c->take_preview || c->nheld)) {
             c->take_preview = false;
-            c->num_bump = KEY_NONE;
+            held_clear(c);
             bumps_off(c, &o);
         }
         return o.n;
@@ -559,14 +654,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             if (c->target_key != KEY_NONE) c->target_used = true;
             if (c->down[KEY_PAGE]) c->page_used = true;
             fn_press(c, &o, key, num_of(key) ? number_fn(c, num_of(key)) : key_fn(key));
-        } else if (c->num_bump == key) {
-            c->num_bump = KEY_NONE;
-            bumps_off(c, &o);
+        } else {
+            held_release(c, &o, key);
         }
     } else switch (key) {
         case KEY_LATCH:
-            if (down && c->num_bump != KEY_NONE) latch_number(c, &o);
-            else if (down && c->take_preview) take_release(c, &o, true);
+            if (down) latch_held(c, &o);
             break;
         case KEY_PAGE:
             if (down) c->page_used = false;
@@ -577,8 +670,11 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             if (down && key == KEY_BLACKOUT && c->down[KEY_PAGE]) {
                 c->page_used = true;
                 emit(&o, ACT_POLE_POWER, 0, 0, 0);
-            } else if (down) bump_target(c, &o, c->target, key == KEY_FLASH ? NL_BUMP_FLASH : NL_BUMP_BLACKOUT, 0);
-            else if (!c->take_preview && c->num_bump == KEY_NONE) bumps_off(c, &o);
+            } else if (down) {
+                held_push(c, &o, key, key == KEY_FLASH ? FN_FLASH : FN_BLACKOUT, 0);
+            } else {
+                held_release(c, &o, key);
+            }
             break;
         case KEY_POLE_POWER:
             if (down) emit(&o, ACT_POLE_POWER, 0, 0, 0);
@@ -604,9 +700,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
                 c->standby = c->live;
                 c->standby_layers = (ctl_layers_t){ -1, -1, -1, -1 };
             } else if (down) {
-                take_press(c, &o);
-            } else if (c->take_preview) {                 // let go without LATCH: back as it was
-                take_release(c, &o, false);
+                c->take_layers = c->nheld ? c->held_layers : c->layers;
+                c->take_preview = true;
+                held_push(c, &o, key, FN_TAKE, 0);
+            } else if (c->take_preview) {                 // let go without LATCH: back as it was (or to the bump under it)
+                c->take_preview = false;
+                held_release(c, &o, key);
             }
             break;
         default:
@@ -621,6 +720,7 @@ int ctl_set_ab(ctl_t *c, bool on, ctl_action_t *out)
     if (on == c->ab) return 0;
     if (c->take_preview) {   // whatever TAKE was showing, it can't carry on
         bumps_off(c, &o);
+        held_clear(c);
         c->take_preview = false;
     }
     c->ab = on;
@@ -693,7 +793,7 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)
         c->last_key_ms = now_ms;
         if (c->locked) {   // nothing stays held under the lock
             c->take_preview = false;
-            c->num_bump = KEY_NONE;
+            held_clear(c);
             bumps_off(c, &o);
         }
     }
