@@ -43,6 +43,7 @@ typedef enum {
     NL_MSG_AB = 18,         // which brain is Live, controller -> radio, 2 Hz and on a change (nl_ab_state_t)
     NL_MSG_RELAY = 19,      // a radio packet a brain passes down its wire to the controller (nl_relay_*)
     NL_MSG_AR_SYNC = 20,    // the controller's sound analysis, controller -> brains over the return wire, ~50 Hz (nl_ar_sync_t)
+    NL_MSG_HOP = 21,        // move to another radio channel together (nl_hop_t), broadcast; boards without it ignore it
 } nl_msg_type_t;
 
 typedef enum {
@@ -66,6 +67,8 @@ typedef enum {
 #define NL_PACKED __attribute__((packed))
 
 #define NL_HB_ANCHOR 0x01   // the sender sets the radio channel everyone else follows
+#define NL_HB_GROUP  0x02   // no anchor heard: the sender leads a search for one, scanners follow it and its
+                            // NL_HOP_SEARCH hops (2026-11-09; replaces the base anchoring a fixed channel)
 
 typedef struct NL_PACKED {
     uint8_t role;           // nl_role_t
@@ -514,6 +517,19 @@ size_t nl_radio_build(uint8_t *out, size_t cap, uint8_t type, uint16_t seq, uint
 // is filled and *payload / *len point into in.
 bool nl_radio_parse(const uint8_t *in, size_t n, nl_radio_hdr_t *hdr, const uint8_t **payload, size_t *len);
 
+// ---------------------------------------------------------------- channel hops
+// NL_MSG_HOP. Times are relative (no shared clock): move in_ms after the
+// packet arrives. Sent more than once; every copy names the same moment.
+#define NL_HOP_SEARCH 1     // a search group's leader moves to its next channel; its followers come along
+#define NL_HOP_MOVE   2     // the whole network moves (from the base): the brains restart their access
+                            // point on the channel and keep it, everyone else follows
+typedef struct NL_PACKED {
+    uint8_t kind;           // NL_HOP_*
+    uint8_t channel;        // the channel to move to
+    uint16_t in_ms;         // when, from this packet's arrival
+    uint16_t id;            // the same for every copy of one hop
+} nl_hop_t;
+
 // ---------------------------------------------------------------- channel scanning
 // Radio nodes don't know the channel in advance: WLED's channel follows its
 // Wi-Fi (a phone hotspot at home, its own AP at a festival). They listen on
@@ -523,38 +539,89 @@ bool nl_radio_parse(const uint8_t *in, size_t n, nl_radio_hdr_t *hdr, const uint
 #define NL_CHANNEL_MAX      13
 #define NL_SCAN_DWELL_MS    400     // anchor heartbeats are 4 Hz, so at least one per dwell
 #define NL_LOCK_TIMEOUT_MS  3000
-// Fallback anchoring (the base, when no WLED usermod is running): after
-// fallback_ms without hearing an anchor, anchor on the home channel. While
-// anchoring, visit another channel for NL_PEEK_MS every NL_PEEK_EVERY_MS, in
-// turn, to find a real anchor; on hearing one, stop anchoring and follow it.
-#define NL_PEEK_EVERY_MS    3000
-#define NL_PEEK_MS          300
+// Searching together (2026-11-09, replaces fallback anchoring): a node with
+// fallback_ms set (the base) that hears no anchor for that long leads a
+// search. It sweeps the channels slowly (NL_GROUP_DWELL_MS each), sends
+// NL_HB_GROUP heartbeats at 4 Hz and announces each move with NL_HOP_SEARCH
+// NL_HOP_NOTICE_MS ahead. A scanner that hears a leader stays with it and
+// moves with its hops; a scanner sweeps twice as fast, so it catches up.
+// Of two leaders, the one with the higher MAC follows the other. Hearing an
+// anchor always wins: the whole group is on that channel and locks onto it.
+// NL_HOP_MOVE: the network moves to another channel; the lock is kept, with
+// NL_MOVE_GRACE_MS more patience while the anchor restarts its radio there.
+#define NL_GROUP_DWELL_MS   800
+#define NL_HOP_NOTICE_MS    120
+#define NL_MOVE_GRACE_MS    8000
+// After a move, anchors still advertising another channel are ignored this
+// long: a brain that hasn't reconnected yet, heard from a neighbouring channel.
+#define NL_MOVE_HOLD_MS     6000
 
 typedef struct {
     uint8_t channel;
-    bool locked;
+    bool locked;            // hearing an anchor, or a search leader (group)
     uint32_t on_channel_ms, since_heard_ms;
     uint32_t locks;         // times a channel was found (for stats)
-    // fallback anchoring
-    uint32_t fallback_ms;   // 0 = never anchor
-    uint8_t home_channel, peek_channel;
-    bool anchoring, peeking;
-    uint32_t anchorings;    // times fallback anchoring started (for stats)
+    uint32_t fallback_ms;   // 0 = never lead a search
+    uint8_t home_channel;   // where a leader starts its sweep
+    uint8_t self[6];        // this node's MAC (to pick between two leaders)
+    bool leading;           // leading a search
+    bool group;             // locked onto a search leader, not an anchor
+    uint8_t leader[6];
+    uint32_t leads;         // times a search was started (for stats)
+    // a hop to make: to hop_channel once hop_in_ms has passed
+    bool hop_pending;
+    uint8_t hop_kind;       // NL_HOP_*: an anchor heard before a network move mustn't cancel it
+    uint8_t hop_channel;
+    int32_t hop_in_ms;
+    uint32_t grace_ms;      // extra lock patience after an NL_HOP_MOVE
+    uint32_t move_hold_ms;  // after one: anchors advertising another channel don't count (NL_MOVE_HOLD_MS)
+    // the leader's announcement of its next hop, for the transport to send (then clear)
+    bool announce;
+    uint8_t announce_channel;
 } nl_chanscan_t;
 
 void nl_chanscan_init(nl_chanscan_t *s, uint8_t start_channel);
-// Enable fallback anchoring on start_channel after fallback_ms of silence.
+// Lead a search after fallback_ms without hearing an anchor (0 = never).
 void nl_chanscan_set_fallback(nl_chanscan_t *s, uint32_t fallback_ms);
+void nl_chanscan_set_self(nl_chanscan_t *s, const uint8_t mac[6]);
 // Advance by dt_ms; returns the channel the radio should be on now.
 uint8_t nl_chanscan_tick(nl_chanscan_t *s, uint32_t dt_ms);
 // An anchor heartbeat was heard. Channels overlap, so it may have been heard
 // from a neighbouring channel: move to the channel the anchor advertises
-// (0 = unknown, stay put). Ends fallback anchoring.
+// (0 = unknown, stay put). Ends a search (leading or following).
 void nl_chanscan_heard_anchor(nl_chanscan_t *s, uint8_t anchor_channel);
-// The node is about to send something that matters (a command or bump): when
-// fallback anchoring, return home now and put off the next peek for a full
-// NL_PEEK_EVERY_MS. Returns the channel to be on.
+// A search leader's heartbeat (NL_HB_GROUP) from mac, on its channel.
+void nl_chanscan_heard_group(nl_chanscan_t *s, const uint8_t mac[6], uint8_t channel);
+// An NL_MSG_HOP from mac.
+void nl_chanscan_heard_hop(nl_chanscan_t *s, const uint8_t mac[6], const nl_hop_t *hop);
+// This node starts a network move (NL_HOP_MOVE): the same as hearing one.
+void nl_chanscan_move(nl_chanscan_t *s, uint8_t channel, uint32_t in_ms);
+// The node is about to send something that matters. Kept for the callers;
+// returns the channel to be on.
 uint8_t nl_chanscan_busy(nl_chanscan_t *s);
+
+// ---------------------------------------------------------------- site survey
+// The base's survey of the 2.4 GHz channels: other networks' traffic and
+// access points on each (ours left out), then how much each channel would
+// suffer, counting its neighbours (20 MHz channels 5 MHz apart overlap).
+typedef struct {
+    uint16_t frames;        // other networks' frames per second
+    uint16_t busy_pml;      // their estimated airtime, per mille
+    uint8_t aps;            // other access points
+    int8_t strongest;       // the strongest one, dBm (-127: none)
+    uint16_t ap_weight;     // sum over them of max(0, dBm + 95)
+    uint16_t load;          // nl_survey_score: what a network here would share the air with (0..)
+} nl_survey_chan_t;
+
+typedef struct {
+    nl_survey_chan_t ch[NL_CHANNEL_MAX + 1];   // [1..13]
+    uint8_t current;        // the channel the network is on
+    uint8_t best;           // nl_survey_score: the recommended channel (current if not worth a move)
+    bool worth_moving;      // best is clearly better than current
+} nl_survey_t;
+
+// Fills each channel's load and picks the best of 1..max_channel.
+void nl_survey_score(nl_survey_t *s, uint8_t max_channel);
 
 // ---------------------------------------------------------------- WLED audio
 // The WLED usermod turns AudioReactive's analysis (smoothed volume 0..255, 16

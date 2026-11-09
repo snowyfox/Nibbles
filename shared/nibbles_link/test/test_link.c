@@ -179,64 +179,206 @@ static void test_chanscan(void)
     CHECK(all && !s.locked, "no anchor: sweeps all 13 channels");
 }
 
-static void test_fallback_anchor(void)
-{
-    // No anchor anywhere: anchors on the home channel after the fallback time.
+// A few boards and the air between them, for the search and hop tests.
+// Packets reach every board on the sender's channel.
+typedef struct {
     nl_chanscan_t s;
-    nl_chanscan_init(&s, 6);
-    nl_chanscan_set_fallback(&s, 12000);
-    int start_ms = -1;
-    for (int t = 0; t < 20000 && start_ms < 0; t += 50) {
-        nl_chanscan_tick(&s, 50);
-        if (s.anchoring) start_ms = t;
-    }
-    CHECK(start_ms >= 12000 - 100 && start_ms <= 12100 && s.channel == 6, "fallback anchoring after %d ms on %d",
-          start_ms, s.channel);
+    uint8_t mac[6];
+    bool deaf;                  // hears nothing (a board that misses a hop)
+} sim_node_t;
 
-    // While anchoring it is on the home channel most of the time and visits
-    // every other channel.
-    int home = 0, total = 0, seen[NL_CHANNEL_MAX + 1] = { 0 };
-    for (int t = 0; t < 12 * (NL_PEEK_EVERY_MS + NL_PEEK_MS); t += 50) {
-        const uint8_t ch = nl_chanscan_tick(&s, 50);
-        seen[ch] = 1;
-        home += ch == 6;
-        total++;
+typedef struct {
+    int channel;                // 0 = no anchor (brains off)
+    int down_ms;                // restarting its radio: silent
+    int advertise;              // channel in its heartbeat (normally its own)
+} sim_anchor_t;
+
+static void sim_init(sim_node_t *n, uint8_t last_mac_byte, uint8_t start, uint32_t fallback_ms)
+{
+    memset(n, 0, sizeof(*n));
+    const uint8_t mac[6] = { 0x28, 0x84, 0x85, 0, 0, last_mac_byte };
+    memcpy(n->mac, mac, 6);
+    nl_chanscan_init(&n->s, start);
+    nl_chanscan_set_fallback(&n->s, fallback_ms);
+    nl_chanscan_set_self(&n->s, n->mac);
+}
+
+// One 50 ms step at time t.
+static void sim_step(sim_node_t *nodes, int count, sim_anchor_t *a, int t)
+{
+    for (int i = 0; i < count; i++) nl_chanscan_tick(&nodes[i].s, 50);
+    const bool beat = (t % 250) == 0;   // 4 Hz heartbeats (anchors and leaders)
+    if (a && a->channel && beat && a->down_ms <= 0)
+        for (int i = 0; i < count; i++)
+            if (!nodes[i].deaf && nodes[i].s.channel == a->channel) nl_chanscan_heard_anchor(&nodes[i].s, a->advertise ? a->advertise : a->channel);
+    if (a && a->down_ms > 0) a->down_ms -= 50;
+    for (int i = 0; i < count; i++) {
+        nl_chanscan_t *from = &nodes[i].s;
+        if (from->announce) {
+            from->announce = false;
+            const nl_hop_t hop = { .kind = NL_HOP_SEARCH, .channel = from->announce_channel, .in_ms = NL_HOP_NOTICE_MS };
+            for (int j = 0; j < count; j++)
+                if (j != i && !nodes[j].deaf && nodes[j].s.channel == from->channel) nl_chanscan_heard_hop(&nodes[j].s, nodes[i].mac, &hop);
+        }
+        if (from->leading && beat)
+            for (int j = 0; j < count; j++)
+                if (j != i && !nodes[j].deaf && nodes[j].s.channel == from->channel) nl_chanscan_heard_group(&nodes[j].s, nodes[i].mac, from->channel);
+    }
+}
+
+static bool sim_together(const sim_node_t *nodes, int count)
+{
+    for (int i = 1; i < count; i++)
+        if (nodes[i].s.channel != nodes[0].s.channel) return false;
+    return true;
+}
+
+static void test_search_group(void)
+{
+    // The base (MAC ..10, lead after 12 s), the leader eye (..20) and the
+    // preview (..30), no brain: the base leads and the others join it.
+    sim_node_t n[3];
+    sim_init(&n[0], 0x10, 6, 12000);
+    sim_init(&n[1], 0x20, 1, 0);
+    sim_init(&n[2], 0x30, 9, 0);
+    int lead_ms = -1, joined_ms = -1, t = 0;
+    for (; t < 60000 && joined_ms < 0; t += 50) {
+        sim_step(n, 3, NULL, t);
+        if (lead_ms < 0 && n[0].s.leading) lead_ms = t;
+        if (lead_ms >= 0 && n[1].s.group && n[2].s.group) joined_ms = t;
+    }
+    CHECK(lead_ms >= 11900 && lead_ms <= 12100, "no anchor: the base leads a search after %d ms", lead_ms);
+    CHECK(joined_ms >= 0 && joined_ms - lead_ms <= 25000, "eye and preview joined it %d ms later", joined_ms - lead_ms);
+
+    // Together from then on, sweeping every channel.
+    int apart = 0, seen[NL_CHANNEL_MAX + 1] = { 0 };
+    for (int i = 0; i < 60000 / 50; i++, t += 50) {
+        sim_step(n, 3, NULL, t);
+        apart += !sim_together(n, 3);
+        seen[n[0].s.channel] = 1;
     }
     int all = 1;
     for (int c = NL_CHANNEL_MIN; c <= NL_CHANNEL_MAX; c++) all &= seen[c];
-    CHECK(all && home * 100 / total >= 85, "anchoring: peeks at all channels, home %d%% of the time", home * 100 / total);
+    CHECK(apart * 50 <= 60000 / 50, "searching together: apart %d of 1200 steps (hops in flight)", apart);
+    CHECK(all, "the group sweeps all 13 channels");
 
-    // Sending bumps keeps it home: no peeks while HOLDs go out every 100 ms,
-    // and a peek in progress ends at once.
-    int away = 0;
-    for (int t = 0; t < 10000; t += 50) {
-        uint8_t ch = nl_chanscan_tick(&s, 50);
-        if (t % 100 == 0) ch = nl_chanscan_busy(&s);
-        away += ch != 6;
-    }
-    CHECK(away == 0, "anchoring: no peeks while sending (%d ticks away)", away);
-
-    // WLED appears on channel 11: found on a peek, anchoring ends, follows it.
+    // A brain comes up on channel 9: the whole group locks onto it within a sweep.
+    sim_anchor_t a = { .channel = 9 };
     int found_ms = -1;
-    for (int t = 0; t < 60000 && found_ms < 0; t += 50) {
-        const uint8_t ch = nl_chanscan_tick(&s, 50);
-        if (ch == 11 && (t % 250) < 50) nl_chanscan_heard_anchor(&s, 11);
-        if (!s.anchoring) found_ms = t;
+    for (int i = 0; i < 30000 / 50 && found_ms < 0; i++, t += 50) {
+        sim_step(n, 3, &a, t);
+        if (n[0].s.locked && !n[0].s.group && !n[0].s.leading && n[1].s.locked && !n[1].s.group &&
+            n[2].s.locked && !n[2].s.group && sim_together(n, 3) && n[0].s.channel == 9) found_ms = i * 50;
     }
-    CHECK(found_ms >= 0 && found_ms <= 12 * (NL_PEEK_EVERY_MS + NL_PEEK_MS) && s.locked && s.channel == 11,
-          "real anchor found while anchoring after %d ms, now on %d", found_ms, s.channel);
+    CHECK(found_ms >= 0 && found_ms <= 13 * NL_GROUP_DWELL_MS + 1000, "brain on 9: everyone locked onto it after %d ms", found_ms);
 
-    // Following it: no anchoring while it keeps talking.
-    for (int t = 0; t < 30000; t += 50) {
-        nl_chanscan_tick(&s, 50);
-        if ((t % 250) < 50) nl_chanscan_heard_anchor(&s, 11);
+    // Two leaders (base ..10 and a second base ..08): the higher MAC ends up following.
+    sim_node_t m[3];
+    sim_init(&m[0], 0x10, 6, 12000);
+    sim_init(&m[1], 0x08, 3, 12000);
+    sim_init(&m[2], 0x20, 1, 0);
+    int one_ms = -1;
+    for (t = 0; t < 120000 && one_ms < 0; t += 50) {
+        sim_step(m, 3, NULL, t);
+        if (m[1].s.leading && !m[0].s.leading && m[0].s.group && m[2].s.group && sim_together(m, 3)) one_ms = t;
     }
-    CHECK(!s.anchoring && s.channel == 11, "stays with the real anchor");
+    CHECK(one_ms >= 0, "two leaders: the lower MAC leads, the other follows (after %d ms)", one_ms);
+}
 
-    // Without the fallback set, never anchors.
-    nl_chanscan_init(&s, 6);
-    for (int t = 0; t < 60000; t += 50) nl_chanscan_tick(&s, 50);
-    CHECK(!s.anchoring, "no fallback: never anchors");
+static void test_network_move(void)
+{
+    // Everyone locked onto the brain on channel 1; the base moves the network to 6.
+    sim_node_t n[3];
+    sim_init(&n[0], 0x10, 1, 12000);
+    sim_init(&n[1], 0x20, 1, 0);
+    sim_init(&n[2], 0x30, 1, 0);
+    sim_anchor_t a = { .channel = 1 };
+    int t = 0;
+    for (; t < 3000; t += 50) sim_step(n, 3, &a, t);
+    CHECK(n[0].s.locked && n[1].s.locked && n[2].s.locked && n[0].s.channel == 1, "all locked on channel 1");
+
+    // The base sends the hop 5 times over 600 ms, each naming the same moment (1 s ahead).
+    nl_chanscan_move(&n[0].s, 6, 1000);
+    int lost = 0, moved_ms = -1;
+    for (int i = 0; i < 12000 / 50; i++, t += 50) {
+        const int ms = i * 50;
+        if (ms % 150 == 0 && ms <= 600) {
+            const nl_hop_t hop = { .kind = NL_HOP_MOVE, .channel = 6, .in_ms = (uint16_t)(1000 - ms) };
+            for (int j = 1; j < 3; j++)
+                if (n[j].s.channel == n[0].s.channel) nl_chanscan_heard_hop(&n[j].s, n[0].mac, &hop);
+        }
+        if (ms == 1000) { a.channel = 6; a.down_ms = 1500; }   // the brain restarts its access point on 6
+        sim_step(n, 3, &a, t);
+        for (int j = 0; j < 3; j++) lost += !n[j].s.locked;
+        if (moved_ms < 0 && n[0].s.channel == 6 && sim_together(n, 3)) moved_ms = ms;
+    }
+    CHECK(moved_ms >= 950 && moved_ms <= 1100, "network move: everyone on 6 at %d ms", moved_ms);
+    CHECK(lost == 0 && n[0].s.channel == 6 && n[1].s.channel == 6 && n[2].s.channel == 6,
+          "nobody lost the lock while the brain restarted (%d)", lost);
+
+    // A move to a neighbouring channel while the other brain still advertises
+    // the old one there: nobody goes back.
+    nl_chanscan_move(&n[0].s, 7, 500);
+    const nl_hop_t hop = { .kind = NL_HOP_MOVE, .channel = 7, .in_ms = 500 };
+    for (int j = 1; j < 3; j++) nl_chanscan_heard_hop(&n[j].s, n[0].mac, &hop);
+    for (int i = 0; i < 4000 / 50; i++, t += 50) {
+        if (i * 50 == 500) { a.channel = 7; a.advertise = 6; }   // heard on 7, still saying 6
+        if (i * 50 == 3000) a.advertise = 0;                      // it has moved too
+        sim_step(n, 3, &a, t);
+    }
+    CHECK(n[0].s.channel == 7 && n[1].s.channel == 7 && n[2].s.channel == 7, "stale anchor on the old channel ignored after a move");
+
+    // A board that missed every copy loses the brain and finds it again on the new channel.
+    nl_chanscan_move(&n[0].s, 11, 500);
+    for (int j = 1; j < 2; j++) nl_chanscan_heard_hop(&n[j].s, n[0].mac, &(nl_hop_t){ .kind = NL_HOP_MOVE, .channel = 11, .in_ms = 500 });
+    int back_ms = -1;
+    for (int i = 0; i < 30000 / 50 && back_ms < 0; i++, t += 50) {
+        if (i * 50 == 500) a.channel = 11;
+        sim_step(n, 3, &a, t);
+        if (i * 50 > 500 && n[2].s.locked && n[2].s.channel == 11) back_ms = i * 50;
+    }
+    CHECK(back_ms >= 0 && back_ms <= NL_LOCK_TIMEOUT_MS + 13 * NL_SCAN_DWELL_MS + 1000, "missed the hop: back with the brain on 11 after %d ms", back_ms);
+
+    // Not while searching: a move needs an anchor.
+    sim_node_t lone;
+    sim_init(&lone, 0x10, 6, 12000);
+    for (t = 0; t < 15000; t += 50) sim_step(&lone, 1, NULL, t);
+    nl_chanscan_move(&lone.s, 3, 500);
+    CHECK(!lone.s.hop_pending && lone.s.leading, "no network move while leading a search");
+}
+
+static void test_survey_score(void)
+{
+    // A festival-like spread: busy 1 and 6, a quiet 11.
+    nl_survey_t s;
+    memset(&s, 0, sizeof(s));
+    s.ch[1] = (nl_survey_chan_t){ .busy_pml = 300, .aps = 6, .ap_weight = 200 };
+    s.ch[6] = (nl_survey_chan_t){ .busy_pml = 250, .aps = 5, .ap_weight = 180 };
+    s.ch[11] = (nl_survey_chan_t){ .busy_pml = 40, .aps = 1, .ap_weight = 20 };
+    s.current = 1;
+    nl_survey_score(&s, 11);
+    CHECK(s.best == 11 && s.worth_moving, "busy 1 and 6, quiet 11: recommends %d (loads 1 %u, 6 %u, 11 %u)", s.best,
+          s.ch[1].load, s.ch[6].load, s.ch[11].load);
+    CHECK(s.ch[3].load > s.ch[11].load && s.ch[3].load > 0, "channel 3 suffers from both 1 and 6 (%u)", s.ch[3].load);
+
+    s.current = 11;
+    nl_survey_score(&s, 11);
+    CHECK(s.best == 11 && !s.worth_moving, "already on the best: stays");
+
+    // Quiet air everywhere: differences of a few per mille aren't worth a move.
+    memset(&s, 0, sizeof(s));
+    for (int c = 1; c <= 13; c++) s.ch[c].busy_pml = 6;
+    s.ch[9].busy_pml = 9;
+    s.current = 9;
+    nl_survey_score(&s, 11);
+    CHECK(s.best == 9 && !s.worth_moving, "quiet everywhere: no move (best %d)", s.best);
+
+    // 12 and 13 are measured (they reach 11) but not recommended.
+    memset(&s, 0, sizeof(s));
+    for (int c = 1; c <= 11; c++) s.ch[c].busy_pml = 400;
+    s.current = 6;
+    nl_survey_score(&s, 11);
+    CHECK(s.best >= 1 && s.best <= 11, "only 1..11 recommended (%d)", s.best);
 }
 
 static void test_wled_audio(void)
@@ -659,7 +801,9 @@ int main(void)
     test_resync_and_stream();
     test_radio();
     test_chanscan();
-    test_fallback_anchor();
+    test_search_group();
+    test_network_move();
+    test_survey_score();
     test_bump();
     test_wled_audio();
     test_power_limit();

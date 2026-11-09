@@ -25,8 +25,8 @@ typedef struct {
     uint16_t fw;
     bool anchor;             // true: stay on anchor_channel and broadcast anchor heartbeats
     uint8_t anchor_channel;  // anchor's channel; followers start scanning here
-    uint32_t anchor_fallback_ms;  // followers: anchor on anchor_channel after this long
-                                  // without hearing one (0 = never); see nl_chanscan_set_fallback
+    uint32_t anchor_fallback_ms;  // followers: lead a search (from anchor_channel) after this long
+                                  // without hearing an anchor (0 = never); see nl_chanscan_set_fallback
     nl_espnow_handler_t handler;
     int core;                // core for the radio task
 } nl_espnow_config_t;
@@ -50,11 +50,24 @@ void nl_espnow_set_status(uint16_t fps_x10, uint16_t late_frames);
 typedef struct {
     uint8_t channel;
     bool locked;             // hearing the anchor, or anchoring
-    bool anchoring;          // this node is the anchor (fixed or fallback)
+    bool anchoring;          // this node is the fixed anchor (cfg.anchor)
+    bool leading;            // no anchor heard: leading a search (NL_HB_GROUP)
+    bool group;              // searching with another node's search
     uint32_t rx, tx, tx_fail, locks, dropped;
 } nl_espnow_stats_t;
 
 void nl_espnow_get_stats(nl_espnow_stats_t *out);
+
+// Move the whole network to another channel (NL_HOP_MOVE), in_ms from now:
+// the hop goes out 5 times before then, this node moves at the moment.
+// ESP_ERR_INVALID_STATE without an anchor to move with (or already there).
+esp_err_t nl_espnow_move(uint8_t channel, uint32_t in_ms);
+
+// Site survey: leaves the network for about 13 * dwell_ms + 2 s, listens to
+// every channel for other networks' traffic and scans for access points
+// (ours left out), then returns to the channel it was on. Blocks the caller.
+// Fills everything but the scores (nl_survey_score).
+esp_err_t nl_espnow_survey(nl_survey_t *out, uint32_t dwell_ms);
 
 #ifdef __cplusplus
 }

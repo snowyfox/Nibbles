@@ -77,10 +77,26 @@ eye. Framing: COBS with CRC-16, a message type and a sequence number.
   on whatever channel WLED is on. The leader eye and the base scan channels
   until they hear it, lock on, and rescan after ~3 s of silence. The same code
   works at home (hotspot) and at a festival (WLED's AP).
-- **Fallback anchor**: if the base hears no anchor for 12 s (WLED off, or
-  running without the usermod), it anchors channel 6 itself. It then checks
-  one other channel for 300 ms every 3 s, so it finds WLED within about 40 s
-  and hands over to it.
+- **Searching together** (2026-11-09; replaced the fallback anchor): if the
+  base hears no anchor for 12 s (brains off or restarting), it leads a search.
+  It sweeps the channels at 0.8 s each (a little more, by MAC), sends
+  `NL_HB_GROUP` heartbeats at 4 Hz and announces each move 120 ms ahead with
+  `NL_MSG_HOP` (`NL_HOP_SEARCH`). The eyes and the preview screen sweep twice
+  as fast, so they catch up with it and then move with it. The boards keep
+  talking while they search, and all lock onto a brain as soon as the group
+  reaches its channel (about 10 s for a full sweep). Of two leaders, the
+  higher MAC follows. The old fallback anchor parked the base on channel 6,
+  and its peeks at other channels were put off by every send the base made,
+  so with the brains back on another channel it stayed on 6 for good.
+- **Moving the network** (`NL_HOP_MOVE`): the base's survey page listens to
+  every channel (other networks' airtime and access points, ours left out),
+  scores each channel with its neighbours' overlap, and a held button sends
+  the move 5 times over 0.6 s, naming a moment 1 s ahead. Everyone moves then;
+  the brains restart their access point on the new channel and save it, a
+  joined brain reconnects 1.5 s later and doesn't stand in as host for 20 s.
+  Scanners keep their lock for 8 s more while the brain comes back, and for
+  6 s ignore anchors still advertising another channel. A board that missed
+  the move loses the brain and finds it on the new channel by scanning.
 - State that can be sent again safely (heartbeats, telemetry, audio features)
   is broadcast at a fixed rate.
 - Commands are unicast to known peers with an ack and retries.
