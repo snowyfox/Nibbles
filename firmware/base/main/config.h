@@ -7,10 +7,17 @@
 // 1: always anchor the radio channel. 0: scan for WLED's anchor like the eyes
 // (with the fallback below).
 #define BASE_IS_ANCHOR       0
-// Scanning base: if no anchor (the WLED usermod) is heard for this long, the
-// base anchors BASE_ANCHOR_CHANNEL itself until it finds one.
+// Scanning base: if no anchor (a brain) is heard for this long, the base
+// leads a search for one, starting at BASE_ANCHOR_CHANNEL; the eyes and the
+// preview screen search with it (NL_HB_GROUP, 2026-11-09).
 #define BASE_ANCHOR_FALLBACK_MS 12000
 #define BASE_ANCHOR_CHANNEL  6
+
+// Site survey page: listen this long on each channel; recommend only channels
+// 1..BASE_MAX_CHANNEL (11: the US); a move happens this long after the tap.
+#define SURVEY_DWELL_MS      300
+#define BASE_MAX_CHANNEL     11
+#define MOVE_DELAY_MS        1000
 
 // Buttons (active low): BOOT = next eye preset; the second key is a bump
 // button: the eyes and WLED flash while it is held. The touch screen's FLASH

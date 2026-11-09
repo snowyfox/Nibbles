@@ -354,7 +354,7 @@ typedef struct {
 } card_t;
 
 static card_t eyes_card, wled_card, radio_card;
-static lv_obj_t *screen, *pages, *pagem, *pagek, *page0, *page1, *pad_flash, *pad_black;  // main, Live and Standby, details, presets
+static lv_obj_t *screen, *pages, *pagem, *pagek, *page0, *page1, *pages_survey, *pad_flash, *pad_black;  // main, Live and Standby, details, presets, survey
 static lv_obj_t *event_labels[3];  // one per page
 #define event_label event_labels[0]
 static volatile int page_wanted = -1;  // page change asked for over serial
@@ -1619,6 +1619,185 @@ static void pv_show(const display_status_t *s)
     pv_mark(s, held);
 }
 
+
+// ------------------------------------------------------------------ survey page
+// Page 4: a site survey of the 2.4 GHz channels (other networks' traffic and
+// access points, ours left out) and a held button that moves the whole
+// network to the recommended channel. Portrait only (172 wide).
+
+static const char *radio_state(const display_status_t *s)
+{
+    return s->anchoring ? "anchoring" : s->leading ? "searching (leading)" : s->group ? "searching (following)"
+         : s->locked ? "locked" : "scanning";
+}
+
+static uint32_t radio_state_color(const display_status_t *s)
+{
+    return s->anchoring || s->leading || s->group ? COL_WARN : s->locked ? COL_OK : COL_BAD;
+}
+
+#define SV_ROWS NL_CHANNEL_MAX
+static lv_obj_t *sv_now, *sv_button, *sv_info, *sv_best, *sv_move, *sv_move_label;
+static lv_obj_t *sv_num[SV_ROWS + 1], *sv_bar[SV_ROWS + 1], *sv_text[SV_ROWS + 1];
+static nl_survey_t sv_data;
+static bool sv_have, sv_busy;
+static volatile bool sv_new;
+static int64_t sv_at_us;
+static bool sv_can_move;   // locked onto a brain: a move has an anchor to go with
+
+void display_survey(const nl_survey_t *results, bool busy)
+{
+    taskENTER_CRITICAL(&lock);
+    if (results) {
+        sv_data = *results;
+        sv_have = true;
+        sv_at_us = esp_timer_get_time();
+    }
+    sv_busy = busy;
+    sv_new = true;
+    taskEXIT_CRITICAL(&lock);
+}
+
+static void on_survey_event(lv_event_t *ev)
+{
+    if (!action_cb) return;
+    lv_obj_t *obj = lv_event_get_target_obj(ev);
+    if (obj == sv_button) action_cb(DISPLAY_SURVEY, true, 0);
+    else if (obj == sv_move && sv_have && sv_data.worth_moving && sv_can_move) action_cb(DISPLAY_MOVE_CHANNEL, true, sv_data.best);
+}
+
+static lv_obj_t *sv_btn(lv_obj_t *parent, int y, int h, uint32_t color, const char *text, lv_obj_t **lbl)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_set_size(b, 164, h);
+    lv_obj_align(b, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(color), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(b, 2, 0);
+    lv_obj_set_style_radius(b, 6, 0);
+    lv_obj_set_style_shadow_width(b, 0, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COL_BG), LV_STATE_DISABLED);
+    lv_obj_set_style_border_color(b, lv_color_hex(COL_DIM), LV_STATE_DISABLED);
+    lv_obj_t *l = label(b, &lv_font_montserrat_14, COL_TEXT);
+    lv_obj_set_width(l, 150);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(l, text);
+    lv_obj_center(l);
+    if (lbl) *lbl = l;
+    return b;
+}
+
+static void build_survey_page(void)
+{
+    lv_obj_t *p = pages_survey;
+    lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *t = label(p, &lv_font_montserrat_14, COL_TITLE);
+    lv_label_set_text(t, "RADIO SURVEY");
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 6, 6);
+    sv_now = label(p, &lv_font_montserrat_14, COL_TEXT);
+    lv_obj_align(sv_now, LV_ALIGN_TOP_LEFT, 6, 26);
+
+    sv_button = sv_btn(p, 48, 40, COL_EYES, "SURVEY", NULL);
+    lv_obj_add_event_cb(sv_button, on_survey_event, LV_EVENT_SHORT_CLICKED, NULL);
+    sv_info = label(p, &lv_font_montserrat_12, COL_TITLE);
+    lv_obj_set_width(sv_info, 160);
+    lv_label_set_long_mode(sv_info, LV_LABEL_LONG_WRAP);
+    lv_obj_align(sv_info, LV_ALIGN_TOP_LEFT, 6, 94);
+    lv_label_set_text(sv_info, "Off the network ~6 s to listen to every channel.");
+
+    // One row per channel: number, load bar, access points and airtime.
+    for (int c = 1; c <= SV_ROWS; c++) {
+        const int y = 130 + (c - 1) * 27;
+        sv_num[c] = label(p, &lv_font_montserrat_14, COL_TEXT);
+        lv_label_set_text_fmt(sv_num[c], "%d", c);
+        lv_obj_set_width(sv_num[c], 20);
+        lv_obj_set_style_text_align(sv_num[c], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_align(sv_num[c], LV_ALIGN_TOP_LEFT, 2, y);
+        sv_bar[c] = lv_bar_create(p);
+        lv_obj_set_size(sv_bar[c], 66, 12);
+        lv_obj_align(sv_bar[c], LV_ALIGN_TOP_LEFT, 28, y + 3);
+        lv_obj_set_style_bg_color(sv_bar[c], lv_color_hex(COL_CARD), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(sv_bar[c], LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(sv_bar[c], 3, LV_PART_MAIN);
+        lv_obj_set_style_radius(sv_bar[c], 3, LV_PART_INDICATOR);
+        lv_bar_set_range(sv_bar[c], 0, 100);
+        lv_bar_set_value(sv_bar[c], 0, LV_ANIM_OFF);
+        sv_text[c] = label(p, &lv_font_montserrat_12, COL_TITLE);
+        lv_obj_align(sv_text[c], LV_ALIGN_TOP_LEFT, 98, y + 1);
+        lv_label_set_text(sv_text[c], "-");
+    }
+
+    sv_best = label(p, &lv_font_montserrat_14, COL_TEXT);
+    lv_obj_set_width(sv_best, 160);
+    lv_label_set_long_mode(sv_best, LV_LABEL_LONG_WRAP);
+    lv_obj_align(sv_best, LV_ALIGN_TOP_LEFT, 6, 130 + SV_ROWS * 27 + 4);
+    sv_move = sv_btn(p, 640 - 6 - 64, 64, COL_WARN, "HOLD TO MOVE", &sv_move_label);
+    lv_obj_add_event_cb(sv_move, on_survey_event, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_add_state(sv_move, LV_STATE_DISABLED);
+}
+
+static uint32_t sv_load_color(unsigned load)
+{
+    return load < 100 ? COL_OK : load < 300 ? COL_WARN : COL_BAD;
+}
+
+static void survey_show(void)
+{
+    nl_survey_t d;
+    bool have, busy;
+    int64_t at;
+    taskENTER_CRITICAL(&lock);
+    d = sv_data;
+    have = sv_have;
+    busy = sv_busy;
+    at = sv_at_us;
+    taskEXIT_CRITICAL(&lock);
+    if (busy) {
+        lv_label_set_text(sv_info, "Surveying... off the network for a few seconds.");
+        lv_obj_add_state(sv_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_remove_state(sv_button, LV_STATE_DISABLED);
+    }
+    if (!have) return;
+    if (!busy) {
+        unsigned aps = 0;
+        for (int c = 1; c <= SV_ROWS; c++) aps += d.ch[c].aps;
+        lv_label_set_text_fmt(sv_info, "%u other networks. Bar: the air we'd share there.", aps);
+    }
+    unsigned top = 200;
+    for (int c = 1; c <= SV_ROWS; c++)
+        if (d.ch[c].load > top) top = d.ch[c].load;
+    for (int c = 1; c <= SV_ROWS; c++) {
+        const nl_survey_chan_t *ch = &d.ch[c];
+        lv_bar_set_value(sv_bar[c], (int)(ch->load * 100u / top), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(sv_bar[c], lv_color_hex(sv_load_color(ch->load)), LV_PART_INDICATOR);
+        lv_label_set_text_fmt(sv_text[c], "%uap %u.%u%%", ch->aps, ch->busy_pml / 10, ch->busy_pml % 10);
+        const uint32_t col = c == d.best && d.worth_moving ? COL_OK : c == d.current ? COL_EYES : c > 11 ? COL_DIM : COL_TEXT;
+        lv_obj_set_style_text_color(sv_num[c], lv_color_hex(col), 0);
+    }
+    (void)at;
+    if (d.worth_moving)
+        lv_label_set_text_fmt(sv_best, "Best: ch %d (%u vs %u here)", d.best, d.ch[d.best].load, d.ch[d.current].load);
+    else
+        lv_label_set_text_fmt(sv_best, "Ch %d is as good as any: stay", d.current);
+    lv_label_set_text_fmt(sv_move_label, d.worth_moving ? "HOLD TO MOVE ALL TO CH %d" : "HOLD TO MOVE", d.best);
+}
+
+static void survey_update(const display_status_t *s)
+{
+    lv_label_set_text_fmt(sv_now, "Ch %d, %s", s->channel, radio_state(s));
+    sv_can_move = s->locked && !s->group && !s->leading && !s->anchoring;
+    if (sv_new) {
+        sv_new = false;
+        survey_show();
+    }
+    const bool ok = sv_have && sv_data.worth_moving && sv_can_move && !sv_busy && sv_data.current == s->channel;
+    if (ok) lv_obj_remove_state(sv_move, LV_STATE_DISABLED);
+    else lv_obj_add_state(sv_move, LV_STATE_DISABLED);
+}
+
 static void ui_build(void)
 {
     screen = lv_screen_active();
@@ -1635,8 +1814,10 @@ static void ui_build(void)
     pagem = lv_tileview_add_tile(pages, 0, 0, LV_DIR_RIGHT);
     pagek = lv_tileview_add_tile(pages, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
     page1 = lv_tileview_add_tile(pages, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    page0 = lv_tileview_add_tile(pages, 3, 0, LV_DIR_LEFT);
+    page0 = lv_tileview_add_tile(pages, 3, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    pages_survey = lv_tileview_add_tile(pages, 4, 0, LV_DIR_LEFT);
     build_main_page();
+    build_survey_page();
 
     lv_obj_t *row = lv_obj_create(page0);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -1800,8 +1981,9 @@ static void ui_update(const display_status_t *s)
 
     // Radio
     lv_label_set_text_fmt(radio_card.big, "Ch %d", s->channel);
-    lv_label_set_text(radio_card.line1, s->anchoring ? "anchoring" : s->locked ? "locked" : "scanning");
-    lv_obj_set_style_text_color(radio_card.line1, lv_color_hex(s->anchoring ? COL_WARN : s->locked ? COL_OK : COL_BAD), 0);
+    lv_label_set_text(radio_card.line1, radio_state(s));
+    lv_obj_set_style_text_color(radio_card.line1, lv_color_hex(radio_state_color(s)), 0);
+    survey_update(s);
     lv_label_set_text_fmt(radio_card.line2, "rx %lu  tx %lu  fail %lu", (unsigned long)s->rx, (unsigned long)s->tx,
                           (unsigned long)s->tx_fail);
 
@@ -1852,7 +2034,7 @@ static void display_task(void *arg)
             pv_show(&s);
         }
         if (page_wanted >= 0) {
-            // pages: 0 main, 1 Live and Standby, 2 presets, 3 details (tiles in that order)
+            // pages: 0 main, 1 Live and Standby, 2 presets, 3 details, 4 survey (tiles in that order)
             lv_tileview_set_tile_by_index(pages, page_wanted, 0, LV_ANIM_OFF);
             page_wanted = -1;
         }

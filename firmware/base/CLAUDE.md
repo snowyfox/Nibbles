@@ -286,7 +286,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
   finsensor, take, flash, unlock, 9-16, palette, layer, bright, preset1-16,
   palette1-8, layer1-16, bright1-8, polepower, left, right, up, down), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
-  `power` (logs the power board), `page 0|1|2|3`, `leds on|off` (prints
+  `power` (logs the power board), `page 0|1|2|3|4`, `survey` (site survey, results in the log and on page 4), `radio move N` (move the whole network to channel N), `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).
 - Host tests: `make -C firmware/base/test/host`.
@@ -354,6 +354,27 @@ Earlier features, still there (`main/main.c`):
   flash and blackout go to both, preset bumps to WLED, as the preset numbers
   differ). Commands are unicast with an ack and up to 3 tries of
   60 ms.
+
+## Radio: searching together, site survey, network moves (2026-11-09)
+
+- **No brain heard for 12 s:** the base leads a search (it used to anchor
+  channel 6, and stayed there for good once the brains came back elsewhere).
+  The eyes and preview catch up with it and search with it; see
+  docs/architecture.md, "Radio". The log and the details page say
+  `searching (leading)`.
+- **Survey page** (page 4, swipe left of the details): SURVEY takes the base
+  off the network for about 6 s (13 channels x 300 ms of listening, then an
+  access point scan), and lists per channel the other networks' access
+  points and airtime, ours left out, and a bar for the air a network there
+  would share (neighbouring channels count; `nl_survey_score`). Only 1..11
+  are recommended (`BASE_MAX_CHANNEL`), and only when clearly better (a
+  fifth less and more than 2% of airtime). HOLD TO MOVE (a long press) moves
+  everyone 1 s later; it's enabled only while locked onto a brain and when a
+  move is worth it.
+- Tested on the bench 2026-11-09: the survey ran (6.0 s off the network,
+  back at once); a move with brains that didn't know about moves yet: the
+  base moved, gave up after 11 s and found the brains on their channel
+  again in under 1 s.
 
 ## Updates without USB, and the mirror board (2026-11-02)
 

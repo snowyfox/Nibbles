@@ -318,6 +318,12 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 return self.reply(400, {"ok": False})
             return self.reply(200 if ok else 409, {"ok": ok})
+        if self.path == "/api/console":   # one console command line (e.g. "survey"); the reply shows in the log
+            m = self.body() or {}
+            line = str(m.get("line", "")).strip()
+            if not line or "\n" in line or "\r" in line:
+                return self.reply(400, {"ok": False})
+            return self.reply(200 if base.write(line) else 409, {"ok": True})
         if self.path == "/api/allup":
             base.all_up()
             return self.reply(200, {"ok": True})

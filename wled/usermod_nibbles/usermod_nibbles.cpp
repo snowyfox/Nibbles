@@ -346,6 +346,13 @@ class NibblesUsermod : public Usermod {
     char savedSsid[33] = "";
     uint8_t savedApBehavior = AP_BEHAVIOR_BOOT_NO_CONN;
     unsigned long netLostAt = 0, fallbackAt = 0, hostHeardAt = 0;
+    // A network move from the base (NL_HOP_MOVE, 2026-11-09): at hopAt the access point
+    // (the host's, or the stand-in's) restarts on hopChannel and a joined brain reconnects
+    // a moment later; the channel is saved. No hosting in its place for a while meanwhile.
+    uint8_t hopChannel = 0;
+    unsigned long hopAt = 0, hopReconnectAt = 0, hopGraceUntil = 0;
+    bool hopPersist = false;      // saved once the network to join is back in the settings
+    uint32_t hopsDone = 0;
     uint32_t fallbacks = 0;
     uint8_t ownMac[6] = {};
     const char *wireNote = "";           // why it isn't running, for the Info page
@@ -2277,6 +2284,10 @@ class NibblesUsermod : public Usermod {
         }
       }
       if (h.type == NL_MSG_HEARTBEAT && !display) heardAnchor(h, pl, len);
+      if (h.type == NL_MSG_HOP && len == sizeof(nl_hop_t)) {
+        if (!display && !fromWire) heardHop(h, pl);
+        return;
+      }
       if (h.type == NL_MSG_AB && len == sizeof(nl_ab_state_t)) {
         if (abSide >= 0 && !display) {
           memcpy(&abHeard, pl, sizeof(abHeard));
@@ -2407,6 +2418,7 @@ class NibblesUsermod : public Usermod {
       apBehavior = savedApBehavior;
       ssidHidden = false;
       forceReconnect = true;
+      if (hopPersist) { hopPersist = false; configNeedsWrite = true; }   // the channel from a network move
     }
 
     // On the display: NL_OP_CTL_WIFI.
@@ -2426,6 +2438,7 @@ class NibblesUsermod : public Usermod {
       if (display || !netFallback) return;
       if (!fallbackOn) {
         if (WLED_CONNECTED || ssidHidden) { netLostAt = 0; return; }
+        if (hopGraceUntil) { netLostAt = 0; return; }   // just moved channel: the host is coming back
         if (!netLostAt) { netLostAt = now; return; }
         if (now - netLostAt < NET_FALLBACK_MS) return;
         fallbackOn = true;
@@ -2440,6 +2453,42 @@ class NibblesUsermod : public Usermod {
         netLostAt = now;   // a host that doesn't let us in: back to hosting after NET_FALLBACK_MS
         wifiRestore();
       }
+    }
+
+    void heardHop(const nl_radio_hdr_t &h, const uint8_t *pl) {
+      nl_hop_t hop;
+      memcpy(&hop, pl, sizeof(hop));
+      if (hop.kind != NL_HOP_MOVE || h.role != NL_ROLE_BASE || hop.channel < 1 || hop.channel > 13) return;
+      if (hopAt && hopChannel == hop.channel) return;   // a repeat: the first copy set the moment
+      hopChannel = hop.channel;
+      hopAt = millis() + hop.in_ms;
+      if (!hopAt) hopAt = 1;
+      Serial.printf("nibbles: network moves to channel %d in %u ms\n", hop.channel, (unsigned)hop.in_ms);
+    }
+
+    void hopLoop(unsigned long now) {
+      if (hopAt && (long)(now - hopAt) >= 0) {
+        hopAt = 0;
+        hopsDone++;
+        if (hopChannel != apChannel) {
+          apChannel = hopChannel;
+          if (ssidHidden) hopPersist = true;   // saving now would save the hidden network as none
+          else configNeedsWrite = true;
+        }
+        // Hosting (no network to join, or standing in for the host): the access point
+        // restarts on the new channel. Joined: reconnect once the host has moved.
+        const bool hosting = !WLED_WIFI_CONFIGURED;
+        if (hosting) forceReconnect = true;
+        else hopReconnectAt = (now + 1500) | 1;
+        netLostAt = 0;
+        hopGraceUntil = (now + 20000) | 1;
+        Serial.printf("nibbles: moved to channel %d (%s)\n", hopChannel, hosting ? "hosting" : "joined, reconnecting");
+      }
+      if (hopReconnectAt && (long)(now - hopReconnectAt) >= 0) {
+        hopReconnectAt = 0;
+        forceReconnect = true;
+      }
+      if (hopGraceUntil && (long)(now - hopGraceUntil) >= 0) hopGraceUntil = 0;
     }
 
     // Another brain's heartbeat that anchors the channel: the host, if we're standing in for it.
@@ -2473,6 +2522,7 @@ class NibblesUsermod : public Usermod {
       trackPresets(millis());
       if (!display) slotLoop();
       netLoop(millis());
+      if (!display) hopLoop(millis());
       for (;;) {
         if (!radioUp()) break;
         RxItem it;

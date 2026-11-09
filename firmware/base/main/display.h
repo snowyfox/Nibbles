@@ -16,6 +16,7 @@ typedef struct {
     // radio
     uint8_t channel;
     bool locked, anchoring;
+    bool leading, group;      // no brain heard: leading a search / searching with another board's
     uint32_t rx, tx, tx_fail;
     // eyes (from the leader's telemetry)
     bool eyes_fresh;
@@ -68,6 +69,8 @@ typedef enum {
     DISPLAY_SET_REACT,        // preset page selector: value = nl_react_t
     DISPLAY_SET_FINS,         // preset page switch: value 1 = WLED's fin LEDs follow the fins' angle
     DISPLAY_KEY,              // main page: a keypad key pressed / released by touch; value = ctl_key_t
+    DISPLAY_SURVEY,           // survey page: tap SURVEY
+    DISPLAY_MOVE_CHANNEL,     // survey page: MOVE held; value = the channel to move the network to
 } display_action_t;
 
 // Called on the display task: must not block (hand work to another task).
@@ -99,5 +102,9 @@ void display_graph_restore(const int8_t pct[DISPLAY_GRAPH_COLUMNS]);
 // target's Live one red and Standby's green. held: bit n-1 while number n is
 // down. Any task, at every key change; cheap.
 void display_palettes(bool on, int first, uint32_t held);
+// The survey page (swipe left of the details): a survey's results, or that
+// one is running (results NULL, busy true). Any task.
+void display_survey(const nl_survey_t *results, bool busy);
+
 // A one-line message for the event strip (the last command's result, etc.).
 void display_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

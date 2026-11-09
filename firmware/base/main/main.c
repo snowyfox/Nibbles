@@ -440,6 +440,9 @@ static void do_ctl_action(const ctl_action_t *a)
     }
 }
 
+static void survey_start(void);
+static void radio_move(int ch);
+
 static void actions_task(void *arg)
 {
     action_t a;
@@ -456,6 +459,8 @@ static void actions_task(void *arg)
             case DISPLAY_SET_AUTO:   send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, a.value); break;
             case DISPLAY_SET_REACT:  send_cmd_to(NL_TARGET_EYES, NL_OP_REACTIVITY, a.value); break;
             case DISPLAY_SET_FINS:   send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, a.value); break;
+            case DISPLAY_SURVEY:     survey_start(); break;
+            case DISPLAY_MOVE_CHANNEL: radio_move(a.value); break;
             case DISPLAY_HOLD_EYES: {
                 taskENTER_CRITICAL(&lock);
                 const bool on = eyes.flags & NL_EYE_AUTO_CYCLE;
@@ -583,6 +588,53 @@ static void log_power(void)
 // can light its keys like the real ones while it drives this base.
 static volatile bool leds_echo;
 
+// Site survey (the survey page, or "survey" over USB): on its own task, as
+// it keeps the radio for several seconds.
+static TaskHandle_t survey_task_handle;
+
+static void survey_task(void *arg)
+{
+    static nl_survey_t sv;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        display_survey(NULL, true);
+        display_event("Surveying the channels...");
+        const int64_t t0 = esp_timer_get_time();
+        const esp_err_t err = nl_espnow_survey(&sv, SURVEY_DWELL_MS);
+        if (err != ESP_OK) {
+            display_survey(NULL, false);
+            display_event("Survey failed (%s)", esp_err_to_name(err));
+            continue;
+        }
+        nl_survey_score(&sv, BASE_MAX_CHANNEL);
+        display_survey(&sv, false);
+        ESP_LOGI(TAG, "survey (%d ms off the network), on channel %d:", (int)((esp_timer_get_time() - t0) / 1000), sv.current);
+        for (int c = NL_CHANNEL_MIN; c <= NL_CHANNEL_MAX; c++) {
+            const nl_survey_chan_t *ch = &sv.ch[c];
+            ESP_LOGI(TAG, "  ch %2d: load %4u | %3u APs, strongest %4d dBm | %4u frames/s, %3u.%u%% airtime%s%s", c, ch->load,
+                     ch->aps, ch->aps ? ch->strongest : 0, ch->frames, ch->busy_pml / 10, ch->busy_pml % 10,
+                     c == sv.current ? " <- now" : "", c == sv.best && sv.worth_moving ? " <- best" : "");
+        }
+        if (sv.worth_moving) display_event("Survey: ch %d is better (%u vs %u)", sv.best, sv.ch[sv.best].load, sv.ch[sv.current].load);
+        else display_event("Survey: ch %d is as good as any", sv.current);
+    }
+}
+
+static void survey_start(void)
+{
+    if (!survey_task_handle) xTaskCreate(survey_task, "survey", 4096, NULL, 3, &survey_task_handle);
+    if (survey_task_handle) xTaskNotifyGive(survey_task_handle);
+}
+
+// Move the whole network (brains, eyes, preview, us) to another channel.
+static void radio_move(int ch)
+{
+    const esp_err_t err = nl_espnow_move((uint8_t)ch, MOVE_DELAY_MS);
+    if (err == ESP_OK) display_event("Moving everyone to channel %d", ch);
+    else display_event("Can't move to %d: %s", ch, err == ESP_ERR_INVALID_STATE ? "no brain heard, or already there" : esp_err_to_name(err));
+    ESP_LOGI(TAG, "radio move %d: %s", ch, esp_err_to_name(err));
+}
+
 // Screenshots print from their own task (~20 KB to 300 KB of text), so the
 // console keeps reading keys meanwhile. Notified with 1 (raw) or 2 (rle).
 static TaskHandle_t shot_task_handle;
@@ -658,6 +710,8 @@ static void console_task(void *arg)
             if (shot_task_handle) xTaskNotify(shot_task_handle, line[4] ? 2 : 1, eSetValueWithOverwrite);
         }
         else if (!strncmp(line, "page ", 5)) display_show_page(atoi(line + 5));
+        else if (!strcmp(line, "survey")) survey_start();
+        else if (!strncmp(line, "radio move ", 11)) radio_move(atoi(line + 11));
         else if (!strncmp(line, "key ", 4)) console_key(line + 4);
         else if (!strcmp(line, "keys")) {
             for (int k = 1; k < KEY_COUNT; k++) printf("%s ", ctl_key_name((ctl_key_t)k));
@@ -747,7 +801,7 @@ static void console_task(void *arg)
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, wled slot look|pal S N, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: survey, radio move N, next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, wled slot look|pal S N, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
     }
 }
 
@@ -963,6 +1017,8 @@ void app_main(void)
             .channel = st.channel,
             .locked = st.locked,
             .anchoring = st.anchoring,
+            .leading = st.leading,
+            .group = st.group,
             .rx = st.rx,
             .tx = st.tx,
             .tx_fail = st.tx_fail,
@@ -1030,7 +1086,8 @@ void app_main(void)
                      (unsigned long)ws.stalls_total);
         }
         ESP_LOGI(TAG, "ch %d%s | %s | %s | radio rx %lu tx %lu fail %lu | live %d/%d standby %d/%d %s%s | keypads %d",
-                 st.channel, st.anchoring ? " (anchor)" : st.locked ? "" : " (scanning)", eyes_s, wled_s,
+                 st.channel, st.anchoring ? " (anchor)" : st.leading ? " (searching, leading)" : st.group ? " (searching with a leader)"
+                 : st.locked ? "" : " (scanning)", eyes_s, wled_s,
                  (unsigned long)st.rx, (unsigned long)st.tx, (unsigned long)st.tx_fail, c.live.body, c.live.eyes,
                  c.standby.body, c.standby.eyes, ctl_target_name(c.target), c.locked ? " LOCKED" : "", ds.keypads_found);
         if (pw.have_charger || pw.have_monitor || pw.sim) log_power();
