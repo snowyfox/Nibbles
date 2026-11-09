@@ -69,11 +69,12 @@ def port_nets(din, dout):
     return {"1": "GND", "2": "+3V3", "3": "SDA", "4": "SCL", "5": "INT", "6": "+5V", "7": din, "8": dout}
 
 
-def key_board(n, name, title):
-    """A column of n keys. PCB coordinates: x across (0 = centre), y down from the top edge."""
+def key_board(n, name, title, chain=True):
+    """A column of n keys. PCB coordinates: x across (0 = centre), y down from the top edge.
+    chain=False is the original hub version (one connector, J1 to the keypad hub), kept for key_column."""
     yk = [KEY1_Y + PITCH * i for i in range(n)]
     y0 = yk[-1] + 8.4            # electronics block starts below the last key's LED
-    length = y0 + 22.3
+    length = y0 + (34.3 if chain else 22.3)   # the daisy chain adds J2 and the buffer below J1
     P = []
     # schematic: keys and LEDs in two rows of columns, the expander and connector on the left
     for i in range(n):
@@ -90,8 +91,6 @@ def key_board(n, name, title):
         P.append(Part(f"C{k + 10}", "Device:C", "100nF", C0603, {"1": "+5V", "2": "GND"},
                       (sx, sy + 55.88), (-5.9, yk[i] + 5.6, 90, "B"), lcsc="C14663"))
     P += [
-        Part("J1", "Connector_Generic:Conn_01x08", "Hub (JST-GH 8)", GH8, port_nets("LED_DIN", "LED_DOUT"),
-             (38.1, 63.5), (0, y0 + 18.6, 0, "B"), lcsc="C133062", mpn="BM08B-GHS-TBT"),
         Part("U1", "Interface_Expansion:TCA9534", "TCA9534APWR", "Package_SO:TSSOP-16_4.4x5mm_P0.65mm",
              {"1": "ADDR0", "2": "ADDR1", "3": "ADDR2", "4": "KEY1", "5": "KEY2", "6": "KEY3", "7": "KEY4",
               "8": "GND", "9": "KEY5", "10": "KEY6", "11": "KEY7", "12": "KEY8", "13": "INT", "14": "SCL",
@@ -107,9 +106,25 @@ def key_board(n, name, title):
              lcsc="C14663"),
         Part("C2", "Device:C", "10uF", C0805, {"1": "+5V", "2": "GND"}, (152.4, 63.5), (4.8, y0 + 11.0, 0, "B"),
              lcsc="C15850"),
-        Part("R1", "Device:R", "100R", R0603, {"1": "LED_LAST", "2": "LED_DOUT"}, (162.56, 63.5),
+        Part("R1", "Device:R", "100R", R0603, {"1": "LED_LAST", "2": "LED_OUT" if chain else "LED_DOUT"}, (162.56, 63.5),
              (1.0, y0 + 10.6, 0, "B"), lcsc="C22775"),
     ]
+    # J1 where the hub connector was (its routing kept), J2 and the buffer in a strip below it
+    if not chain:
+        P.insert(3 * n, Part("J1", "Connector_Generic:Conn_01x08", "Hub (JST-GH 8)", GH8,
+                             port_nets("LED_DIN", "LED_DOUT"), (38.1, 63.5), (0, y0 + 18.6, 0, "B"),
+                             lcsc="C133062", mpn="BM08B-GHS-TBT"))
+    for q in chain_parts(0.0, 0.0, y0 + 18.6, 0.0, 38.1) if chain else []:
+        if q.ref == "J1":
+            q.pcb = (0, y0 + 18.6, 0, "B")
+        elif q.ref == "J2":
+            q.pcb = (0, y0 + 30.6, 0, "B")
+            q.sch = (241.3, 63.5)
+        else:
+            q.sch = (q.sch[0] + 152.4, q.sch[1] + 165.1)
+            q.pcb = {"U3": (0, y0 + 24.4, 90, "B"), "R2": (-4.0, y0 + 24.4, 90, "B"),
+                     "R3": (4.0, y0 + 24.4, 90, "B"), "C4": (6.5, y0 + 24.4, 90, "B")}[q.ref]
+        P.append(q)
     for a in range(3):
         P.append(Part(f"JP{a + 1}", "Jumper:SolderJumper_3_Bridged12", f"A{a}", JP3,
                       {"1": "GND", "2": f"ADDR{a}", "3": "+3V3"}, (38.1 + 33.02 * a, 99.06),
@@ -127,13 +142,109 @@ def key_board(n, name, title):
         "an SK6812MINI-E under each switch's LED window (mounted on the back, shining through), and a TCA9534A",
         "(I2C 0x38-0x3F, set by JP1-JP3; default 0x38) reading the keys: pressed = low, INT on any change.",
         "Address: JP1-JP3 are A0-A2, bridged 1-2 (0) as made; cut 1-2 and bridge 2-3 for a 1. Give each board its own.",
+    ] + ([
+        "Daisy chain: J1 in, J2 out to the next board, straight through: 1 GND, 2 +3V3, 3 SDA, 4 SCL, 5 INT, 6 +5V,",
+        "7 LED data (in on J1, out on J2), 8 unused. U3 buffers the data in to 5 V (SK6812 needs 0.7 VDD), so any",
+        "board can be first, fed by the 3.49's GPIO 43.",
+    ] if chain else [
         "J1 to the keypad hub (JST-GH 8): 1 GND, 2 +3V3, 3 SDA, 4 SCL, 5 INT, 6 +5V, 7 LED data in, 8 LED data out.",
         "The 3.49 drives the LED data (GPIO 43 via the hub's 5 V buffer); the chain runs through every board in turn.",
-    ]
+    ])
     if n < 8:
         notes.append(f"P{n}-P7 are unused, held high by RN1/RN2.")
     return dict(name=name, title=title, parts=P, notes=notes, outline=("rect", -WIDTH / 2, 0, WIDTH / 2, length),
                 key_y=yk)
+
+
+def chain_parts(x_in, x_out, yb, xb, sch_x, cref="C4"):
+    """The daisy-chain end of a key board: J1 in and J2 out (straight through, GH8 pinout as above, pin 8
+    unused), and a 5 V buffer for the LED data in (U3), so any board can be first in the chain."""
+    return [
+        Part("J1", "Connector_Generic:Conn_01x08", "In (JST-GH 8)", GH8,
+             {"1": "GND", "2": "+3V3", "3": "SDA", "4": "SCL", "5": "INT", "6": "+5V", "7": "LED_IN"},
+             (sch_x, 63.5), (x_in, yb, 0, "B"), lcsc="C133062", mpn="BM08B-GHS-TBT", nc={"8"}),
+        Part("J2", "Connector_Generic:Conn_01x08", "Out (JST-GH 8)", GH8,
+             {"1": "GND", "2": "+3V3", "3": "SDA", "4": "SCL", "5": "INT", "6": "+5V", "7": "LED_OUT"},
+             (sch_x + 25.4, 63.5), (x_out, yb, 0, "B"), lcsc="C133062", mpn="BM08B-GHS-TBT", nc={"8"}),
+        Part("U3", "74xGxx:74AHCT1G125", "SN74AHCT1G125DBVR", "Package_TO_SOT_SMD:SOT-23-5",
+             {"1": "GND", "2": "LED_IN", "3": "GND", "4": "LED_BUF", "5": "+5V"},
+             (sch_x + 50.8, 63.5), (xb, yb - 5.5, 0, "B"), lcsc="C7484", mpn="SN74AHCT1G125DBVR"),
+        Part("R2", "Device:R", "100k", R0603, {"1": "LED_IN", "2": "GND"}, (sch_x + 50.8, 99.06),
+             (xb - 3.5, yb - 5.5, 90, "B"), lcsc="C25803"),
+        Part("R3", "Device:R", "100R", R0603, {"1": "LED_BUF", "2": "LED_DIN"}, (sch_x + 63.5, 99.06),
+             (xb + 3.5, yb - 5.5, 90, "B"), lcsc="C22775"),
+        Part(cref, "Device:C", "100nF", C0603, {"1": "+5V", "2": "GND"}, (sch_x + 76.2, 99.06),
+             (xb, yb - 9.0, 90, "B"), lcsc="C14663"),
+    ]
+
+
+DUAL_DX = 16.0      # the second column's offset: the same pitch as the keys
+
+
+def dual_board():
+    """Two columns of 8 keys at 16 mm both ways, a TCA9534A per column, daisy-chain in and out.
+    Column A at x = 0 (keys 1-8, top down), column B at x = 16 (keys 9-16). The LEDs chain down
+    column A, then down column B, so LED order = key order."""
+    n = 8
+    yk = [KEY1_Y + PITCH * i for i in range(n)]
+    y0 = yk[-1] + 8.4
+    length = y0 + 26.5
+    P = []
+    for c in range(2):
+        ox = DUAL_DX * c
+        for i in range(n):
+            k = c * n + i + 1
+            sx = 38.1 + 40.64 * (i % 4) + 182.88 * c
+            sy = 127.0 + 76.2 * (i // 4)
+            P.append(Part(f"SW{k}", "Switch:SW_Push", "Kailh Box Navy", HOTSWAP, {"1": "GND", "2": f"KEY{k}"},
+                          (sx, sy), (ox, yk[i], 0, "F"), lcsc="C41430893", mpn="Kailh CPG151101S11 socket"))
+            P.append(Part(f"D{k}", "LED:SK6812MINI-E", "SK6812MINI-E", LEDFP,
+                          {"1": "GND", "2": "LED_DIN" if k == 1 else f"LED{k - 1}", "3": "+5V",
+                           "4": "LED_LAST" if k == 2 * n else f"LED{k}"},
+                          (sx, sy + 25.4), (ox, yk[i] + 5.08, 180, "B"), lcsc="C5149201", mpn="SK6812MINI-E"))
+            P.append(Part(f"C{k + 10}", "Device:C", "100nF", C0603, {"1": "+5V", "2": "GND"},
+                          (sx, sy + 55.88), (ox - 5.9, yk[i] + 5.6, 90, "B"), lcsc="C14663"))
+        u = f"U{c + 1}"
+        kk = c * n
+        P.append(Part(u, "Interface_Expansion:TCA9534", "TCA9534APWR", "Package_SO:TSSOP-16_4.4x5mm_P0.65mm",
+                      {"1": f"ADDR{3 * c}", "2": f"ADDR{3 * c + 1}", "3": f"ADDR{3 * c + 2}", "4": f"KEY{kk + 1}",
+                       "5": f"KEY{kk + 2}", "6": f"KEY{kk + 3}", "7": f"KEY{kk + 4}", "8": "GND",
+                       "9": f"KEY{kk + 5}", "10": f"KEY{kk + 6}", "11": f"KEY{kk + 7}", "12": f"KEY{kk + 8}",
+                       "13": "INT", "14": "SCL", "15": "SDA", "16": "+3V3"},
+                      (76.2 + 182.88 * c, 330.2), (ox, y0 + 4.4, 90, "B"), lcsc="C206010", mpn="TCA9534APWR"))
+        for h in range(2):
+            P.append(Part(f"RN{2 * c + h + 1}", "Device:R_Pack04", "10k x4", "Resistor_SMD:R_Array_Convex_4x0603",
+                          {"1": f"KEY{kk + 4 * h + 1}", "2": f"KEY{kk + 4 * h + 2}", "3": f"KEY{kk + 4 * h + 3}",
+                           "4": f"KEY{kk + 4 * h + 4}", "5": "+3V3", "6": "+3V3", "7": "+3V3", "8": "+3V3"},
+                          (106.68 + 20.32 * h + 182.88 * c, 330.2), (ox - 4.6 + 9.2 * h, y0 + 10.0, 0, "B"),
+                          lcsc="C29718", mpn="4D03WGJ0103T5E"))
+        P.append(Part(f"C{2 * c + 1}", "Device:C", "100nF", C0603, {"1": "+3V3", "2": "GND"},
+                      (152.4 + 182.88 * c, 330.2), (ox + 3.7 - 7.4 * c, y0 + 4.4, 90, "B"), lcsc="C14663"))
+        for a in range(3):
+            P.append(Part(f"JP{3 * c + a + 1}", "Jumper:SolderJumper_3_Bridged12", f"{u} A{a}", JP3,
+                          {"1": "GND", "2": f"ADDR{3 * c + a}", "3": "+3V3"}, (38.1 + 33.02 * a + 182.88 * c, 375.92),
+                          (ox - 4.6 + 4.6 * a, y0 + 13.6, 0, "B"), bom=False))
+    P.append(Part("C2", "Device:C", "10uF", C0805, {"1": "+5V", "2": "GND"}, (200.66, 63.5),
+                  (DUAL_DX / 2, y0 + 4.4, 90, "B"), lcsc="C15850"))
+    P.append(Part("R1", "Device:R", "100R", R0603, {"1": "LED_LAST", "2": "LED_OUT"}, (213.36, 63.5),
+                  (DUAL_DX + 6.5, y0 + 17.2, 0, "B"), lcsc="C22775"))
+    P += chain_parts(-1.6, DUAL_DX + 1.6, y0 + 22.5, DUAL_DX / 2, 38.1)
+    for i, (x, y) in enumerate(((-6.5, 2.8), (DUAL_DX + 6.5, 2.8), (-6.5, y0 + 2.6), (DUAL_DX + 6.5, y0 + 2.6))):
+        P.append(Part(f"H{i + 1}", "Mechanical:MountingHole", "M2", "MountingHole:MountingHole_2.2mm_M2", {},
+                      (241.3 + 12.7 * i, 63.5), (x, y, 0, "F"), bom=False))
+    notes = [
+        "Key board, 16 keys: two columns of 8 Kailh Box Navy switches (MX pins) in Kailh hotswap sockets on the back,",
+        f"{PITCH:g} mm pitch both ways, an SK6812MINI-E under each switch's LED window (on the back, shining through).",
+        "U1 reads column A (keys 1-8, top down), U2 column B (keys 9-16): TCA9534A, pressed = low, INT on any change.",
+        "Addresses 0x38-0x3F: JP1-JP3 are U1's A0-A2, JP4-JP6 U2's, all bridged 1-2 (0) as made; cut 1-2 and bridge",
+        "2-3 for a 1. Every expander in the chain needs its own address (U2: cut JP4 to 2-3 for 0x39).",
+        "Daisy chain: J1 in, J2 out to the next board, straight through: 1 GND, 2 +3V3, 3 SDA, 4 SCL, 5 INT, 6 +5V,",
+        "7 LED data (in on J1, out on J2), 8 unused. U3 buffers the data in to 5 V (SK6812 needs 0.7 VDD), so any",
+        "board can be first, fed by the 3.49's GPIO 43. The LEDs run down column A, then down column B.",
+    ]
+    return dict(name="key_dual", title="Key board (16 keys)", parts=P, notes=notes,
+                # 1 mm wider each side than one column's board: room for the KEY lines along the edges
+                outline=("rect", -WIDTH / 2 - 1.0, 0, DUAL_DX + WIDTH / 2 + 1.0, length), key_y=yk, paper="A2")
 
 
 def hub_board():
@@ -354,7 +465,7 @@ def write_schematic(B, d, root):
         items.append(["text", Q(line), ["exclude_from_sim", "no"], ["at", "25.4", f(15.24 + 3.81 * i), "0"],
                       ["effects", ["font", ["size", "2", "2"]], ["justify", "left", "bottom"]], ["uuid", nid("t")]])
     root_node = ["kicad_sch", ["version", "20250114"], ["generator", Q("nibbles")], ["generator_version", Q("9.0")],
-                 ["uuid", Q(root)], ["paper", Q("A3")],
+                 ["uuid", Q(root)], ["paper", Q(B.get("paper", "A3"))],
                  ["title_block", ["title", Q(B["title"])], ["company", Q("Nibbles")],
                   ["comment", "1", Q("Generated by tools/hardware/make_keypad_kicad.py; see hardware/keypad/README.md")]],
                  ["lib_symbols"] + list(syms.values())] + items + \
@@ -490,9 +601,11 @@ def build(B):
     print(f"{B['name']}: {np_} parts, {nn} nets")
 
 
-BOARDS = {"key_column": lambda: key_board(8, "key_column", "Key column (8 keys)"),
+BOARDS = {"key_column": lambda: key_board(8, "key_column", "Key column (8 keys)", chain=False),
+          "key_column_chain": lambda: key_board(8, "key_column_chain", "Key column, daisy chain (8 keys)"),
           "key_upper": lambda: key_board(3, "key_upper", "Upper keypad (3 keys)"),
-          "key_hub": hub_board}
+          "key_hub": hub_board,
+          "key_dual": dual_board}
 
 if __name__ == "__main__":
     write_footprints()
