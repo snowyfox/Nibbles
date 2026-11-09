@@ -452,8 +452,8 @@ static void actions_task(void *arg)
             case ACTION_CTL:         do_ctl_action(&a.ctl); break;
             case DISPLAY_TAP_EYES:   send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_NEXT, 0); break;
             case DISPLAY_TAP_WLED:   send_cmd_to(NL_TARGET_WLED, NL_OP_PRESET_NEXT, 0); break;
-            // The eyes follow WLED's master brightness, so their slider sets that.
-            case DISPLAY_SLIDE_EYES: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
+            // The eyes are always at 100% (their slider is locked): nothing to send.
+            case DISPLAY_SLIDE_EYES: break;
             case DISPLAY_SLIDE_WLED: send_cmd_to(NL_TARGET_WLED, NL_OP_BRIGHTNESS_SET, a.value); break;
             case DISPLAY_TAP_PRESET: send_preset_both(a.value); break;
             case DISPLAY_SET_AUTO:   send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, a.value); break;

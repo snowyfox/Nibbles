@@ -1910,7 +1910,7 @@ static void ui_update(const display_status_t *s)
                                                             : ((e->flags & NL_EYE_AUTO_CYCLE) ? "auto" : "held"),
                               e->fps_x10[0] / 10, e->fps_x10[0] % 10, e->fps_x10[1] / 10, e->fps_x10[1] % 10,
                               (int)(e->tempo_bpm + 0.5f));
-        set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, true);
+        set_slider(eyes_card.bar, (e->brightness * 255 + 50) / 100, false);   // the eyes stay at 100%: shown, not set
         if (esp_timer_get_time() >= slider_hold_until) {  // the preset page controls follow the eyes
             if (e->flags & NL_EYE_AUTO_CYCLE) lv_obj_add_state(auto_switch, LV_STATE_CHECKED);
             else lv_obj_remove_state(auto_switch, LV_STATE_CHECKED);

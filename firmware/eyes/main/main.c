@@ -31,36 +31,8 @@ typedef struct {
     int64_t rx_us;  // when it arrived, to measure how soon it shows
 } bump_item_t;
 
-// WLED's master brightness, from its telemetry: the eyes follow it, so one
-// control dims the whole shark. -1 until heard.
-static portMUX_TYPE wled_lock = portMUX_INITIALIZER_UNLOCKED;
-static int wled_bri_pct = -1;
-static int64_t wled_bri_us;
-
-// The brightness the eyes should have now: WLED's (0 while it is off), or
-// 100% when WLED hasn't been heard for WLED_BRI_TIMEOUT_MS.
-static int wanted_brightness(int64_t now)
-{
-    taskENTER_CRITICAL(&wled_lock);
-    const int pct = wled_bri_pct;
-    const int64_t at = wled_bri_us;
-    taskEXIT_CRITICAL(&wled_lock);
-    return pct >= 0 && now - at < WLED_BRI_TIMEOUT_MS * 1000LL ? pct : 100;
-}
-
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
-    if (h->type == NL_MSG_WLED_TELEMETRY && len == sizeof(nl_wled_telemetry_t) && h->role == NL_ROLE_WLED) {
-        nl_wled_telemetry_t t;
-        memcpy(&t, pl, sizeof(t));
-        int pct = t.on ? (t.bri * 100 + 127) / 255 : 0;
-        if (t.on && t.bri && pct == 0) pct = 1;  // on, however dim, is never black
-        taskENTER_CRITICAL(&wled_lock);
-        wled_bri_pct = pct;
-        wled_bri_us = esp_timer_get_time();
-        taskEXIT_CRITICAL(&wled_lock);
-        return;
-    }
     if (h->type == NL_MSG_AUDIO && len == sizeof(nl_audio_t) && h->role == NL_ROLE_WLED) {
         nl_audio_t a;
         memcpy(&a, pl, sizeof(a));
@@ -103,7 +75,7 @@ static void eye_task(void *arg)
     static eye_t eye;
     eye_init(&eye, esp_random());
 
-    int bright_pct = 100;  // then WLED's master brightness (the port eye: the leader's)
+    const int bright_pct = EYE_BRIGHTNESS_PCT;   // always; WLED's brightness doesn't change it (2026-11-09)
     render_set_brightness(bright_pct);
 
     int64_t last = esp_timer_get_time();
@@ -145,14 +117,6 @@ static void eye_task(void *arg)
             next_swap = now + (int64_t)PRESET_CYCLE_S * 1000000;
         }
 
-        // Brightness: the leader follows WLED's master brightness, the port eye
-        // matches the leader while linked.
-        const int want_bri = following ? shared.brightness : wanted_brightness(now);
-        if (want_bri != bright_pct && want_bri <= 100) {
-            bright_pct = want_bri;
-            render_set_brightness(bright_pct);
-            ESP_LOGI(TAG, "brightness %d%% (%s)", bright_pct, following ? "from the leader" : "WLED's");
-        }
 
         // A command from the radio. A preset chosen this way holds for a full cycle.
         nl_cmd_t cmd;

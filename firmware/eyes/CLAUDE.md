@@ -232,13 +232,11 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   (`nl_react_t`: each preset's choice, beats, peaks). Telemetry `flags`
   report auto-cycle, the reactivity mode and whether the preset on screen
   reacts to peaks (`NL_EYE_*`).
-- Brightness follows **WLED's master brightness**, so one control dims the
-  whole shark: the leader reads WLED's telemetry (`NL_MSG_WLED_TELEMETRY`,
-  2 Hz; brightness 0..255 → percent, 0 while WLED is off) and shares it in
-  `nl_eye_state_t.brightness`; the port eye matches it. 100% at power-on and
-  whenever WLED hasn't been heard for `WLED_BRI_TIMEOUT_MS` (30 s). Eye
-  brightness commands are refused (`NL_ACK_UNSUPPORTED`); the base sends its
-  eye brightness controls to WLED instead. Telemetry reports the level.
+- Brightness: **always 100%** (`EYE_BRIGHTNESS_PCT`; the user, 2026-11-09).
+  Until then the eyes followed WLED's master brightness; now WLED's
+  brightness, and WLED being off, don't change them. Eye brightness commands
+  are refused (`NL_ACK_UNSUPPORTED`). Telemetry and `nl_eye_state_t.brightness`
+  report 100.
 - Sound reactivity per preset (`preset_t.peak_beats`): most presets ripple
   and thump on each **beat** (`beat_count`); peak-reactive presets (Inferno,
   Toxic, Hypno Acid, Vortex Magma = presets 3, 9, 10, 18) do it on every
@@ -269,7 +267,7 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   rx/tx/fail and free internal heap.
 
 ### Controls
-None on the eyes themselves: brightness follows WLED (see the radio notes),
+None on the eyes themselves: brightness is fixed at 100% (see the radio notes),
 presets and reactivity come from the base.
 
 ## Debugging with real data
