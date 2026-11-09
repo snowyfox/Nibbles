@@ -704,7 +704,13 @@ class NibblesUsermod : public Usermod {
       if (sb.action == NL_BUMP_FLASH || sb.action == NL_BUMP_BLACKOUT) {
         String r = String(F("{\"id\":")) + SLOT_BUMP + F(",\"tt\":0,\"bump\":true,\"on\":false");
         if (sb.action == NL_BUMP_FLASH) r += String(F(",\"master\":")) + bumpBri;
-        queueSlotString(r + "}");
+        r += "}";
+        unqueueSlotString(sb.apply);   // it never showed: only the off (and master) is left to do
+        queueSlotString(r);
+        // Marked like a slot restore, so a preset bump starting next applies it
+        // before its snapshot: else the snapshot holds the flash or blackout and
+        // the preset bump's release brings it back (stuck on; 2026-11-09 bench).
+        slotRestoreQueued[SLOT_BUMP] = r;
       } else {
         unqueueSlotString(sb.apply);   // it never showed: nothing to undo but the restore
         queueSlotString(sb.restore);

@@ -290,7 +290,7 @@ the outcome of the last request.
   brightness command during a flash takes effect when it ends.
 - If a body preset lands during the bump, the bump slot comes straight back.
 - **Preset bumps** still save and restore the whole state, as before.
-- **Keys swapped quickly** (fixed 2026-11-09, built, not yet on the boards):
+- **Keys swapped quickly** (fixed 2026-11-09, on both brains, bench-tested):
   ending a bump could leave its look behind, as if LATCH had been pressed.
   - A preset bump's preset waits in the usermod's preset queue, and WLED
     applies a preset a loop after it's asked. If the bump ended first, the
@@ -301,7 +301,18 @@ the outcome of the last request.
     the slot while it still showed the old bump, because the old bump's
     restore was still queued. It now takes over that queued restore instead.
   - A preset bump replacing a palette or layer bump applies that bump's
-    queued restore before it saves the state.
+    queued restore before it saves the state. The same now goes for a flash
+    or blackout: holding FLASH, pressing a number, letting go of FLASH and
+    then the number left the flash (or blackout) on, because the number's
+    snapshot still held it. A flash that ends before it showed is also
+    dropped from the slot queue.
+  - Bench test (shark off, brains on USB): keys sent through the MIDI
+    bridge's `/api/key`, each brain's state read back over its serial
+    port with `{"v":true}`, and compared before and after each sequence.
+    Fixed overlaps at 250, 100 and 40 ms plus 30 random sequences of 24
+    presses over numbers, palettes, layers, flash and blackout: 51 of 51
+    came back to the starting state. Opening a brain's USB serial port
+    restarts it, so hold the ports open for the whole run.
   - The base's key logic was checked with 5,000 random overlapping key
     sequences (`test_overlapping_keys_never_latch`): it always ends every
     bump and never latches.
