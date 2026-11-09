@@ -244,11 +244,18 @@ class NibblesUsermod : public Usermod {
     int lastSeenPreset = -1;
     unsigned long panelOffSince = 0;
     // WLED holds one waiting preset; ours queue here, the next once the last has landed.
-    // Entries with bit 8 set apply without their eye settings.
+    // Entries with bit 8 set apply without their eye settings; bit 9 marks a body
+    // bump's own preset (a bump that ends drops those still queued, see bumpEnd).
     uint16_t presetQueue[4] = { 0 };
     uint8_t presetQueueLen = 0;
     uint8_t presetWaiting = 0;
+    bool presetWaitingBump = false;   // the preset on its way is a bump's
     unsigned long presetIssuedAt = 0;
+    // A bump that ended while its preset was still on its way: WLED applies a
+    // preset a loop later, so it would land over the restore. Restored again once
+    // it has (2026-11-09: keys swapped quickly left a bump's preset behind).
+    String lateRestore;
+    uint8_t lateRestorePreset = 0;
     bool eyesMuted = false;       // the preset being applied mustn't touch the eyes
     bool cmdNoEyes = false;       // the command being resolved had NL_PRESET_NO_EYES
     // Eye settings from a preset, on their way to the eyes.
@@ -469,6 +476,10 @@ class NibblesUsermod : public Usermod {
     // shows one and the one that puts its slot back. One for the body's bumps
     // (NL_TARGET_WLED), one for the fins' (NL_TARGET_FINS).
     struct SlotBump { bool on = false; uint8_t action = 0, slot = 0; String apply, restore; };
+    // A slot bump's restore that's queued but not applied yet: a bump that
+    // replaces it on the same slot goes back to that, not to the slot as it is
+    // now (still the old bump's look; 2026-11-09).
+    String slotRestoreQueued[SLOT_COUNT];
     SlotBump bodySlotBump, finSlotBump;
     uint8_t bumpBri = 0;                     // the master brightness to go back to after a flash
     String pendingSlots[4];                  // slot commands during a preset bump, for its end
@@ -602,6 +613,8 @@ class NibblesUsermod : public Usermod {
       // (a scene bump, or slot commands after a preset), so it goes first.
       if (presetQueueLen || presetWaiting) return;
       if (!applySlot(slotQueue[0])) return;   // JSON buffer busy: next time
+      for (unsigned i = 0; i < SLOT_COUNT; i++)
+        if (slotRestoreQueued[i].length() && slotRestoreQueued[i] == slotQueue[0]) slotRestoreQueued[i] = String();
       for (unsigned i = 1; i < slotQueueLen; i++) slotQueue[i - 1] = slotQueue[i];
       slotQueue[--slotQueueLen] = String();
     }
@@ -672,7 +685,7 @@ class NibblesUsermod : public Usermod {
           d[F("on")] = false;
         }
         sb.slot = sl;
-        sb.restore = captureSlot(sl);
+        sb.restore = slotRestoreQueued[sl].length() ? slotRestoreQueued[sl] : captureSlot(sl);
       } else {
         return false;
       }
@@ -693,7 +706,32 @@ class NibblesUsermod : public Usermod {
         if (sb.action == NL_BUMP_FLASH) r += String(F(",\"master\":")) + bumpBri;
         queueSlotString(r + "}");
       } else {
+        unqueueSlotString(sb.apply);   // it never showed: nothing to undo but the restore
         queueSlotString(sb.restore);
+        if (sb.slot < SLOT_COUNT) slotRestoreQueued[sb.slot] = sb.restore;
+      }
+    }
+
+    // Applies, now, the slot restores still queued (slot bumps that ended), so a
+    // state snapshot taken next doesn't keep their look (a palette bump replaced
+    // by a preset bump would otherwise come back on its release; 2026-11-09).
+    void flushSlotRestores() {
+      for (unsigned sl = 0; sl < SLOT_COUNT; sl++) {
+        if (!slotRestoreQueued[sl].length()) continue;
+        const String r = slotRestoreQueued[sl];
+        if (!applySlot(r)) continue;   // JSON buffer busy: it stays queued
+        unqueueSlotString(r);
+        slotRestoreQueued[sl] = String();
+      }
+    }
+
+    void unqueueSlotString(const String &r) {
+      if (!r.length()) return;
+      for (unsigned i = 0; i < slotQueueLen; i++) {
+        if (slotQueue[i] != r) continue;
+        for (unsigned j = i + 1; j < slotQueueLen; j++) slotQueue[j - 1] = slotQueue[j];
+        slotQueue[--slotQueueLen] = String();
+        return;
       }
     }
 
@@ -1896,6 +1934,7 @@ class NibblesUsermod : public Usermod {
     // overlay slot too: a state restore doesn't remove a segment it added).
     void sceneBegin(const nl_bump_t &b) {
       if (!strip.isMatrix) return;   // no slots without the 2D map
+      flushSlotRestores();
       haveSaved = saveState();
       savedPreset = currentPreset;
       finAtBump = finPreset;
@@ -1905,7 +1944,7 @@ class NibblesUsermod : public Usermod {
       bumpCount++;
       refreshPresets();
       const uint8_t ps = nl_scene_arg_preset(b.arg);
-      if (ps && presetExists(ps)) queuePreset(ps);
+      if (ps && presetExists(ps)) queuePreset(ps, true, true);
       sceneSlots(b, 0, 2, sceneQueued);
     }
 
@@ -1944,13 +1983,14 @@ class NibblesUsermod : public Usermod {
         if (slotBumpStart(b, bodySlotBump)) { bumpCount++; return; }
         if (b.action == NL_BUMP_PALETTE || b.action == NL_BUMP_LAYER) return;   // no slots here (1D)
       }
+      flushSlotRestores();   // the snapshot mustn't hold a slot bump that just ended
       haveSaved = saveState();
       savedPreset = currentPreset;
       finAtBump = finPreset;
       bumpCount++;
       if (b.action == NL_BUMP_PRESET) {
         refreshPresets();
-        if (presetExists(b.arg)) queuePreset(b.arg);
+        if (presetExists(b.arg)) queuePreset(b.arg, true, true);
         return;
       }
       // Instant change (tt = transition 0 for this call only), every segment.
@@ -1974,6 +2014,7 @@ class NibblesUsermod : public Usermod {
         return;
       }
       if (sceneOn) unqueueSlots(sceneQueued);
+      dropBumpPresets();   // a bump's preset that never got to apply mustn't after the restore
       if (!haveSaved) { sceneOn = false; return; }
       haveSaved = false;
       bool refin = finPreset != finAtBump;   // the fins changed preset during the bump
@@ -1995,6 +2036,10 @@ class NibblesUsermod : public Usermod {
         applyJson(json);
         currentPreset = savedPreset;  // restoring the state clears it; it's the same look
         lastSeenPreset = currentPreset;
+        if (presetWaiting && presetWaitingBump) {   // the bump's preset may still land over this
+          lateRestore = json;
+          lateRestorePreset = savedPreset;
+        }
         if (sceneOn) {
           memcpy(slotLook, sceneLooks, sizeof(sceneLooks));
           queueSlotString(sceneOverRestore);
@@ -2058,21 +2103,46 @@ class NibblesUsermod : public Usermod {
 
     // Our preset applies, one at a time (WLED keeps a single waiting preset).
     // noEyes: apply it without its eye settings (body only, bumps, fin presets).
-    void queuePreset(uint8_t id, bool noEyes = true) {
+    void queuePreset(uint8_t id, bool noEyes = true, bool fromBump = false) {
       if (!presetExists(id)) { refreshPresets(); if (!presetExists(id)) return; }
-      const uint16_t e = id | (noEyes ? 0x100 : 0);
+      const uint16_t e = id | (noEyes ? 0x100 : 0) | (fromBump ? 0x200 : 0);
       if (presetQueueLen && presetQueue[presetQueueLen - 1] == e) return;
       const unsigned cap = sizeof(presetQueue) / sizeof(presetQueue[0]);
       if (presetQueueLen == cap) memmove(presetQueue, presetQueue + 1, --presetQueueLen * sizeof(presetQueue[0]));
       presetQueue[presetQueueLen++] = e;
     }
 
+    // Takes a body bump's own presets out of the queue (those not yet applied).
+    void dropBumpPresets() {
+      unsigned n = 0;
+      for (unsigned i = 0; i < presetQueueLen; i++)
+        if (!(presetQueue[i] & 0x200)) presetQueue[n++] = presetQueue[i];
+      presetQueueLen = n;
+    }
+
     void presetQueueLoop(unsigned long now) {
       if (presetWaiting && currentPreset != presetWaiting && now - presetIssuedAt < 300) return;  // not landed yet
       presetWaiting = 0;
+      presetWaitingBump = false;
       eyesMuted = false;
+      if (lateRestore.length()) {   // an ended bump's preset has landed (or never will): restore again
+        // Unless a bump that saved the state is on now: it saved the restored
+        // state, and its own preset is queued after the late one.
+        if (!haveSaved) {
+          applyJson(lateRestore);
+          currentPreset = lateRestorePreset;
+          lastSeenPreset = currentPreset;
+          for (SlotBump *sb : { &bodySlotBump, &finSlotBump })   // a slot bump held now goes back over it
+            if (sb->on) queueSlotString(sb->apply);
+#ifdef NIBBLES_DEBUG
+          Serial.printf("nibbles: restored again after a late bump preset\n");
+#endif
+        }
+        lateRestore = String();
+      }
       if (!presetQueueLen) return;
       presetWaiting = presetQueue[0] & 0xFF;
+      presetWaitingBump = presetQueue[0] & 0x200;
       eyesMuted = presetQueue[0] & 0x100;   // read by readFromJsonState while WLED applies it
       memmove(presetQueue, presetQueue + 1, --presetQueueLen * sizeof(presetQueue[0]));
       presetIssuedAt = now;

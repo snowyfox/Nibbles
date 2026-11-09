@@ -290,6 +290,21 @@ the outcome of the last request.
   brightness command during a flash takes effect when it ends.
 - If a body preset lands during the bump, the bump slot comes straight back.
 - **Preset bumps** still save and restore the whole state, as before.
+- **Keys swapped quickly** (fixed 2026-11-09, built, not yet on the boards):
+  ending a bump could leave its look behind, as if LATCH had been pressed.
+  - A preset bump's preset waits in the usermod's preset queue, and WLED
+    applies a preset a loop after it's asked. If the bump ended first, the
+    preset landed over the restore. Bump presets are now tagged in the
+    queue and dropped when the bump ends. If one is already on its way, the
+    restore is applied again once it has landed.
+  - A palette or layer bump that replaced another on the same slot captured
+    the slot while it still showed the old bump, because the old bump's
+    restore was still queued. It now takes over that queued restore instead.
+  - A preset bump replacing a palette or layer bump applies that bump's
+    queued restore before it saves the state.
+  - The base's key logic was checked with 5,000 random overlapping key
+    sequences (`test_overlapping_keys_never_latch`): it always ends every
+    bump and never latches.
 
 ## Eye settings in presets (2026-10-28; the usermod part not yet built or tested)
 

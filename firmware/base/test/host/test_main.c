@@ -1017,6 +1017,62 @@ static void test_power_math(void)
     CHECK(ts_cell_tenths_c(0) == INT16_MIN);
 }
 
+// Random overlapping presses with LATCH never touched: once every key is up, no
+// bump may still be on, and nothing may have been made permanent (the user saw
+// keys swapped quickly leave a preset behind as if latched, 2026-11-09).
+static uint32_t rng = 12345;
+static uint32_t rnd(uint32_t n) { rng = rng * 1103515245u + 12345u; return (rng >> 16) % n; }
+
+static void test_overlapping_keys_never_latch(void)
+{
+    static const ctl_key_t pool[] = { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM9, KEY_FLASH, KEY_BLACKOUT,
+                                      KEY_TAKE, KEY_BODY, KEY_EYES, KEY_FINS, KEY_ALL, KEY_MOD_PALETTE, KEY_MOD_LAYER,
+                                      (ctl_key_t)(KEY_PRESET1 + 4), (ctl_key_t)(KEY_LAYER1 + 1), (ctl_key_t)(KEY_PALETTE1 + 2) };
+    const int npool = sizeof(pool) / sizeof(pool[0]);
+    int bad_end = 0, bad_perm = 0, first_fail = -1;
+    for (int run = 0; run < 5000; run++) {
+        ctl_t c;
+        ctl_init(&c, 0);
+        live(&c, 1, 1, 1);
+        layers(&c, 3, 4, 0, 0);
+        c.standby.body = 7; c.standby.eyes = 7; c.standby.fins = 2; c.standby_set = true;
+        bool down[KEY_COUNT] = { 0 };
+        bool on[8] = { 0 }, perm = false;
+        const int steps = 2 + (int)rnd(12);
+        for (int i = 0; i < steps * 2; i++) {
+            const ctl_key_t k = pool[rnd(npool)];
+            const int n = down[k] ? release(&c, k) : press(&c, k);
+            down[k] = !down[k];
+            for (int j = 0; j < n; j++) {
+                const ctl_action_t *a = &acts[j];
+                if (a->type == ACT_BUMP) on[a->target & 7] = true;
+                if (a->type == ACT_BUMP_END) on[a->target & 7] = false;
+                if (a->type == ACT_AB_HOLD) on[7] = a->value;
+                if (a->type == ACT_PRESET || a->type == ACT_SLOT_LOOK || a->type == ACT_SLOT_PALETTE || a->type == ACT_AB_TAKE) perm = true;
+            }
+        }
+        for (int k = 0; k < KEY_COUNT; k++)
+            if (down[k]) {
+                const int n = release(&c, (ctl_key_t)k);
+                for (int j = 0; j < n; j++) {
+                    const ctl_action_t *a = &acts[j];
+                    if (a->type == ACT_BUMP) on[a->target & 7] = true;
+                    if (a->type == ACT_BUMP_END) on[a->target & 7] = false;
+                    if (a->type == ACT_AB_HOLD) on[7] = a->value;
+                    if (a->type == ACT_PRESET || a->type == ACT_SLOT_LOOK || a->type == ACT_SLOT_PALETTE || a->type == ACT_AB_TAKE) perm = true;
+                }
+            }
+        bool any = false;
+        for (int s = 0; s < 8; s++) any |= on[s];
+        if (any) bad_end++;
+        if (perm) bad_perm++;
+        if ((any || perm) && first_fail < 0) first_fail = run;
+    }
+    if (bad_end || bad_perm) printf("overlap: %d runs left a bump on, %d made something permanent (first run %d)\n", bad_end, bad_perm, first_fail);
+    CHECK(bad_end == 0);
+    CHECK(bad_perm == 0);
+}
+
 int main(void)
 {
     test_standby_fills_from_live();
@@ -1045,6 +1101,7 @@ int main(void)
     test_eye_thumb();
     test_charger_limit();
     test_ab_take();
+    test_overlapping_keys_never_latch();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;
