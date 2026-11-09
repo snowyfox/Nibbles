@@ -1,6 +1,6 @@
 Status,Part,Manufacturer,MPN,DigiKey PN,Mouser PN,Qty,Approx unit USD,Used for,DigiKey stock 2026-11-01,Notes
 Needed,JST-GH 2-pin housing,JST,GHR-02V-S,455-1592-ND,306-GHR-02V-S,10,0.07,"J4 NTC, J7 LEMO data/detect, J8 dock LED",0,"DigiKey out of stock (16 wk lead, rechecked 2026-11-04): buy at Mouser (~20k in stock per a 2026-11-04 search snapshot) or LCSC C160416 (~11k, sold in 20s); check the live page"
-Needed,JST-GH 6-pin housing,JST,GHR-06V-S,455-1596-ND,,5,0.16,"J9 and J11 keypad/I2C ports",40968,Out of stock at LCSC
-Needed,JST-GH 8-pin housing,JST,GHR-08V-S,455-1598-ND,306-GHR-08V-S,20,0.14,"Key boards, hub ports, J10",83738,
-Needed,Pre-crimped GH wire 12 in 28 AWG (socket both ends),JST,AGHGH28K305,455-3074-ND,,50,0.44,"Every GH cable, no crimper needed",270457,All black: mark pin 1. Cut one in half for two pigtails. Upper keypad needs a splice or crimped wire for 60-80 cm
+Have,JST-GH 6-pin housing,JST,GHR-06V-S,455-1596-ND,,5,0.16,"J9 and J11 keypad/I2C ports",40968,Out of stock at LCSC
+Have,JST-GH 8-pin housing,JST,GHR-08V-S,455-1598-ND,306-GHR-08V-S,20,0.14,"Key boards, hub ports, J10",83738,
+Have,Pre-crimped GH wire 12 in 28 AWG (socket both ends),JST,AGHGH28K305,455-3074-ND,,50,0.44,"Every GH cable, no crimper needed",270457,All black: mark pin 1. Cut one in half for two pigtails. Upper keypad needs a splice or crimped wire for 60-80 cm
 Confirm,Male header 1x40 2.54 mm breakaway,Sullins,PRPC040SAAN-RC,S1011EC-40-ND,,2,1.23,"3.49 to power board J6 (2 x 11 pins per 3.49), only if stacking rather than using J10",65645,2.5 mm insulation matches the 11 mm stack in the footprint
