@@ -247,6 +247,44 @@ def dual_board():
                 outline=("rect", -WIDTH / 2 - 1.0, 0, DUAL_DX + WIDTH / 2 + 1.0, length), key_y=yk, paper="A2")
 
 
+DUAL2_DX = WIDTH       # key_dual2: the second column one board-width over (18 mm; 16 would overlap copper)
+
+
+def dual2_board():
+    """key_dual2: key_column_chain twice, side by side on one board. Column B is an exact copy
+    of column A moved DUAL2_DX right, its references 100 up (SW101-108, U101, J101/J102, ...)
+    and its nets suffixed _B, apart from GND, which the two share. Each column keeps its own
+    J1/J2 (B: J101/J102); chain A's J2 to B's J101 with a short cable, or use them apart.
+    The PCB is made from key_column_chain's routed board (a session script), not laid out here."""
+    import copy, re
+    A = key_board(8, "key_dual2", "Key board, two chain columns (16 keys)")
+    def ref_b(r):
+        m = re.match(r"([A-Z]+)(\d+)$", r)
+        return f"{m.group(1)}{int(m.group(2)) + 100}"
+    def net_b(n):
+        return n if n == "GND" else f"{n}_B"
+    P = list(A["parts"])
+    for q in A["parts"]:
+        b = copy.copy(q)
+        b.ref = ref_b(q.ref)
+        b.nets = {k: net_b(v) for k, v in q.nets.items()}
+        b.sch = (q.sch[0] + 406.4, q.sch[1])   # a whole number of 1.27 mm grid steps
+        x, y, rot, side = q.pcb
+        b.pcb = (x + DUAL2_DX, y, rot, side)
+        if q.ref.startswith("JP"):
+            b.value = q.value
+        P.append(b)
+    notes = A["notes"] + [
+        "Two copies of the chain column side by side, 18 mm apart: column A on the left (refs as key_column_chain),",
+        "column B on the right (refs + 100, nets _B). Chain A's J2 to B's J101 with a short GH8 cable, or use them",
+        "apart. Give B its own address: cut JP101 to 2-3 for 0x39.",
+    ]
+    _, x0, y0, x1, y1 = A["outline"]
+    return dict(name="key_dual2", title="Key board, two chain columns (16 keys)", parts=P, notes=notes,
+                outline=("rect", x0, y0, x1 + DUAL2_DX, y1), key_y=A["key_y"], paper="A1",
+                flag_nets=("+3V3_B", "+5V_B"))
+
+
 def hub_board():
     """Two rows of JST-GH 8: J1 (in), J2, J3 on top, J4, J5 below; 48 x 24 mm."""
     P = [
@@ -461,6 +499,13 @@ def write_schematic(B, d, root):
         pwr[0] += 1
         place_symbol("power:PWR_FLAG", f"#FLG{pwr[0]:03d}", "PWR_FLAG", fx + 7.62, y, 0, power=True)
         fx += 25.4
+    for net in B.get("flag_nets", ()):   # supplies that are labels, not power symbols (key_dual2's _B)
+        y = 279.4
+        label(net, fx, y, 180)
+        wire((fx, y), (fx + 7.62, y))
+        pwr[0] += 1
+        place_symbol("power:PWR_FLAG", f"#FLG{pwr[0]:03d}", "PWR_FLAG", fx + 7.62, y, 0, power=True)
+        fx += 25.4
     for i, line in enumerate(B["notes"]):
         items.append(["text", Q(line), ["exclude_from_sim", "no"], ["at", "25.4", f(15.24 + 3.81 * i), "0"],
                       ["effects", ["font", ["size", "2", "2"]], ["justify", "left", "bottom"]], ["uuid", nid("t")]])
@@ -605,7 +650,8 @@ BOARDS = {"key_column": lambda: key_board(8, "key_column", "Key column (8 keys)"
           "key_column_chain": lambda: key_board(8, "key_column_chain", "Key column, daisy chain (8 keys)"),
           "key_upper": lambda: key_board(3, "key_upper", "Upper keypad (3 keys)"),
           "key_hub": hub_board,
-          "key_dual": dual_board}
+          "key_dual": dual_board,
+          "key_dual2": dual2_board}
 
 if __name__ == "__main__":
     write_footprints()

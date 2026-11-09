@@ -8,7 +8,11 @@ rerunning the script, which overwrites the project.
 
 Since 2026-11-08 the key boards **daisy-chain**: each has an IN (J1) and an
 OUT (J2) connector and its own 5 V buffer for the LED data, so no hub is
-needed. key_upper and key_column_chain are routed and DRC clean apart from
+needed. key_dual2 (2026-11-08) is key_column_chain's routed board twice over:
+column B is the same layout 18 mm to the right (16 mm would overlap the copper
+along the column edges), references + 100 and nets suffixed `_B` (GND shared).
+Chain A's J2 to B's J101 with a short GH8 cable; set B's address with JP101
+(cut to 2-3 for 0x39). key_upper and key_column_chain are routed and DRC clean apart from
 silkscreen. **key_dual is not finished:** autorouted (Freerouting) and cleared
 of edge-clearance errors, but KEY15's pull-up (RN4 pin 3), column A's +5V chain
 to the main +5V, and GND stitching for a few back-pour islands (6 starved
@@ -16,7 +20,8 @@ thermals) are still open; DRC lists them as unconnected.
 
 | Project | What | Size |
 |---|---|---|
-| `key_dual/` | 16 keys, two columns of 8 at 16 mm both ways, two TCA9534As, daisy chain | 36 x 160.4 mm |
+| `key_dual2/` | 16 keys: two complete key_column_chain columns side by side, 18 mm apart, each with its own J1/J2 (B: J101/J102); routed, DRC clean apart from silkscreen | 36 x 168.2 mm |
+| `key_dual/` | 16 keys at 16 mm both ways, two TCA9534As, one J1/J2: not finished (see below) | 36 x 160.4 mm |
 | `key_upper/` | 3 keys in one column, for the top of the pole's bottom segment, daisy chain | 18 x 88.2 mm |
 | `key_column_chain/` | 8 keys in one column, daisy chain | 18 x 168.2 mm |
 | `key_column/` | 8 keys in one column, the earlier hub version (one connector), kept as it was | 18 x 156.2 mm |

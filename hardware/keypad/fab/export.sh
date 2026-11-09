@@ -1,10 +1,10 @@
 #!/bin/zsh
-# Rebuild the JLCPCB files for one keypad board: ./export.sh key_dual (or key_upper, key_column_chain, key_column, key_hub).
+# Rebuild the JLCPCB files for one keypad board: ./export.sh key_dual2 (or key_dual, key_upper, key_column_chain, key_column, key_hub).
 # Close the board in KiCad first. BOARDS=n sets how many boards the LCSC order list is for (default 2).
 # Works on a copy, so the project files are never touched; zones are refilled on the copy.
 set -e
 here=${0:A:h}
-name=${1:?usage: export.sh key_dual|key_upper|key_column_chain|key_column|key_hub}
+name=${1:?usage: export.sh key_dual2|key_dual|key_upper|key_column_chain|key_column|key_hub}
 K=/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli
 KPY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 work=$(mktemp -d)
