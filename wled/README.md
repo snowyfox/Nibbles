@@ -503,12 +503,15 @@ sorts them by role into its Live and Standby sharks.
     without the controller's radio. TAKE, hold and fade tested this way.
   - While B hosts, its WLED settings show no network to join: don't save its Wi-Fi settings
     then.
-  - **Network moves** (2026-11-09, built, not yet on the brains): the base's survey page
+  - **Network moves** (2026-11-09, on both brains, bench-tested): the base's survey page
     broadcasts `NL_HOP_MOVE` (channel, moment). At that moment the host (no network to join,
     or B standing in) sets `apChannel` and reconnects, so its access point and ESP-NOW restart
     on the new channel; a joined brain sets `apChannel` too and reconnects 1.5 s later. The
     channel is saved (B saves it only once its network to join is back in the settings), and
     for 20 s B doesn't stand in as host. Phones on `Nibbles` drop and rejoin.
+    Bench: 1 -> 6 -> 1 with both brains and the base; A hosted on the new channel 1.1 s after
+    the tap, the base kept hearing WLED throughout, B (restarted just before by its USB port
+    opening, so it missed the hop) found A on the new channel by itself within 5 s.
 
 ### Wire link (built 2026-10-30; sending tested, receiving not yet)
 The plan (`docs/architecture.md`, "Two brains and the Standby preview") puts
