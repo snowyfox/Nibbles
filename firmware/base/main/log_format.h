@@ -8,7 +8,6 @@
 typedef struct {
     uint32_t t_s;                // since this boot
     uint32_t unix_time;          // real time, 0 if the clock isn't set
-    int sim;                     // 0 real; made up: 1 as a test, 2 used as if real (a build's setting)
     int pack_mv, pack_pct, pack_ma;
     const char *input;           // none, battery, usb
     int vbus_mv, ibus_ma, in_ma, ibat_ma, vsys_mv;
@@ -28,9 +27,9 @@ extern const char LOG_HEADER[];
 size_t log_row(char *out, size_t cap, const log_sample_t *s);
 
 // A row's real time and the pack's charge. False for the header, a row with no
-// real time or no charge reading, and test readings; rows used as if real only
-// count while as_real is true (a build with the simulation on).
-bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct, bool as_real);
+// real time or no charge reading, and rows from older builds' made-up readings
+// (the sim column, now always 0).
+bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct);
 
 // A past reading into a history of n columns, newest at n - 1, slice_s seconds each.
 void log_history_add(int8_t *cols, int n, float slice_s, uint32_t now, uint32_t t, int pct);

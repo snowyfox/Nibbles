@@ -25,22 +25,8 @@ static i2c_master_dev_handle_t bq, ina, exp_dev;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static power_status_t st;
 static volatile bool want_lights = true, want_pack = true, want_pole_off;
-#if CONFIG_NIBBLES_POWER_SIM_FAST
-#define CONFIGURED_SIM SIM_FAST
-#elif CONFIG_NIBBLES_POWER_SIM_REALISTIC
-#define CONFIGURED_SIM SIM_REALISTIC
-#else
-#define CONFIGURED_SIM SIM_OFF
-#endif
-static volatile sim_mode_t sim = CONFIGURED_SIM;
-static volatile bool sim_configured = CONFIGURED_SIM != SIM_OFF;
 
 i2c_master_bus_handle_t power_bus(void) { return bus; }
-void power_sim(sim_mode_t mode)
-{
-    sim_configured = false;
-    sim = mode;
-}
 void power_set_lights(bool on) { want_lights = on; }
 void power_set_pack(bool on) { want_pack = on; }
 
@@ -205,37 +191,6 @@ static bool exp_write(bool lights_off, bool pack_off)
     return wr8(exp_dev, 0x01, out) == ESP_OK && wr8(exp_dev, 0x03, (uint8_t)~(EXP_LIGHT_OFF | EXP_PACK_OFF)) == ESP_OK;
 }
 
-// ------------------------------------------------------------------ simulation
-static void simulate(power_status_t *s, sim_mode_t mode, double dt_s, double t_s)
-{
-    static sim_state_t state;
-    static sim_mode_t last;
-    if (mode != last) sim_reset(&state);
-    last = mode;
-    sim_reading_t r;
-    if (mode == SIM_FAST) sim_fast(t_s, &r);
-    else sim_realistic(&state, dt_s, &r);
-    s->sim = true;
-    s->have_charger = s->have_monitor = s->have_expander = true;
-    s->docked = r.docked;
-    s->charger_ok = r.charger_ok;
-    s->efuse_pg = r.efuse_pg;
-    s->chg_state = r.chg_state;
-    s->fault0 = r.fault0;
-    s->fault1 = r.fault1;
-    s->ts_flags = r.ts_flags;
-    s->vbus_mv = r.vbus_mv;
-    s->ibus_ma = r.ibus_ma;
-    s->vbat_mv = r.vbat_mv;
-    s->ibat_ma = r.ibat_ma;
-    s->vsys_mv = r.vsys_mv;
-    s->die_c10 = r.die_c10;
-    s->cell_c10 = r.cell_c10;
-    s->light_mv = r.light_mv;
-    s->light_ma = r.light_ma;
-    s->light_mw = r.light_mw;
-}
-
 // ------------------------------------------------------------------ task
 static void power_task(void *arg)
 {
@@ -245,111 +200,85 @@ static void power_task(void *arg)
     bool efuse_pg = false;
     int64_t next_probe = 0;
     bool lights_off = false, pack_off = false;
-    int64_t last_us = esp_timer_get_time();
-    int sim_answers = 0;
     int light_peak = 0, chg_limit_set = -1, chg_limit_input = INPUT_NONE;
     int64_t light_peak_until = 0;
-    if (sim_configured) ESP_LOGW(TAG, "SIMULATED readings (%s), used as if real", sim == SIM_FAST ? "fast" : "realistic");
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POWER_POLL_MS));
         const int64_t now = esp_timer_get_time();
         power_status_t s = { 0 };
         s.die_c10 = s.cell_c10 = INT16_MIN;
-        // A build's simulation gives way to a real board, until the next restart.
-        // A bare header can fake one answer, so it takes three probes in a row.
-        if (sim_configured && now >= next_probe) {
+        if (now >= next_probe) {   // look for anything missing every 2 s
             next_probe = now + 2000000;
-            const int who = present(BQ_ADDR) ? BQ_ADDR : present(INA_ADDR) ? INA_ADDR : present(EXP_ADDR) ? EXP_ADDR : 0;
-            sim_answers = who ? sim_answers + 1 : 0;
-            if (who) ESP_LOGW(TAG, "0x%02x answered a probe (%d of 3)", who, sim_answers);
-            if (sim_answers >= 3) {
-                ESP_LOGW(TAG, "a real power board answers: simulated readings off");
-                sim_configured = false;
-                sim = SIM_OFF;
-                next_probe = 0;
+            if (!bq_ok && present(BQ_ADDR)) {
+                bq_ok = true;
+                cfg_ok = bq_configure();
+                ESP_LOGI(TAG, "charger found");
+            }
+            if (!ina_ok && present(INA_ADDR)) ina_ok = ina_configure();
+            if (!exp_ok && present(EXP_ADDR)) {
+                exp_ok = exp_write(lights_off, pack_off);
+                if (exp_ok) ESP_LOGI(TAG, "expander found");
             }
         }
-        const sim_mode_t mode = sim;
-        if (mode != SIM_OFF) {
-            simulate(&s, mode, (now - last_us) / 1e6, now / 1e6);
-            s.sim_configured = sim_configured;
-            want_pole_off = pole_off_stays(want_pole_off, input_kind(s.vbus_mv));
-            s.lights_off = want_pole_off;
-            if (want_pole_off) s.light_ma = s.light_mw = 0;
-        } else {
-            if (now >= next_probe) {   // look for anything missing every 2 s
-                next_probe = now + 2000000;
-                if (!bq_ok && present(BQ_ADDR)) {
-                    bq_ok = true;
-                    cfg_ok = bq_configure();
-                    ESP_LOGI(TAG, "charger found");
-                }
-                if (!ina_ok && present(INA_ADDR)) ina_ok = ina_configure();
-                if (!exp_ok && present(EXP_ADDR)) {
-                    exp_ok = exp_write(lights_off, pack_off);
-                    if (exp_ok) ESP_LOGI(TAG, "expander found");
-                }
+        s.docked = gpio_get_level(PIN_DOCK_DET);
+        if (bq_ok) {
+            if (bq_read(&s)) {
+                bq_miss = 0;
+                last_bq = s;
+            } else if (give_up("charger", &bq_miss)) bq_ok = false;
+            else {   // the last good charger readings
+                s.chg_state = last_bq.chg_state;
+                s.ts_flags = last_bq.ts_flags;
+                s.fault0 = last_bq.fault0;
+                s.fault1 = last_bq.fault1;
+                s.ibus_ma = last_bq.ibus_ma;
+                s.ibat_ma = last_bq.ibat_ma;
+                s.vbus_mv = last_bq.vbus_mv;
+                s.vbat_mv = last_bq.vbat_mv;
+                s.vsys_mv = last_bq.vsys_mv;
+                s.cell_c10 = last_bq.cell_c10;
+                s.die_c10 = last_bq.die_c10;
+                s.docked |= last_bq.vbus_mv > 0;
             }
-            s.docked = gpio_get_level(PIN_DOCK_DET);
-            if (bq_ok) {
-                if (bq_read(&s)) {
-                    bq_miss = 0;
-                    last_bq = s;
-                } else if (give_up("charger", &bq_miss)) bq_ok = false;
-                else {   // the last good charger readings
-                    s.chg_state = last_bq.chg_state;
-                    s.ts_flags = last_bq.ts_flags;
-                    s.fault0 = last_bq.fault0;
-                    s.fault1 = last_bq.fault1;
-                    s.ibus_ma = last_bq.ibus_ma;
-                    s.ibat_ma = last_bq.ibat_ma;
-                    s.vbus_mv = last_bq.vbus_mv;
-                    s.vbat_mv = last_bq.vbat_mv;
-                    s.vsys_mv = last_bq.vsys_mv;
-                    s.cell_c10 = last_bq.cell_c10;
-                    s.die_c10 = last_bq.die_c10;
-                    s.docked |= last_bq.vbus_mv > 0;
-                }
+        }
+        if (ina_ok) {
+            if (ina_read(&s)) {
+                ina_miss = 0;
+                last_ina = s;
+            } else if (give_up("current monitor", &ina_miss)) ina_ok = false;
+            else {
+                s.light_mv = last_ina.light_mv;
+                s.light_ma = last_ina.light_ma;
+                s.light_mw = last_ina.light_mw;
             }
-            if (ina_ok) {
-                if (ina_read(&s)) {
-                    ina_miss = 0;
-                    last_ina = s;
-                } else if (give_up("current monitor", &ina_miss)) ina_ok = false;
-                else {
-                    s.light_mv = last_ina.light_mv;
-                    s.light_ma = last_ina.light_ma;
-                    s.light_mw = last_ina.light_mw;
-                }
-            }
-            // The pack is only ever switched off while the dock can run the lights.
-            want_pole_off = pole_off_stays(want_pole_off, bq_ok ? input_kind(s.vbus_mv) : INPUT_NONE);
-            const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = !want_pack && s.docked;
-            if (exp_ok) {
-                uint8_t in;
-                if (want_lights_off != lights_off || want_pack_off != pack_off) {
-                    exp_ok = exp_write(want_lights_off, want_pack_off);
-                    if (exp_ok) {
-                        lights_off = want_lights_off;
-                        pack_off = want_pack_off;
-                        ESP_LOGI(TAG, "lights %s, pack %s", lights_off ? "OFF" : "on", pack_off ? "OFF" : "on");
-                    }
-                }
+        }
+        // The pack is only ever switched off while the dock can run the lights.
+        want_pole_off = pole_off_stays(want_pole_off, bq_ok ? input_kind(s.vbus_mv) : INPUT_NONE);
+        const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = !want_pack && s.docked;
+        if (exp_ok) {
+            uint8_t in;
+            if (want_lights_off != lights_off || want_pack_off != pack_off) {
+                exp_ok = exp_write(want_lights_off, want_pack_off);
                 if (exp_ok) {
-                    if (rd(exp_dev, 0x00, &in, 1) == ESP_OK) {
-                        exp_miss = 0;
-                        efuse_pg = in & EXP_EFUSE_PG;
-                    } else if (give_up("expander", &exp_miss)) exp_ok = false;
-                    s.efuse_pg = efuse_pg;
+                    lights_off = want_lights_off;
+                    pack_off = want_pack_off;
+                    ESP_LOGI(TAG, "lights %s, pack %s", lights_off ? "OFF" : "on", pack_off ? "OFF" : "on");
                 }
             }
-            s.have_charger = bq_ok;
-            s.charger_ok = bq_ok && cfg_ok;
-            s.have_monitor = ina_ok;
-            s.have_expander = exp_ok;
-            s.lights_off = lights_off;
-            s.pack_off = pack_off;
+            if (exp_ok) {
+                if (rd(exp_dev, 0x00, &in, 1) == ESP_OK) {
+                    exp_miss = 0;
+                    efuse_pg = in & EXP_EFUSE_PG;
+                } else if (give_up("expander", &exp_miss)) exp_ok = false;
+                s.efuse_pg = efuse_pg;
+            }
         }
+        s.have_charger = bq_ok;
+        s.charger_ok = bq_ok && cfg_ok;
+        s.have_monitor = ina_ok;
+        s.have_expander = exp_ok;
+        s.lights_off = lights_off;
+        s.pack_off = pack_off;
         s.pole_off = want_pole_off;
         // The pack: the charger's battery reading if it's there; otherwise the
         // lights' input when not docked (then it is the pack, less the diode).
@@ -378,7 +307,7 @@ static void power_task(void *arg)
             light_peak_until = now + 3000000;
         }
         s.chg_limit_ma = charger_input_limit_ma((input_kind_t)s.input, light_peak);
-        if (bq_ok && !s.sim && s.chg_limit_ma != chg_limit_set && wr16(bq, 0x06, s.chg_limit_ma / 10) == ESP_OK) {
+        if (bq_ok && s.chg_limit_ma != chg_limit_set && wr16(bq, 0x06, s.chg_limit_ma / 10) == ESP_OK) {
             chg_limit_set = s.chg_limit_ma;
             ESP_LOGI(TAG, "charger input limit %d mA", chg_limit_set);
         }
@@ -388,7 +317,6 @@ static void power_task(void *arg)
         s.pack_pct = s.pack_mv ? pack_percent(s.pack_mv, -s.pack_ma) : -1;
         s.runtime_min = (!s.docked && s.pack_pct >= 0 && s.have_monitor) ? runtime_minutes(s.pack_pct, s.light_mw + BASE_LOAD_MW) : -1;
 
-        last_us = now;
         taskENTER_CRITICAL(&lock);
         st = s;
         taskEXIT_CRITICAL(&lock);

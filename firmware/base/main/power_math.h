@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 #define PACK_CELLS          4
-#define BASE_LOAD_W         2.0     // the base itself, in the simulated readings
 #define PACK_WH             80      // usable energy of the 4S1P Vapcell F63 pack (docs/power.md)
 #define PACK_MOHM           100     // pack, BMS, fuse and wiring to the board (estimate, docs/power.md)
 

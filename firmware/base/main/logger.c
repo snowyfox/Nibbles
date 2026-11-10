@@ -154,7 +154,7 @@ static void sample(log_sample_t *s)
     power_status_t p;
     power_get(&p);
     *s = (log_sample_t){
-        .t_s = (uint32_t)(esp_timer_get_time() / 1000000), .unix_time = rtc_now(), .sim = p.sim ? (p.sim_configured ? 2 : 1) : 0,
+        .t_s = (uint32_t)(esp_timer_get_time() / 1000000), .unix_time = rtc_now(),
         .pack_mv = p.pack_mv, .pack_pct = p.pack_pct, .pack_ma = p.pack_ma,
         .input = p.input == INPUT_SUPPLY ? "usb" : p.input == INPUT_BATTERY ? "battery" : "none",
         .vbus_mv = p.vbus_mv, .ibus_ma = p.ibus_ma, .in_ma = p.in_ma, .ibat_ma = p.ibat_ma, .vsys_mv = p.vsys_mv,
@@ -198,9 +198,6 @@ static void restore_graph(int previous)
 {
     const uint32_t now = rtc_now();
     if (!now || previous < 1) return;
-    power_status_t p;
-    power_get(&p);
-    const bool as_real = p.sim_configured;
     static int8_t cols[DISPLAY_GRAPH_COLUMNS];
     static char line[256];
     memset(cols, -1, sizeof(cols));
@@ -218,14 +215,14 @@ static void restore_graph(int previous)
         while (fgets(line, sizeof(line), f)) {
             uint32_t t;
             int pct;
-            if (!log_parse_charge(line, &t, &pct, as_real)) continue;
+            if (!log_parse_charge(line, &t, &pct)) continue;
             log_history_add(cols, DISPLAY_GRAPH_COLUMNS, 3600.0f / DISPLAY_GRAPH_COLUMNS, now, t, pct);
             used++;
         }
         fclose(f);
     }
     if (used) display_graph_restore(cols);
-    ESP_LOGI(TAG, "charge graph: %d rows restored (from L%05d back, as_real %d)", used, previous, as_real);
+    ESP_LOGI(TAG, "charge graph: %d rows restored (from L%05d back)", used, previous);
 }
 
 // ------------------------------------------------------------------ over USB

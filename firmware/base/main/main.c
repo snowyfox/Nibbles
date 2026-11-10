@@ -550,7 +550,7 @@ static void buttons_task(void *arg)
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 Live and Standby, 2 grid, 3 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
 // "leds on|off" (print the key LED colours when they change),
-// "sim off|on|fast|real" (made-up power readings; on = fast), "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
+// "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
 static void console_key(const char *args)
 {
     char name[16] = "";
@@ -574,9 +574,9 @@ static void log_power(void)
 {
     power_status_t p;
     power_get(&p);
-    ESP_LOGI(TAG, "power%s: charger %s%s, monitor %s, expander %s, %s; pack %d mV %d%% (%d mA), dock %d mV %d mA, "
+    ESP_LOGI(TAG, "power: charger %s%s, monitor %s, expander %s, %s; pack %d mV %d%% (%d mA), dock %d mV %d mA, "
              "%s; lights %d mV %d mA %d mW, eFuse %s%s; cells %d.%d C, die %d.%d C; faults %02x %02x, TS %x",
-             p.sim ? " (SIMULATED)" : "", p.have_charger ? "yes" : "no", p.have_charger && !p.charger_ok ? " (NOT SET UP)" : "",
+             p.have_charger ? "yes" : "no", p.have_charger && !p.charger_ok ? " (NOT SET UP)" : "",
              p.have_monitor ? "yes" : "no", p.have_expander ? "yes" : "no", p.docked ? "docked" : "not docked",
              p.pack_mv, p.pack_pct, p.ibat_ma, p.vbus_mv, p.ibus_ma, bq_charge_state_name((chg_state_t)p.chg_state),
              p.light_mv, p.light_ma, p.light_mw, p.efuse_pg ? "ok" : "off", p.lights_off ? ", LIGHTS OFF" : "",
@@ -717,9 +717,6 @@ static void console_task(void *arg)
             for (int k = 1; k < KEY_COUNT; k++) printf("%s ", ctl_key_name((ctl_key_t)k));
             printf("\n");
         }
-        else if (!strcmp(line, "sim off")) power_sim(SIM_OFF);
-        else if (!strcmp(line, "sim on") || !strcmp(line, "sim fast")) power_sim(SIM_FAST);
-        else if (!strcmp(line, "sim real")) power_sim(SIM_REALISTIC);
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
         else if (!strcmp(line, "log")) {
             logger_status_t l;
@@ -801,7 +798,7 @@ static void console_task(void *arg)
             else if (!strncmp(b, "preset ", 7) && sscanf(b + 7, "%d %d", &preset, &ms) == 2) {
                 bump_for(target, NL_BUMP_PRESET, preset, ms);
             }
-        } else if (line[0]) ESP_LOGW(TAG, "commands: survey, radio move N, next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, wled slot look|pal S N, key NAME [down|up], keys, leds on|off, sim on|off, lights on|off, power");
+        } else if (line[0]) ESP_LOGW(TAG, "commands: survey, radio move N, next, prev, set N, wled next, wled set N, [wled] bri N|+N|-N, auto on|off, react preset|beats|peaks, preset N, fins on|off|toggle, page N, shot, [eyes|wled] bump flash|black MS, [eyes|wled] bump preset N MS, wled slot look|pal S N, key NAME [down|up], keys, leds on|off, lights on|off, power");
     }
 }
 
@@ -983,8 +980,8 @@ void app_main(void)
         power_status_t pw;
         power_get(&pw);
         // WLED's battery-aware current limit wants the voltage feeding the
-        // pole and the lights' current; real readings only, never simulated.
-        if (!pw.sim && pw.have_monitor && now >= next_battery) {
+        // pole and the lights' current.
+        if (pw.have_monitor && now >= next_battery) {
             next_battery = now + BATTERY_BROADCAST_MS * 1000LL;
             const nl_battery_t b = { .pack_mv = (uint16_t)pw.light_mv, .current_ma = pw.light_ma, .flags = NL_BATT_CURRENT };
             nl_espnow_broadcast(NL_MSG_BATTERY, &b, sizeof(b));
@@ -1066,7 +1063,7 @@ void app_main(void)
             logger_get(&l);
             if (!l.enabled) snprintf(ds.log_text, sizeof(ds.log_text), "Log off");
             else if (!l.mounted) snprintf(ds.log_text, sizeof(ds.log_text), "No TF card");
-            else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, pw.sim ? " SIM" : rtc_time_known() ? "" : " no clock");
+            else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, rtc_time_known() ? "" : " no clock");
         }
         ds.ab_live = ab_on ? abs.live : -1;
         display_update(&ds);
@@ -1090,6 +1087,6 @@ void app_main(void)
                  : st.locked ? "" : " (scanning)", eyes_s, wled_s,
                  (unsigned long)st.rx, (unsigned long)st.tx, (unsigned long)st.tx_fail, c.live.body, c.live.eyes,
                  c.standby.body, c.standby.eyes, ctl_target_name(c.target), c.locked ? " LOCKED" : "", ds.keypads_found);
-        if (pw.have_charger || pw.have_monitor || pw.sim) log_power();
+        if (pw.have_charger || pw.have_monitor) log_power();
     }
 }

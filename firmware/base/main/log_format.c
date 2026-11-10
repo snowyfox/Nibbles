@@ -22,15 +22,15 @@ size_t log_row(char *out, size_t cap, const log_sample_t *s)
     char cell[12], die[12];
     tenths(cell, sizeof(cell), s->cell_c10);
     tenths(die, sizeof(die), s->die_c10);
-    const int n = snprintf(out, cap, "%lu,%lu,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lu,%d\n",
-                           (unsigned long)s->t_s, (unsigned long)s->unix_time, s->sim, s->pack_mv, s->pack_pct, s->pack_ma, s->input, s->vbus_mv, s->ibus_ma,
+    const int n = snprintf(out, cap, "%lu,%lu,0,%d,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%d,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lu,%d\n",
+                           (unsigned long)s->t_s, (unsigned long)s->unix_time, s->pack_mv, s->pack_pct, s->pack_ma, s->input, s->vbus_mv, s->ibus_ma,
                            s->in_ma, s->ibat_ma, s->vsys_mv, s->light_mv, s->light_ma, s->light_mw, cell, die, s->chg_state,
                            s->fault0, s->fault1, s->ts_flags, s->efuse_pg, s->lights_off, s->pole_off, s->wled_preset,
                            s->wled_bri, s->wled_fps, s->fin_follow, (unsigned long)s->dropped, s->chg_limit_ma);
     return n > 0 && (size_t)n < cap ? (size_t)n : 0;
 }
 
-bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct, bool as_real)
+bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct)
 {
     // t_s,time,sim,pack_mv,pack_pct
     const char *p = strchr(row, ',');
@@ -39,7 +39,7 @@ bool log_parse_charge(const char *row, uint32_t *unix_time, int *pct, bool as_re
     const unsigned long t = strtoul(p + 1, &end, 10);
     if (end == p + 1 || *end != ',' || !t) return false;
     p = end + 1;
-    if (!(*p == '0' || (*p == '2' && as_real)) || p[1] != ',') return false;   // made-up readings
+    if (*p != '0' || p[1] != ',') return false;   // made-up readings (older builds)
     p = strchr(p, ',');
     p = p ? strchr(p + 1, ',') : NULL;
     if (!p) return false;

@@ -15,7 +15,7 @@ SDA 17 / SCL 18 at 0x3B; sensors I2C SDA 47 / SCL 48).
 ## Version 2 (2026-10-28): power board, keypads, Live / Standby
 
 The base now has three jobs on top of the radio work below, each in its own
-file. Until the hardware exists, all of it can be driven from USB serial.
+file. All of it can also be driven from USB serial.
 
 - **Power board** (`main/power.c`, `power_math.c`): its own I2C bus on the
   3.49's header (SDA 1, SCL 2, INT 3; dock detect on 5; 100 kHz, shared with
@@ -43,8 +43,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   - The pack's charge (`pack_percent`: a 21700 resting-voltage curve,
     corrected for sag at 100 mOhm) and the runtime at the present load.
   - Broadcasts `NL_MSG_BATTERY` every 200 ms (the INA226's voltage and
-    current) for WLED's battery-aware current limit. **`sim on` makes up
-    readings for the screen; those are never broadcast.**
+    current) for WLED's battery-aware current limit.
 - **Keypads** (`main/keypad.c`; boards in `hardware/keypad/`): TCA9534A
   expanders at 0x38-0x3F, read every 10 ms, debounced over two reads,
   re-found every 2 s; boards that stop answering release their keys. Which
@@ -207,11 +206,11 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   and no border. A problem (charger not set
   up, lights switched off, eFuse tripped, a charger fault, cells too hot or
   cold to charge) replaces row 3 with its message in red and gives the card
-  a red border. Made-up readings (`sim on`) look just like real ones.
+  a red border.
   With nothing plugged in, the LEMO battery is a dim outline with no
   number. Every number in the bar uses `font_tab12`: Montserrat 12
   with fixed-width digits and a digit-wide figure space for padding (no
-  kerning), so values don't shift as they change. Simulated readings are in the section below. Under it, a side view of the shark from the Live brain's preview
+  kerning), so values don't shift as they change. Under it, a side view of the shark from the Live brain's preview
   stream, or a lone brain's (`NL_MSG_PREVIEW`, 164 x 82 px, `shark_pos.h` from
   `tools/sim/make_preview_map.py`); all dim with no stream. Under that, the fins
   laid flat, seen from above (leading edges up, port on the left, live colours,
@@ -255,27 +254,17 @@ file. Until the hardware exists, all of it can be driven from USB serial.
   taken. A cue from the base still wins (the report hasn't moved). Serial `ab take` now
   goes through `ctl_ab_take`, as TAKE + LATCH: Standby keeps Live as it was (before, the
   sync pushed Standby's preset onto the brain that had just left Live).
-- **Simulated power data** (`main/power_sim.c`, host-tested; 2026-11-01). Two
-  kinds: **fast** (every value and problem in 2 minutes) and **realistic**
-  (festival nights in real time: pack, swapped-in VB99s, a USB-C charge at the
-  hotel). Two ways to run them:
-  - **Build setting** `Nibbles base -> Simulated power board data` in `idf.py
-    menuconfig` (`CONFIG_NIBBLES_POWER_SIM_*`, off by default; `sdkconfig` isn't in
-    git, so this is per computer). Used as if real: the log marks rows `sim` 2
-    and the charge graph refills from them. A real power board answering turns it
-    off until the next restart. Never in a festival build: a dead board would
-    look healthy.
-  - **Serial** `sim on|fast|real|off`, for a test: log rows `sim` 1, which the
-    graph never takes.
-  Neither goes to WLED: `NL_MSG_BATTERY` is real readings only, because it sets
-  the current limit on real LEDs. Page 1 shows `SIM` after the log's file name.
+- **Simulated power data: removed 2026-11-09** (the real power board works).
+  It was `main/power_sim.c`, a menuconfig choice and `sim on|fast|real|off`;
+  see git history before then. Logs from those builds mark made-up rows with
+  `sim` 1 or 2, which the charge graph skips.
 - **Data logger** (`main/logger.c`, `log_format.c`; 2026-11-01): one CSV row a
   second on the TF card (1-bit SD: CLK 41, CMD 39, D0 40), a new file each boot,
   `/nibbles/L00001.CSV` and up, on its own lowest-priority task. Synced every
   10 s; retries every 30 s with no card; deletes the oldest logs below 200 MB
   free. `t_s` is seconds since boot, `time` Unix time from the PCF85063 (`main/rtc.c`,
-  software I2C on GPIO 47/48; 0 if it has lost its time). The `sim` column marks
-  made-up readings. It never formats a card that won't mount. At boot, if the
+  software I2C on GPIO 47/48; 0 if it has lost its time). The `sim` column is
+  always 0 now (older builds marked made-up readings there). It never formats a card that won't mount. At boot, if the
   clock is good, the last hour of the last five files refills the charge graph
   (real readings only). The clock chip's VDD is 3V3 and the board's VBAT through
   two diodes, plus 1 uF (schematic): the prototype's 18650 on J1 keeps it going
@@ -294,7 +283,7 @@ file. Until the hardware exists, all of it can be driven from USB serial.
 - Serial for all of it: `key NAME [down|up]` (a tap without down/up; `keys`
   lists the names: 1-8, all, body, eyes, fins, page, latch, blackout,
   finsensor, take, flash, unlock, 9-16, palette, layer, bright, preset1-16,
-  palette1-8, layer1-16, bright1-8, polepower, left, right, up, down), `sim on|fast|real|off`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
+  palette1-8, layer1-16, bright1-8, polepower, left, right, up, down), `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`,
   `power` (logs the power board), `page 0|1|2|3|4`, `survey` (site survey, results in the log and on page 4), `radio move N` (move the whole network to channel N), `leds on|off` (prints
   `LEDS rrggbb,...` in key order whenever the key LEDs change; the simulator
   uses it to drive this base from the computer's keyboard).
@@ -438,4 +427,4 @@ Earlier features, still there (`main/main.c`):
     the main end was switched on with nothing attached ("no mirror", no harm).
 
 Build: `idf.py -C firmware/base build`, flash to the base board's port
-(check its serial number, 80:45:6B:35:D0:14, first; the base before 2026-11-02 was 28:84:85:91:27:08).
+(check its serial number, 28:84:85:90:93:00, first; 80:45:6B:35:D0:14 was the base from 2026-11-02 until it died on 2026-11-08, and 28:84:85:91:27:08 before that).

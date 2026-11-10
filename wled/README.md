@@ -634,6 +634,30 @@ simulator layout still match. Of the spare channels 6-8, use 7 (GPIO 14) or
 must not be pulled high then. Backup from before the change:
 `wled/backup/20260927-0851-pre-channel-move/`.
 
+**The shark's 24-pin connector** (from the build notebook, p. 36; photo
+2026-11-09). The shark's LEDs plug into the top enclosure through one
+24-pin connector: 8 LED channels of 3 pins each, in the order ground (−),
+data (D), +5 V (+). The cable has 8 wire colours (the same cable as the
+8-pin LEMO's, which uses the same order: pin 1 white to pin 8 orange), and they repeat every 8 pins in this order:
+**white, brown, green, blue, red, yellow, black, orange**. So a wire's
+colour alone doesn't say which pin it is: check its neighbours.
+
+| Cable ch | Pin: − | Pin: D | Pin: + | Wired to now |
+|---|---|---|---|---|
+| 1 | 1 white | 2 brown | 3 green | output 1, main tube outward |
+| 2 | 4 blue | 5 red | 6 yellow | output 2, main tube inward |
+| 3 | 7 black | 8 orange | 9 white | output 4, port fin |
+| 4 | 10 brown | 11 green | 12 blue | output 5, starboard fin |
+| 5 | 13 red | 14 yellow | 15 black | spare |
+| 6 | 16 orange | 17 white | 18 brown | spare |
+| 7 | 19 green | 20 blue | 21 red | spare |
+| 8 | 22 yellow | 23 black | 24 orange | spare |
+
+Only cable channels 1-4 (pins 1-12) are in use. The controller's outputs
+1, 2, 4 and 5 feed them because output 3 (GPIO 3) clashes with the board's
+USB chip (above), so cable channel 3 is *not* controller output 3
+(confirmed 2026-11-09).
+
 **`nibbles_shark`** env: WLED 16's `esp32_eth` plus the usermod. It builds and
 fits: 1.33 MB of the 1.5 MB app partition.
 

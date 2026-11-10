@@ -9,7 +9,6 @@
 #include "power_math.h"
 #include "wled_palettes.h"
 #include "log_format.h"
-#include "power_sim.h"
 #include "eye_thumb.h"
 
 static int failures;
@@ -651,12 +650,12 @@ static void test_log_format(void)
 {
     CHECK(log_file_number("L00042.CSV") == 42 && log_file_number("l00001.csv") == 1);
     CHECK(log_file_number("L00042.TXT") == -1 && log_file_number("NOTES.CSV") == -1 && log_file_number("L0042.CSV") == -1);
-    log_sample_t s = { .t_s = 12, .unix_time = 1793000000, .sim = true, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
+    log_sample_t s = { .t_s = 12, .unix_time = 1793000000, .pack_mv = 15100, .pack_pct = 55, .pack_ma = -2300, .input = "usb", .cell_c10 = 253,
                        .die_c10 = INT16_MIN, .wled_preset = 230, .wled_bri = 255, .wled_fps = 43, .fin_follow = -1, .dropped = 3, .chg_limit_ma = 1500 };
     char row[320];
     const size_t n = log_row(row, sizeof(row), &s);
     CHECK(n > 0 && row[n - 1] == '\n');
-    CHECK(!strcmp(row, "12,1793000000,1,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3,1500\n"));
+    CHECK(!strcmp(row, "12,1793000000,0,15100,55,-2300,usb,0,0,0,0,0,0,0,0,25.3,,0,0,0,0,0,0,0,230,255,43,-1,3,1500\n"));
     s.cell_c10 = -45;
     log_row(row, sizeof(row), &s);
     CHECK(strstr(row, ",-4.5,,") != NULL);
@@ -668,30 +667,19 @@ static void test_log_format(void)
     // reading the charge back, for the graph after a restart
     uint32_t t = 0;
     int pct = 0;
-    s.sim = false;
     log_row(row, sizeof(row), &s);
-    CHECK(log_parse_charge(row, &t, &pct, false) && t == 1793000000 && pct == 55);
-    CHECK(!log_parse_charge(LOG_HEADER, &t, &pct, true));
-    s.sim = true;
-    log_row(row, sizeof(row), &s);
-    CHECK(!log_parse_charge(row, &t, &pct, false));   // made-up readings don't come back
-    s.sim = false;
+    CHECK(log_parse_charge(row, &t, &pct) && t == 1793000000 && pct == 55);
+    CHECK(!log_parse_charge(LOG_HEADER, &t, &pct));
+    // older builds' made-up readings (sim 1 or 2) don't come back
+    CHECK(!log_parse_charge("12,1793000000,1,15100,55,-2300,usb", &t, &pct));
+    CHECK(!log_parse_charge("12,1793000000,2,15100,55,-2300,usb", &t, &pct));
     s.unix_time = 0;
     log_row(row, sizeof(row), &s);
-    CHECK(!log_parse_charge(row, &t, &pct, false));   // nor rows with no real time
+    CHECK(!log_parse_charge(row, &t, &pct));   // nor rows with no real time
     s.unix_time = 1793000000;
     s.pack_pct = -1;
     log_row(row, sizeof(row), &s);
-    CHECK(!log_parse_charge(row, &t, &pct, false));   // nor no reading
-    // rows from a build's simulation only count in such a build
-    s.pack_pct = 55;
-    s.sim = 2;
-    log_row(row, sizeof(row), &s);
-    CHECK(!log_parse_charge(row, &t, &pct, false));
-    CHECK(log_parse_charge(row, &t, &pct, true) && pct == 55);
-    s.sim = 1;
-    log_row(row, sizeof(row), &s);
-    CHECK(!log_parse_charge(row, &t, &pct, true));   // test readings never do
+    CHECK(!log_parse_charge(row, &t, &pct));   // nor no reading
     int8_t hist[4];
     memset(hist, -1, sizeof(hist));
     log_history_add(hist, 4, 20.0f, 1000, 1000, 50);   // now: the newest column
@@ -710,64 +698,6 @@ static void test_log_format(void)
     CHECK(rtc_regs_to_unix(r) == 0);           // the oscillator stopped
     r[0] &= 0x7F; r[5] = 0x13;
     CHECK(rtc_regs_to_unix(r) == 0);           // not a date
-}
-
-static void test_power_sim(void)
-{
-    for (int p = 0; p <= 100; p += 5) CHECK(abs(pack_percent(sim_rest_mv(p), 0) - p) <= 1);
-
-    // Fast: everything the screen can show, within a cycle.
-    bool seen_in[3] = { 0 }, fault = false, efuse = false, hot = false, cold = false, not_set = false, starved = false, done = false;
-    int lo_pct = 100, hi_pct = 0, hi_die = 0, hi_cell = 0, lo_cell = 1000, hi_ma = 0;
-    for (double t = 0; t < SIM_FAST_CYCLE_S; t += 0.2) {
-        sim_reading_t r;
-        sim_fast(t, &r);
-        seen_in[input_kind(r.vbus_mv)] = true;
-        fault |= r.fault0 != 0;
-        efuse |= !r.efuse_pg;
-        hot |= r.ts_flags == 1;
-        cold |= r.ts_flags == 8;
-        not_set |= !r.charger_ok;
-        starved |= r.docked && r.ibat_ma < 100;
-        done |= r.chg_state == CHG_DONE;
-        const int pct = pack_percent(r.vbat_mv, r.docked ? 0 : r.light_ma);
-        if (!r.docked) { if (pct < lo_pct) lo_pct = pct; if (pct > hi_pct) hi_pct = pct; }
-        if (r.die_c10 > hi_die) hi_die = r.die_c10;
-        if (r.cell_c10 > hi_cell) hi_cell = r.cell_c10;
-        if (r.cell_c10 < lo_cell) lo_cell = r.cell_c10;
-        if (r.light_ma > hi_ma) hi_ma = r.light_ma;
-    }
-    CHECK(seen_in[INPUT_NONE] && seen_in[INPUT_BATTERY] && seen_in[INPUT_SUPPLY]);
-    CHECK(fault && efuse && hot && cold && not_set && starved && done);
-    CHECK(lo_pct <= 5 && hi_pct >= 90);
-    CHECK(hi_die >= 1050 && hi_cell >= 550 && lo_cell <= 0 && hi_ma >= 7000);   // past the red levels
-
-    // Realistic: a night runs out and recharges, in sensible hours and steps.
-    sim_state_t st;
-    sim_reset(&st);
-    bool saw[3] = { 0 };
-    double hours_to_hotel = -1, charged_at = -1, last_pct = st.pack_pct;
-    int max_ma = 0, max_die = 0;
-    sim_phase_t was = st.phase;
-    for (int i = 0; i < 24 * 3600 * 5; i++) {
-        sim_reading_t r;
-        sim_realistic(&st, 0.2, &r);
-        const double h = i * 0.2 / 3600;
-        saw[st.phase] = true;
-        CHECK(fabs(st.pack_pct - last_pct) < 0.05);     // no jumps
-        CHECK(r.vbat_mv > 12000 && r.vbat_mv < 17300);
-        last_pct = st.pack_pct;
-        if (r.light_ma > max_ma) max_ma = r.light_ma;
-        if (r.die_c10 > max_die) max_die = r.die_c10;
-        if (st.phase == SIM_AT_HOTEL && hours_to_hotel < 0) hours_to_hotel = h;
-        if (was == SIM_AT_HOTEL && st.phase == SIM_ON_PACK && charged_at < 0) charged_at = h;
-        was = st.phase;
-    }
-    CHECK(saw[SIM_ON_PACK] && saw[SIM_ON_EXTERNAL] && saw[SIM_AT_HOTEL]);
-    printf("realistic: hotel after %.1f h, charged after %.1f h, peak %d mA, die %.1f C\n", hours_to_hotel, charged_at, max_ma, max_die / 10.0);
-    CHECK(hours_to_hotel > 4 && hours_to_hotel < 12);    // a night
-    CHECK(charged_at > hours_to_hotel + 1 && charged_at < hours_to_hotel + 8);
-    CHECK(max_ma < 5000 && max_die < 850);               // nothing alarming in normal use
 }
 
 static void test_charger_limit(void)
@@ -1181,7 +1111,6 @@ int main(void)
     test_names();
     test_power_math();
     test_log_format();
-    test_power_sim();
     test_eye_thumb();
     test_charger_limit();
     test_ab_take();

@@ -161,7 +161,10 @@ are reversed: check before plugging in).
 | J8 | JST S2B-PH-K-S | C173752 | dock LED |
 
 The dock's LEMO 1K.308 sits in the enclosure wall and is wired to J2
-(power) and J7 (signals); it isn't on the board. The pack's main power
+(power) and J7 (signals); it isn't on the board. Its cable's wire colours
+by pin: 1 white, 2 brown, 3 green, 4 blue, 5 red, 6 yellow, 7 black,
+8 orange (the same cable and order as the shark's 24-pin connector,
+`wled/README.md`). The pack's main power
 switch (a latching button at the bottom of the pole, as last year) sits in
 the pack's lead between the BMS and J3.
 

@@ -210,7 +210,7 @@ base's Standby only shows names. Plan:
 - **Brain board**: an ESP32-S3 with 16 MB flash and 8 MB octal PSRAM
   (S3R8 or N16R8), the same memory as the 3.49, so the same WLED build runs
   with only pin changes. They sit with the controller in the 3D-printed box
-  at the top of the pole (the shark plugs into it with a 24-pin connector),
+  at the top of the pole (the shark plugs into it with a 24-pin connector; pinout and wire colours in `wled/README.md`),
   about 3 m from the base through plastic, so an on-board antenna is enough
   (the controller's is, today); keep its end clear of wires and metal.
   Ordered 2026-10-30: 3 Waveshare ESP32-S3-DEV-KIT-N16R8 (no headers),

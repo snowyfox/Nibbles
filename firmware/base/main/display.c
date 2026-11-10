@@ -1337,7 +1337,7 @@ static void main_update(const display_status_t *s)
     else lv_label_set_text(m.pack_v, "--.--V");
     // A problem, worst first, takes row 3's place in red, with a red border.
     const char *problem = NULL;
-    const bool no_board = !board && !p->sim;   // quiet: "???", no border
+    const bool no_board = !board;   // quiet: "???", no border
     if (no_board) lv_obj_remove_flag(m.no_board, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(m.no_board, LV_OBJ_FLAG_HIDDEN);
     if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
