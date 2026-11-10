@@ -468,8 +468,8 @@ sorts them by role into its Live and Standby sharks.
   `radio_off` setting ignores its radio input and only takes these. Its radio still sends
   `NL_MSG_AB` and the Wi-Fi network; turning those off needs a wire back to the brains.
 - **Return wire (built 2026-11-02):** one wire from the controller's GPIO 17 (H1, freed by
-  moving the mic's SD to GPIO 39: `digitalmic.pin` `[39, 32, 33, -1]`) to GPIO 10 on both
-  brains (left header pin 16), setting `ret_pin` (17 on the controller, 10 on each brain).
+  moving the mic's SD to GPIO 39: `digitalmic.pin` `[39, 32, 33, -1]`) to GPIO 14 on both
+  brains, setting `ret_pin` (17 on the controller, 14 on each brain; GPIO 10 until 2026-11-09).
   It runs on the UART of the controller's first input, at the same baud, in the relay
   framing with the controller's MAC: `NL_MSG_AB` (2 Hz and on a change) and
   `NL_MSG_AR_SYNC` every 20 ms, AudioReactive's own v2 sync packet built from its
@@ -518,7 +518,7 @@ The plan (`docs/architecture.md`, "Two brains and the Standby preview") puts
 the brains in the controller's box on top of the pole, each wired to the
 controller, so the picture never crosses the air.
 
-- **Brain:** set `wire_pin` to its TX pin (`{"um":{"Nibbles":{"wire_pin":17}}}`
+- **Brain:** set `wire_pin` to its TX pin (`{"um":{"Nibbles":{"wire_pin":13}}}`
   on a `nibbles_brain_s3` board). Every frame WLED shows, the usermod sends
   what its **network LED output** would send (that output's buffer, at the
   brightness it applies) out of the pin, in `nl_pix_*` chunks (256 LEDs each,
@@ -584,7 +584,7 @@ NIBBLES_ROOT=/Volumes/Code/Nibbles pio run -e nibbles_dev_s3_349 -t upload --upl
   over USB serial every 5 s, and one per command). AudioReactive is included
   (WLED's default for this env), with the board's own mic (`NIBBLES_ES7210`).
 - `nibbles_brain_s3`: a brain on a Waveshare ESP32-S3-DEV-KIT-N16R8
-  (16 MB flash, 8 MB octal PSRAM, on-board antenna): wire link TX on GPIO 17,
+  (16 MB flash, 8 MB octal PSRAM, on-board antenna): wire link TX on GPIO 13 and the return wire on GPIO 14 (17 and 10 until 2026-11-09),
   an I2S mic (e.g. INMP441) on SD 4, WS 5, SCK 6 as AudioReactive's default,
   the board's RGB LED (GPIO 38) as the default LED output. Built, not yet run
   (the boards are on order).
