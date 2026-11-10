@@ -14,7 +14,7 @@ does one bump so the Live brain shows its look, and keeps the ports open.
 Shark-side USB: follow the ground rule (the shark off the power board).
 """
 import serial, sys, time, json, random, urllib.request
-BRAINS = {"A": "/dev/cu.usbmodem1312101", "B": "/dev/cu.usbmodem1311101"}
+BRAINS = {"right": "/dev/cu.usbmodem1313101", "left": "/dev/cu.usbmodem1311101"}   # Right Brain E8:3D:C1:F7:79:E4, Left Brain 14:C1:9F:2A:6E:48
 ports = {}
 for k, p in BRAINS.items():
     s = serial.Serial(); s.port = p; s.baudrate = 115200; s.timeout = 0.1; s.dtr = False; s.rts = False; s.open(); ports[k] = s
@@ -92,7 +92,7 @@ if mode == "flash":
         run(f"blackout/flash overlap {i}", overlap("blackout", "flash", 0.15))
     sys.exit()
 if mode == "probe":
-    print(json.dumps(snap("A"))[:1500]); key("1", True); time.sleep(1.0); print(json.dumps(snap("A"))[:1500]); key("1", False); time.sleep(2); print(diff(snap("A"), snap("A")))
+    print(json.dumps(snap("right"))[:1500]); key("1", True); time.sleep(1.0); print(json.dumps(snap("right"))[:1500]); key("1", False); time.sleep(2); print(diff(snap("right"), snap("right")))
     sys.exit()
 res = []
 for gap in (0.25, 0.1, 0.04):

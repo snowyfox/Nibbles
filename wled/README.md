@@ -436,9 +436,9 @@ sorts them by role into its Live and Standby sharks.
 
 | Board | Settings |
 |---|---|
-| Controller (`nibbles_shark`) | `display` on, `wire_pin` brain A's wire, `wire_pin_b` brain B's: 35 (H3) and 34 (H2) as now wired, which must match each brain's `ab_side`; the mic stays on H1 |
-| Brain A (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 0 |
-| Brain B (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 1 |
+| Controller (`nibbles_shark`) | `display` on, `wire_pin` Right Brain's wire, `wire_pin_b` Left Brain's: 35 (H3) and 34 (H2) as now wired, which must match each brain's `ab_side`; the mic stays on H1 |
+| Right Brain (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 0 |
+| Left Brain (`nibbles_brain_s3`) | `wire_pin` its TX pin, `ab_side` 1 |
 
 - **Wiring:** each brain's TX and a GND to the controller. Never 3.3 V or 5 V between
   boards. GPIO 34 and 35 are input only with no internal pull-up: each needs its own
@@ -447,7 +447,7 @@ sorts them by role into its Live and Standby sharks.
 - **The presets must match on both brains**, by number: copy `presets.json`, the
   ledmap and the settings across.
 - **On the Info page:** "Nibbles wire" shows both wires, which brain is Live, takes and
-  failovers on the controller, and "Brain A, Live" or similar on a brain.
+  failovers on the controller, and "Right Brain, Live" or similar on a brain.
 - **Testing without the base:** `{"nibbles":{"abtake":0}}` (a value in ms is a
   crossfade) and `{"nibbles":{"abhold":true}}` to the controller's `/json/state`.
   From the base's USB serial: `ab`, `ab take [MS]`, `ab hold on|off`.
@@ -480,8 +480,8 @@ sorts them by role into its Live and Standby sharks.
 - **Changing settings with `/json/cfg`:** send the whole `um.Nibbles` block too. A POST with
   `um` but no `Nibbles` resets every Nibbles setting to its default, live and on flash.
 - **With one brain** leave `wire_pin_b` at -1 and `ab_side` at -1: exactly as before.
-- A controller reboot starts with brain A Live.
-- **Controller radio off, brain A hosts `Nibbles` (built and tested 2026-11-02):**
+- A controller reboot starts with Right Brain Live.
+- **Controller radio off, Right Brain hosts `Nibbles` (built and tested 2026-11-02):**
   - **Controller** `wifi_off`: at boot the usermod hides its network to join (in RAM; the
     saved settings keep `Nibbles` and its password) and ESP-NOW stays off, and its own
     access point is "button only" (`ap.behav` 3; the Bong69 has no button), so after WLED's
@@ -490,9 +490,9 @@ sorts them by role into its Live and Standby sharks.
     on a brain's Info page send `NL_OP_CTL_WIFI` down a brain's wire: the controller joins
     `Nibbles` (web page, OTA) until it restarts or gets `wled wifi off`. Tested: it joined at
     4.3.2.3 with both wires running, and left again.
-  - **Brain A** hosts `Nibbles` on channel 1 (no network to join, `ap.behav` 2, the network's
+  - **Right Brain** hosts `Nibbles` on channel 1 (no network to join, `ap.behav` 2, the network's
     name and password as its access point) and anchors the channel.
-  - **Brain B** joins it; its own access point is `Nibbles` on channel 1 too, `ap.behav` 3, and
+  - **Left Brain** joins it; its own access point is `Nibbles` on channel 1 too, `ap.behav` 3, and
     `net_fallback` on: after 6 s without the network it hosts `Nibbles` itself (rather than
     search every channel), and joins again once it hears A's anchor heartbeat (at least
     10 s later). A brain sends the anchor flag only when joined or hosting, never while

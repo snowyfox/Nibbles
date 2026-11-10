@@ -243,7 +243,7 @@ file. All of it can also be driven from USB serial.
   `TAKE_FADE_MS`), and Live and Standby just trade places. Eyes have no second
   brain, so they're bumped and commanded as ever. `ctl_standby_sync` keeps the brain
   on Standby's preset, fin preset, palette and looks once a second, and main its
-  brightness; it waits 2 s after a swap. Panels read LIVE A / STANDBY B. If a brain
+  brightness; it waits 2 s after a swap. Panels read LIVE R / STANDBY L (the Right Brain, `ab_side` 0, and the Left Brain, 1). If a brain
   goes down, everything falls back to the one-brain behaviour. Serial: `ab`, `ab take
   [MS]`, `ab hold on|off`, `wled wifi on|off` (2026-11-02: `NL_OP_CTL_WIFI` by the same
   route as a take: the controller, radio off, joins `Nibbles` until it restarts).

@@ -7,7 +7,7 @@ are in `docs/power.md`, "Travel notes".
 ## Before packing (by about 2026-11-17)
 
 - [ ] Final firmware flashed and its commit pushed: eyes (both), base,
-      brain A, brain B, controller usermod, preview screen.
+      Right Brain, Left Brain, controller usermod, preview screen.
 - [ ] `KEYPAD_BOARDS` in `firmware/base/main/config.h` matches the keypads
       actually fitted.
 - [ ] Backups of every board's flash and WLED's `cfg.json` / `presets.json`
@@ -34,7 +34,7 @@ are in `docs/power.md`, "Travel notes".
 
 - [ ] Pole (K-Tek K-123) and its sections.
 - [ ] Shark, with eyes and fins, padded.
-- [ ] Top box (controller, brains A and B), if it doesn't travel on the shark.
+- [ ] Top box (controller, Right and Left Brains), if it doesn't travel on the shark.
 - [ ] Dock / backpack enclosure (no batteries in it).
 - [ ] Cables: LEMO 1K.308 dock cable, eye cable, spare JST-GH keypad cables.
 - [ ] No lithium batteries of any kind in this bag.

@@ -30,8 +30,8 @@ how the firmware works and why.
 | Starboard eye | 28:84:85:3A:DA:78 | link leader (shared eye brain) and radio gateway |
 | Port eye | 28:84:85:3B:6F:F4 | recognised by MAC (`PORT_EYE_MACS`); the ears (mic + audio analysis) |
 | Base | 28:84:85:90:93:00 | ESP32-S3-Touch-LCD-3.49 running `firmware/base` (since 2026-11-08; the previous base, 80:45:6B:35:D0:14, died in a USB ground loop that day. The first base prototype, 28:84:85:91:27:08, is spare) |
-| Brain A | E8:3D:C1:F7:79:E4 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14 |
-| Brain B | 14:C1:9F:2A:6E:48 | same; GPIO 13 to controller GPIO 34, return wire on GPIO 14 |
+| Right Brain | E8:3D:C1:F7:79:E4 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14 |
+| Left Brain | 14:C1:9F:2A:6E:48 | same; GPIO 13 to controller GPIO 34, return wire on GPIO 14 |
 
 Eye cable (8-pin headers): GND↔GND (pin 2), starboard GPIO 17 (pin 6) → port GPIO 18
 (pin 7), port GPIO 17 → starboard GPIO 18. Never link VBUS (pin 1) or 3V3.

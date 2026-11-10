@@ -167,8 +167,8 @@ typedef enum {
     NL_OP_FIN_FOLLOW = 8,       // WLED: fin LEDs follow the fins' angle: arg 0 off (locked at the modelled angle), 1 on, 2 toggle
     NL_OP_SLOT_LOOK = 9,        // WLED: arg = nl_slot_arg(slot, preset): the slot takes that preset's look and comes on; preset 0 switches it off
     NL_OP_AB_TAKE = 11,         // controller: swap Live and Standby; arg = crossfade in ms (0: cut)
-    NL_OP_AB_TAKE_A = 12,       // controller: make brain A Live (safe to repeat, or to send by two routes); arg as above
-    NL_OP_AB_TAKE_B = 13,       // controller: the same for brain B
+    NL_OP_AB_TAKE_A = 12,       // controller: make Right Brain Live (safe to repeat, or to send by two routes); arg as above
+    NL_OP_AB_TAKE_B = 13,       // controller: the same for Left Brain
     NL_OP_CTL_WIFI = 14,        // controller (NL_TARGET_AB, through a brain's wire): arg 1 joins the Nibbles
                                 // network until its next restart (web page, OTA), 0 radio off again
     NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
@@ -690,7 +690,7 @@ size_t nl_cobs_decode(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
 #define NL_AB_HOLDING       0x08    // Standby on the LEDs while TAKE is held
 
 typedef struct NL_PACKED {
-    uint8_t live;           // 0 brain A, 1 brain B
+    uint8_t live;           // 0 Right Brain, 1 Left Brain
     uint8_t showing;        // the brain on the LEDs now: Live, or Standby during a hold or a fade's end
     uint8_t flags;          // NL_AB_*
     uint8_t fps[2];         // frames a second on each wire
@@ -731,7 +731,7 @@ void nl_ab_state(const nl_ab_t *ab, uint32_t now_ms, const uint8_t fps[2], nl_ab
 void nl_ab_mix(uint8_t *dst, const uint8_t *a, const uint8_t *b, size_t n, uint8_t weight);
 
 // Is this brain Standby, given its side (0 A, 1 B) and the last state heard? Before
-// any state is heard brain A acts as Live, brain B as Standby.
+// any state is heard Right Brain acts as Live, Left Brain as Standby.
 static inline bool nl_ab_is_standby(int side, bool heard, const nl_ab_state_t *s)
 {
     return heard ? s->live != side : side != 0;

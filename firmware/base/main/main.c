@@ -734,7 +734,8 @@ static void console_task(void *arg)
             const int64_t stby_age = stby_wled_us ? esp_timer_get_time() - stby_wled_us : -1;
             taskEXIT_CRITICAL(&lock);
             if (age < 0 || age > 3000000) printf("AB controller not heard\n");
-            else printf("AB %c Live, %c on the LEDs, A %s %d fps, B %s %d fps, %d takes, %d failovers, standby brain %s, %s\n", 'A' + st.live, 'A' + st.showing,
+            else printf("AB %s Live, %s on the LEDs, right %s %d fps, left %s %d fps, %d takes, %d failovers, standby brain %s, %s\n",
+                        st.live ? "left" : "right", st.showing ? "left" : "right",
                         st.flags & NL_AB_A_UP ? "up" : "down", st.fps[0], st.flags & NL_AB_B_UP ? "up" : "down", st.fps[1], st.takes, st.failovers,
                         stby_age >= 0 && stby_age < 2000000 ? "heard" : "not heard", ab_in_use ? "in use" : "not in use");
         }

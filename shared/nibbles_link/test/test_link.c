@@ -646,7 +646,7 @@ static void test_ab(void)
     nl_ab_hold(&ab, true, 100);
     CHECK(!ab.hold, "hold refused with B down");
     nl_ab_frame(&ab, 1, 110);
-    CHECK(nl_ab_output(&ab, 110).show == 0 && nl_ab_output(&ab, 110).weight == 255, "A on the LEDs");
+    CHECK(nl_ab_output(&ab, 110).show == 0 && nl_ab_output(&ab, 110).weight == 255, "Right on the LEDs");
 
     // Hold: Standby while held, back after.
     nl_ab_hold(&ab, true, 110);
@@ -661,7 +661,7 @@ static void test_ab(void)
     // Take from a hold: no fade, Live is now B.
     nl_ab_hold(&ab, true, 120);
     CHECK(nl_ab_take(&ab, 500, 120) && ab.live == 1 && !ab.hold && !ab.fading && ab.takes == 1, "take from a hold is a cut");
-    CHECK(nl_ab_output(&ab, 120).show == 1 && nl_ab_output(&ab, 120).weight == 255, "B on the LEDs");
+    CHECK(nl_ab_output(&ab, 120).show == 1 && nl_ab_output(&ab, 120).weight == 255, "Left on the LEDs");
 
     // Take with a crossfade.
     nl_ab_frame(&ab, 0, 130);
@@ -701,8 +701,8 @@ static void test_ab(void)
     CHECK(m[0] == 128 && m[1] == 127 && m[2] == 100, "mix half way");
 
     nl_ab_state_t s = { .live = 1 };
-    CHECK(!nl_ab_is_standby(0, false, &s) && nl_ab_is_standby(1, false, &s), "before a state: A Live, B Standby");
-    CHECK(nl_ab_is_standby(0, true, &s) && !nl_ab_is_standby(1, true, &s), "state says B Live");
+    CHECK(!nl_ab_is_standby(0, false, &s) && nl_ab_is_standby(1, false, &s), "before a state: Right Live, Left Standby");
+    CHECK(nl_ab_is_standby(0, true, &s) && !nl_ab_is_standby(1, true, &s), "state says Left Live");
 }
 
 static void test_preview(void)

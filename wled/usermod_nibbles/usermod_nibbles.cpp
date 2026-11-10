@@ -317,7 +317,7 @@ class NibblesUsermod : public Usermod {
     nl_bump_rx_t abBumps;
     unsigned abLeds = 0;
     unsigned long lastAbState = 0;
-    int8_t abSide = -1;                  // setting, on a brain: 0 A, 1 B, -1 no A/B
+    int8_t abSide = -1;                  // setting, on a brain: 0 Right Brain, 1 Left Brain, -1 no A/B
     nl_ab_state_t abHeard = {};
     bool abHeardAny = false;
     uint32_t wireBaud = NL_PIX_BAUD;     // setting
@@ -1210,7 +1210,7 @@ class NibblesUsermod : public Usermod {
       retPinUp = retPin;
     }
 
-    // Input i on the display: wire_pin (brain A) or wire_pin_b (brain B).
+    // Input i on the display: wire_pin (Right Brain) or wire_pin_b (Left Brain).
     void wireStartRx(int i, int8_t pin, bool ab_on) {
       WireIn &w = wireIn[i];
       w.uart = i ? WIRE_UART_B : WIRE_UART;
@@ -1582,10 +1582,10 @@ class NibblesUsermod : public Usermod {
       const int8_t pin = i ? wirePinB : wirePin;
       if (w.pinUp < 0) {
         if (pin < 0) return;
-        snprintf(buf, sizeof(buf), "%c GPIO %d: %s", 'A' + i, pin, w.note);
+        snprintf(buf, sizeof(buf), "%s's wire, GPIO %d: %s", brainName(i), pin, w.note);
       } else {
         const unsigned long ago = w.lastAt ? millis() - w.lastAt : 0;
-        int n = snprintf(buf, sizeof(buf), "%c in on GPIO %d at %lu baud: ", 'A' + i, w.pinUp, (unsigned long)wireBaudUp);
+        int n = snprintf(buf, sizeof(buf), "%s in on GPIO %d at %lu baud: ", brainName(i), w.pinUp, (unsigned long)wireBaudUp);
         if (!w.lastAt) n += snprintf(buf + n, sizeof(buf) - n, "nothing yet; ");
         else if (ago > 1000) n += snprintf(buf + n, sizeof(buf) - n, "nothing for %lu s; ", ago / 1000);
         else n += snprintf(buf + n, sizeof(buf) - n, "%u fps, %u LEDs; ", w.fps, w.leds);
@@ -1596,6 +1596,9 @@ class NibblesUsermod : public Usermod {
       wa.add(buf);
     }
 
+    // The brains by side: 0 (ab_side 0, wire_pin) is the Right Brain, 1 (wire_pin_b) the Left.
+    static const char *brainName(int side) { return side ? "Left Brain" : "Right Brain"; }
+
     void wireInfo(JsonObject &user) {
       if (wirePin < 0 && wirePinUp < 0 && wirePinB < 0 && abSide < 0) return;
       JsonArray wa = user.createNestedArray(F("Nibbles wire"));
@@ -1604,7 +1607,7 @@ class NibblesUsermod : public Usermod {
         wireInfoIn(wa, 0);
         wireInfoIn(wa, 1);
         if (abOn) {
-          snprintf(buf, sizeof(buf), "A/B: %c Live, %c on the LEDs; %u takes, %u failovers", 'A' + ab.live, 'A' + (ab.hold ? !ab.live : ab.live),
+          snprintf(buf, sizeof(buf), "A/B: %s Live, %s on the LEDs; %u takes, %u failovers", brainName(ab.live), brainName(ab.hold ? !ab.live : ab.live),
                    ab.takes, ab.failovers);
           wa.add(buf);
         }
@@ -1617,14 +1620,14 @@ class NibblesUsermod : public Usermod {
           wa.add(buf);
         }
         if (retPin >= 0) {
-          if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running (pin in use, or wire A not up)", retPin);
+          if (retPinUp < 0) snprintf(buf, sizeof(buf), "return wire GPIO %d: not running (pin in use, or the Right Brain's wire not up)", retPin);
           else snprintf(buf, sizeof(buf), "return wire out on GPIO %d: %lu messages, %lu of them sound", retPinUp, (unsigned long)retTx, (unsigned long)arOut);
           wa.add(buf);
         }
         return;
       }
       if (abSide >= 0) {
-        snprintf(buf, sizeof(buf), "Brain %c, %s%s; %lu messages relayed", 'A' + abSide, abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)", (unsigned long)relayTx);
+        snprintf(buf, sizeof(buf), "%s, %s%s; %lu messages relayed", brainName(abSide), abStandby() ? "Standby" : "Live", abHeardAny ? "" : " (the controller not heard yet)", (unsigned long)relayTx);
         wa.add(buf);
       }
       if (netFallback) {
@@ -2830,7 +2833,7 @@ class NibblesUsermod : public Usermod {
       top[F("wire_baud")] = wireBaud;
       top[F("radio_off")] = radioOff;              // on the display: commands and battery only through the brains' wires
       top[F("wire_pin_b")] = wirePinB;             // on the display: the second brain's wire; -1 = one brain
-      top[F("ab_side")] = abSide;                  // on a brain: 0 A, 1 B; -1 = no A/B
+      top[F("ab_side")] = abSide;                  // on a brain: 0 Right Brain, 1 Left Brain; -1 = no A/B
       top[F("ret_pin")] = retPin;
       top[F("wifi_off")] = wifiOff;                // on the display: radio off; NL_OP_CTL_WIFI joins the network until restart
       top[F("net_fallback")] = netFallback;        // on a brain that joins the network: host it while the host is gone                  // return wire: TX on the display (A/B state, sound), RX on a brain; -1 = off

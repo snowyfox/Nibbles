@@ -171,13 +171,13 @@ preset picks which one it reacts to (`peak_beats`).
 The brain (an S3 at 42 fps on the 68 x 33 grid) is near its limit, and the
 base's Standby only shows names. Plan:
 - **Two identical brains, both in the controller's box** on top of the
-  pole, each wired to it (the one-way UART link: controller RX on GPIO 39 for brain A,
-  32 or 33 for brain B once the mic moves to a brain). Live frames never
+  pole, each wired to it (the one-way UART link: controller RX on GPIO 39 for Right Brain,
+  32 or 33 for Left Brain once the mic moves to a brain). Live frames never
   cross the radio. The pole cable can't take a data pair (only room for the
   two power conductors), so the brains can't sit in the base: Live would
   have to go up the pole over Wi-Fi.
-- **Brain B renders Standby.** The base sends Standby preset, palette and
-  layer commands to it the same way it sends Live ones to brain A.
+- **Left Brain renders Standby.** The base sends Standby preset, palette and
+  layer commands to it the same way it sends Live ones to Right Brain.
 - **The preview comes down over the radio, reduced**: one byte per LED
   (8-bit colour, ~1 KB a frame), 10-15 fps, about 15 KB/s; dropped frames
   don't matter for a preview. WLED's ESP-IDF only has ESP-NOW v1, so 5 packets
@@ -205,7 +205,7 @@ base's Standby only shows names. Plan:
 - **Order**: (1) the wired brain-to-controller link (usermod and protocol
   built 2026-10-30, `wled/README.md` "Wire link"; sending and decoding tested
   on the bench, the controller receiving over a real wire not yet),
-  (2) brain B in the controller's box with the radio preview and the Standby
+  (2) Left Brain in the controller's box with the radio preview and the Standby
   side view, (3) the A/B handover, probably after the festival.
 - **Brain board**: an ESP32-S3 with 16 MB flash and 8 MB octal PSRAM
   (S3R8 or N16R8), the same memory as the 3.49, so the same WLED build runs
