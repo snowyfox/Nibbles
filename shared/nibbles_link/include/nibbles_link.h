@@ -44,6 +44,7 @@ typedef enum {
     NL_MSG_RELAY = 19,      // a radio packet a brain passes down its wire to the controller (nl_relay_*)
     NL_MSG_AR_SYNC = 20,    // the controller's sound analysis, controller -> brains over the return wire, ~50 Hz (nl_ar_sync_t)
     NL_MSG_HOP = 21,        // move to another radio channel together (nl_hop_t), broadcast; boards without it ignore it
+    NL_MSG_SHOW = 22,       // what Live and Standby are, base -> radio, 2 Hz per side and on a change (nl_show_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -398,6 +399,32 @@ void nl_power_limiter_reading(nl_power_limiter_t *l, const nl_battery_t *b, uint
 // The limit to apply now, or 0 while no reading has been heard. Without new
 // readings the last limit holds (the pack only empties), it never jumps back up.
 uint32_t nl_power_limiter_tick(nl_power_limiter_t *l, uint32_t now_ms);
+
+// ---------------------------------------------------------------- Live and Standby
+// The base's switcher state, one packet per side, for the Live and Standby
+// monitors (2026-11-14): each shows its side's names under the brain's
+// preview picture. Presets are 1-based, 0 not known; fins 0 = following the
+// body, -1 not known; palettes and layers -1 not known (layer 0: none).
+#define NL_SHOW_LIVE        0
+#define NL_SHOW_STANDBY     1
+#define NL_SHOW_LOCKED      0x01    // the keypad is locked
+#define NL_SHOW_LATCH       0x02    // LATCH is down
+#define NL_SHOW_PREVIEW     0x04    // TAKE is held: Standby is on the shark now
+#define NL_SHOW_DIFFERS     0x08    // Standby differs from Live (TAKE would change something)
+#define NL_SHOW_WLED_HEARD  0x10
+#define NL_SHOW_EYES_HEARD  0x20
+typedef struct __attribute__((packed)) {
+    uint8_t side;           // NL_SHOW_LIVE or NL_SHOW_STANDBY
+    uint8_t flags;          // NL_SHOW_*
+    uint8_t target;         // the keypad's target: 0 ALL, 1 BODY, 2 EYES, 3 FINS
+    int8_t brain;           // the brain on this side with two: 0 Right, 1 Left; -1 one brain
+    uint8_t brightness;     // WLED's master brightness (Live; 0 on Standby)
+    int16_t body, eyes;     // presets
+    int8_t fins;            // fin preset 1..16
+    int16_t body_pal;       // the body's palette (WLED id)
+    int16_t body_layer;     // layer look over the body (WLED preset id, 0 none)
+    char body_name[NL_NAME_LEN], eyes_name[NL_NAME_LEN], fins_name[NL_NAME_LEN], pal_name[NL_NAME_LEN];
+} nl_show_t;
 
 // ---------------------------------------------------------------- the time
 // Nothing here has a network clock. A phone opening WLED's /time page tells that

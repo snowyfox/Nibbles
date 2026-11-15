@@ -1,0 +1,3 @@
+# Waveshare ESP32-S3-AMOLED-1.91 as the base's main board (2026-11-14): added
+# after sdkconfig.defaults by tools: see "Two boards" in CLAUDE.md.
+CONFIG_BASE_BOARD_AMOLED_191=y

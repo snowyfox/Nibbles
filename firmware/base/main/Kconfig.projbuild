@@ -1,0 +1,17 @@
+menu "Nibbles base"
+
+choice BASE_BOARD
+    prompt "Board the base runs on"
+    default BASE_BOARD_LCD_349
+    help
+        Which Waveshare board this build is for: its pins and its screen.
+
+config BASE_BOARD_LCD_349
+    bool "ESP32-S3-Touch-LCD-3.49 (172 x 640 LCD, touch, PCF85063 clock)"
+
+config BASE_BOARD_AMOLED_191
+    bool "ESP32-S3-AMOLED-1.91 (536 x 240 AMOLED, no touch, no clock chip)"
+
+endchoice
+
+endmenu

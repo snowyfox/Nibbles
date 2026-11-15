@@ -2,6 +2,8 @@
 // ESP32-S3-Touch-LCD-3.49; see docs/architecture.md (Phases 2, 4, 5).
 #pragma once
 
+#include "sdkconfig.h"   // CONFIG_BASE_BOARD_*: which board (main/Kconfig.projbuild)
+
 #define BASE_FW_BUILD        2
 
 // 1: always anchor the radio channel. 0: scan for WLED's anchor like the eyes
@@ -43,6 +45,14 @@
 #define MIRROR_SIDE_RX_GPIO  44     // mirror board: from the main's TX (header B6)
 #define MIRROR_HELLO_MS      2000   // the main asks the mirror for its build this often
 
+#if CONFIG_BASE_BOARD_AMOLED_191
+// The 1.91 has free header pins: the cable can use two of them (not started there yet).
+#undef MIRROR_MAIN_TX_GPIO
+#undef MIRROR_MAIN_RX_GPIO
+#define MIRROR_MAIN_TX_GPIO  15
+#define MIRROR_MAIN_RX_GPIO  21
+#endif
+
 // Status screen: LV_DISPLAY_ROTATION_0 or _180 = portrait (cards stacked),
 // _90 or _270 = landscape (cards side by side); each pair picks which way up.
 #define DISPLAY_ROTATION     LV_DISPLAY_ROTATION_0
@@ -55,6 +65,30 @@
 // ---------------------------------------------------------------- power board
 // Its own I2C bus on the 3.49's header (J6 A2-A4 on the power board), dock
 // detect on A6. 100 kHz: the keypads share the bus, one of them 60-80 cm away.
+#if CONFIG_BASE_BOARD_AMOLED_191
+// ESP32-S3-AMOLED-1.91 (2026-11-14): GPIO 1 has the battery ADC's 100k/100k
+// divider and 5-7, 17, 18, 47, 48 are the screen's, so the bus is on 2/3
+// (header H1 pins 6 and 7), INT and dock detect on 11/12 (H1 9, 10).
+#define PIN_PWR_SDA          2
+#define PIN_PWR_SCL          3
+#define PIN_PWR_INT          11
+#define PIN_DOCK_DET         12
+
+// The TF card, 1-bit SD on the board's "V2" wiring (Waveshare's SD example:
+// CLK 9, CMD 42, D0 8; the older wiring shared the screen's clock, GPIO 47).
+#define PIN_SD_CLK           9
+#define PIN_SD_CMD           42
+#define PIN_SD_D0            8
+
+// The 1.91 is mounted in portrait (the user, 2026-11-14): 1 turns the picture
+// round 180 degrees if it comes out upside down in the box.
+#define DISPLAY_191_UPSIDE_DOWN 0
+
+// No clock chip on the 1.91: rtc.c keeps time only from "time" or the radio.
+#define BASE_HAS_RTC_CHIP    0
+#define PIN_RTC_SDA          (-1)   // never driven: rtc.c checks BASE_HAS_RTC_CHIP
+#define PIN_RTC_SCL          (-1)
+#else
 #define PIN_PWR_SDA          1
 #define PIN_PWR_SCL          2
 #define PIN_PWR_INT          3
@@ -66,8 +100,10 @@
 #define PIN_SD_D0            40
 
 // The PCF85063 clock (with the board's IMU and other sensors, which we don't use).
+#define BASE_HAS_RTC_CHIP    1
 #define PIN_RTC_SDA          47
 #define PIN_RTC_SCL          48
+#endif
 #define POWER_I2C_HZ         100000
 #define POWER_POLL_MS        200
 #define BASE_LOAD_MW         2000    // the base itself, for the runtime estimate (estimate)
@@ -104,7 +140,11 @@
 // The key LEDs' data: GPIO 43 (U0TXD; the console is on USB), wired to the
 // hub's J1 pin 7. The ROM prints its boot banner on this pin, so the LEDs
 // may flicker for a moment at power-up until the firmware sets them.
+#if CONFIG_BASE_BOARD_AMOLED_191
+#define PIN_KEY_LEDS         13      // H1 pin 11: no boot banner on it
+#else
 #define PIN_KEY_LEDS         43
+#endif
 // Scale for the key LEDs (0-255): 19 SK6812s at full white would draw ~1.1 A
 // from the keypad cable's 5 V; 48 keeps it under ~0.25 A and is plenty at night.
 #define KEYPAD_LED_LEVEL     48

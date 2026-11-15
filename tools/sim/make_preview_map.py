@@ -33,6 +33,7 @@ def write(path, name, w, h, margin):
 
 write("firmware/preview/main/led_pos.h", "led_pos", 536, 240, 6)     # the preview screen
 write("firmware/base/main/shark_pos.h", "shark_pos", 164, 82, 2)    # the base's main page
+write("firmware/monitor/main/led_pos.h", "led_pos", 296, 150, 4)  # the Live / Standby monitors (1.64, landscape)
 
 
 def dot3(a, b):

@@ -60,7 +60,7 @@ static uint8_t i2c_read(bool more)
     return b;
 }
 
-static bool read_regs(uint8_t reg, uint8_t *out, int n)
+__attribute__((unused)) static bool read_regs(uint8_t reg, uint8_t *out, int n)
 {
     i2c_start();
     bool ok = i2c_write(RTC_ADDR << 1) && i2c_write(reg);
@@ -91,6 +91,10 @@ static void set_system(uint32_t t)
 bool rtc_start(void)
 {
     bus = xSemaphoreCreateMutex();
+#if !BASE_HAS_RTC_CHIP
+    ESP_LOGW(TAG, "this board has no clock chip: the time comes from \"time\" or a WLED's NL_MSG_TIME");
+    return false;
+#else
     const gpio_config_t io = { .pin_bit_mask = 1ULL << PIN_RTC_SDA | 1ULL << PIN_RTC_SCL, .mode = GPIO_MODE_INPUT_OUTPUT_OD,
                                .pull_up_en = GPIO_PULLUP_ENABLE };
     gpio_config(&io);
@@ -112,6 +116,7 @@ bool rtc_start(void)
         ESP_LOGW(TAG, "the clock chip lost its time; set it with \"time\" (tools/base_log.py time)");
     }
     return known;
+#endif
 }
 
 bool rtc_chip_found(void) { return found; }
@@ -122,9 +127,12 @@ bool rtc_set(uint32_t t)
 {
     uint8_t r[7];
     rtc_unix_to_regs(t, r);
-    xSemaphoreTake(bus, portMAX_DELAY);
-    const bool ok = write_regs(REG_TIME, r, sizeof(r));
-    xSemaphoreGive(bus);
+    bool ok = false;
+    if (BASE_HAS_RTC_CHIP) {
+        xSemaphoreTake(bus, portMAX_DELAY);
+        ok = write_regs(REG_TIME, r, sizeof(r));
+        xSemaphoreGive(bus);
+    }
     // The system time still counts if the chip didn't take it: this boot's logs are right.
     set_system(t);
     known = true;

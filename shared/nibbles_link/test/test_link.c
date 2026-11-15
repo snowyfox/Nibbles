@@ -530,6 +530,8 @@ static void test_power_limiter(void)
     CHECK(sizeof(nl_battery_t) == 7, "battery message is 7 bytes (got %u)", (unsigned)sizeof(nl_battery_t));
     CHECK(sizeof(nl_fin_pose_t) == 8, "fin pose message is 8 bytes (got %u)", (unsigned)sizeof(nl_fin_pose_t));
     CHECK(sizeof(nl_fin_state_t) == 9, "fin state message is 9 bytes (got %u)", (unsigned)sizeof(nl_fin_state_t));
+    CHECK(sizeof(nl_show_t) == 14 + 4 * NL_NAME_LEN && sizeof(nl_show_t) <= NL_MAX_PAYLOAD,
+          "show message is %u bytes and fits a packet", (unsigned)sizeof(nl_show_t));
 }
 
 static void test_stream_gaps(void)

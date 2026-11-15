@@ -822,6 +822,48 @@ static void name_of(char out[NL_NAME_LEN], char cache[][NL_NAME_LEN], int count,
 
 // The mirror board: the screen and the cable to the main board, nothing else
 // (no radio, power board, keypads or logger).
+// Live and Standby for the monitors (NL_MSG_SHOW, 2026-11-14): each side on a
+// change, and every SHOW_EVERY_MS anyway.
+#define SHOW_EVERY_MS 500
+static void show_side(nl_show_t *o, int side, const display_status_t *s)
+{
+    const bool stby = side == NL_SHOW_STANDBY;
+    const ctl_scene_t *sc = stby ? &s->standby : &s->live;
+    const ctl_layers_t *l = stby ? &s->stby_layers : &s->layers;
+    memset(o, 0, sizeof(*o));
+    o->side = side;
+    o->flags = (s->keys_locked ? NL_SHOW_LOCKED : 0) | (s->latch ? NL_SHOW_LATCH : 0) | (s->take_preview ? NL_SHOW_PREVIEW : 0) |
+               (s->diff ? NL_SHOW_DIFFERS : 0) | (s->wled_fresh ? NL_SHOW_WLED_HEARD : 0) | (s->eyes_fresh ? NL_SHOW_EYES_HEARD : 0);
+    o->target = s->target;
+    o->brain = s->ab_live < 0 ? -1 : stby ? !s->ab_live : s->ab_live;
+    o->brightness = stby ? 0 : s->brightness;
+    o->body = sc->body;
+    o->eyes = sc->eyes;
+    o->fins = sc->fins;
+    o->body_pal = l->body_pal;
+    o->body_layer = l->body_layer;
+    snprintf(o->body_name, NL_NAME_LEN, "%s", stby ? s->stby_body : s->live_body);
+    snprintf(o->eyes_name, NL_NAME_LEN, "%s", stby ? s->stby_eyes : s->live_eyes);
+    snprintf(o->fins_name, NL_NAME_LEN, "%s", stby ? s->stby_fins : s->live_fins);
+    snprintf(o->pal_name, NL_NAME_LEN, "%.19s", stby ? s->stby_pal_name : s->live_pal_name);
+}
+
+static void show_broadcast(const display_status_t *s)
+{
+    static nl_show_t last[2];
+    static int64_t sent_us[2];
+    const int64_t now = esp_timer_get_time();
+    for (int side = 0; side < 2; side++) {
+        nl_show_t o;
+        show_side(&o, side, s);
+        if (!memcmp(&o, &last[side], sizeof(o)) && now - sent_us[side] < SHOW_EVERY_MS * 1000LL) continue;
+        if (nl_espnow_broadcast(NL_MSG_SHOW, &o, sizeof(o)) == ESP_OK) {
+            last[side] = o;
+            sent_us[side] = now;
+        }
+    }
+}
+
 static void mirror_touch(display_action_t a, bool pressed, int value) {}
 
 static void mirror_main(void)
@@ -1068,6 +1110,7 @@ void app_main(void)
         }
         ds.ab_live = ab_on ? abs.live : -1;
         display_update(&ds);
+        show_broadcast(&ds);
         if (n % 40) continue;  // log every 2 s
         char eyes_s[160] = "no eyes heard", wled_s[200] = "no WLED heard";
         if (fresh)

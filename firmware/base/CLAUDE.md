@@ -12,6 +12,45 @@ charger). Demo code: https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.49
 (screen pins: CS 9, PCLK 10, DATA0-3 11-14, RST 21, backlight 8; touch I2C
 SDA 17 / SCL 18 at 0x3B; sensors I2C SDA 47 / SCL 48).
 
+## Two boards: the 3.49, or a 1.91 with two 1.64 monitors (2026-11-14)
+
+The 3.49 is too big for the base box (the user, 2026-11-14), so the base is
+moving to a **Waveshare ESP32-S3-AMOLED-1.91** (MAC 3C:0F:02:D9:7A:08, the
+old preview screen; a second one, due 2026-11-15, is to be the spare) plus two
+1.64 monitors for Live and Standby (`firmware/monitor`). The 3.49 build
+stays as the fallback until the new set has run a rehearsal.
+
+- **Which board** is a menuconfig choice (`main/Kconfig.projbuild`):
+  `CONFIG_BASE_BOARD_LCD_349` (default, `build/`) or
+  `CONFIG_BASE_BOARD_AMOLED_191` (`build-191/`):
+  `idf.py -B build-191 -D SDKCONFIG=build-191/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board_191" build`
+  (then `-p PORT flash` with the same `-B` and `-D SDKCONFIG`).
+- **1.91 pins** (`config.h`): power-board I2C SDA 2 / SCL 3 (header H1 6, 7;
+  GPIO 1 has the battery ADC's 100k divider), INT 11, dock detect 12, key LEDs
+  13 (no boot banner on it), TF card 1-bit SD CLK 9 / CMD 42 / D0 8 (the
+  board's "V2" wiring in Waveshare's SD example; the older wiring shared the
+  screen's clock, GPIO 47). Screen: CS 6, SCLK 47, D0 18, D1 7, D2 48, D3 5,
+  RST 17. 33-37 reach the header but are the octal PSRAM's.
+- **No clock chip** on the 1.91 (Waveshare's "onboard RTC" is the ESP32's
+  own): `rtc.c` skips the PCF85063 (`BASE_HAS_RTC_CHIP 0`); the time comes
+  from `time` or a WLED's `NL_MSG_TIME`, as with the 3.49 after a power-off.
+- **Screen** (`main/display_191.c`, same `display.h` API): one **portrait**
+  page (240 x 536, the panel's own orientation; the user mounts it that way;
+  `DISPLAY_191_UPSIDE_DOWN` turns it round), power at the top: pack % (40 px), voltage and charger state; the LEMO input;
+  lights A and W; time left; cell and charger temperatures, or the worst
+  problem in red with a red border; the pack's charge over the last hour.
+  Under it: the keypad's target box with page name and LATCH / LOCKED, Live and
+  Standby by name, links/channel/keypads, the log line and the event line. No
+  touch; the sharks, fins, eyes, palette viewer and survey page are left out
+  (their functions are empty). `shot` works (240 x 536).
+- **Live / Standby to the monitors**: the main loop broadcasts `NL_MSG_SHOW`
+  (`nl_show_t`, one packet per side) every 500 ms and on a change
+  (`show_broadcast` in `main.c`), on both boards.
+- Tested 2026-11-14 on the bench with nothing attached: boots, screen drawn
+  (screenshots), the monitors hear it. TF card: with a card in, it mounts and
+  logs (L00014, 2026-11-14; the 0x107 timeout before was an empty slot). Power board and keypads not
+  connected to the 1.91 yet.
+
 ## Version 2 (2026-10-28): power board, keypads, Live / Standby
 
 The base now has three jobs on top of the radio work below, each in its own

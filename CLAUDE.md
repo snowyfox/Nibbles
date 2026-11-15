@@ -13,7 +13,8 @@ of Nibbles' own code; WLED itself stays upstream.
 | **Eyes** (port + starboard) | 2× Waveshare ESP32-S3-Touch-AMOLED-1.75, back to back | `firmware/eyes/` (ESP-IDF 5.5.5) | Working; linked by a 3-wire cable (starboard leads, port is the ears); leader on the radio: telemetry, preset and brightness commands, bumps |
 | **Lights** | Existing ESP32 running WLED (0.15, to be upgraded to 16.x), external digital mic | `wled/usermod_nibbles/` + `wled/platformio_override.ini` (see `wled/README.md`) | Usermod works on a dev node (WLED 16.0.1): channel anchor, preset/brightness commands, bumps, telemetry, optional AudioReactive features; the real controller (WT32-ETH01) now runs it too. Since 2026-10-28 a **main board** (the bench 3.49 for now) is the brain: it renders the 2D map, fin presets and eye looks and streams every LED to the controller, whose usermod runs in its `display` role (battery readings in, stream reports out); see `wled/README.md` |
 | **Base station** | New ESP32 in the pole base: batteries, status screen(s), buttons | `firmware/base/` (ESP-IDF 5.5.5) | Waveshare ESP32-S3-Touch-LCD-3.49, portrait. Version 2: reads the power board (charger, lights monitor, expander), keypads with RGB keys (`hardware/keypad/`) driving Live / Standby like a video switcher, main screen with power, Live, Standby and target; the old touch pages behind it; scans for WLED and anchors the channel itself if WLED is absent |
-| **Preview screen** | Waveshare ESP32-S3-AMOLED-1.91 (RM67162, 536 x 240), MAC 3C:0F:02:D9:7A:08, was the fin sensor node | `firmware/preview/` (ESP-IDF 5.5.5) | Started 2026-11-01: side view of the shark from a brain's radio stream (`NL_MSG_PREVIEW`); test pattern with no stream. Running on the board; loss on a stable channel not measured yet, and it shows the brain's Live until a second brain exists |
+| **Base, small boards** | Waveshare ESP32-S3-AMOLED-1.91 (main, portrait 240 x 536) + 2× ESP32-S3-Touch-AMOLED-1.64 v1.1 (Live and Standby monitors, landscape 456 x 280) | `firmware/base/` built for the 1.91 (`build-191/`), `firmware/monitor/` | Started 2026-11-14 to replace the 3.49 (too big): the base runs on the 1.91 with a power page; the monitors show each side's shark picture and names over the radio (`NL_MSG_SHOW`). Bench-tested 2026-11-14 with both brains on USB (each monitor gets its own brain's picture, ~1.5% frames lost) and a TF card, without the power board or keypads; the 3.49 build stays the fallback |
+| **Preview screen** | Waveshare ESP32-S3-AMOLED-1.91 (RM67162, 536 x 240), MAC 3C:0F:02:D9:7A:08, was the fin sensor node | `firmware/preview/` (ESP-IDF 5.5.5) | **Board reused as the base 1.91 on 2026-11-14** (the monitors took over its job; reflash `firmware/preview` to bring it back). Started 2026-11-01: side view of the shark from a brain's radio stream (`NL_MSG_PREVIEW`); test pattern with no stream. Running on the board; loss on a stable channel not measured yet, and it shows the brain's Live until a second brain exists |
 | **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing, radio packets, eye messages, commands, bumps, channel scanning with fallback anchoring, WLED audio conversion; host tests (`make -C shared/nibbles_link`) |
 | **Radio transport** | ESP-IDF boards (eyes, base) | `shared/nibbles_espnow/` | ESP-NOW: anchor or scan, broadcast, commands with ack/retry |
 
@@ -30,6 +31,9 @@ how the firmware works and why.
 | Starboard eye | 28:84:85:3A:DA:78 | link leader (shared eye brain) and radio gateway |
 | Port eye | 28:84:85:3B:6F:F4 | recognised by MAC (`PORT_EYE_MACS`); the ears (mic + audio analysis) |
 | Base | 28:84:85:90:93:00 | ESP32-S3-Touch-LCD-3.49 running `firmware/base` (since 2026-11-08; the previous base, 80:45:6B:35:D0:14, died in a USB ground loop that day. The first base prototype, 28:84:85:91:27:08, is spare) |
+| Base 1.91 | 3C:0F:02:D9:7A:08 | `firmware/base` on the 1.91 (was the preview screen until 2026-11-14) |
+| Live monitor | 28:84:85:8D:40:4C | ESP32-S3-Touch-AMOLED-1.64 running `firmware/monitor` |
+| Standby monitor | 28:84:85:8D:4C:4C | same, Standby by MAC |
 | Right Brain | E8:3D:C1:F7:79:E4 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14 |
 | Left Brain | 14:C1:9F:2A:6E:48 | same; GPIO 13 to controller GPIO 34, return wire on GPIO 14 |
 
@@ -50,6 +54,9 @@ make -C firmware/base/test/host                       # base keypad logic and po
 idf.py -C firmware/eyes build
 idf.py -C firmware/eyes -p /dev/cu.usbmodemNNN flash
 idf.py -C firmware/base build                         # base prototype; flash the same way
+# base on the 1.91 (its own build folder; see firmware/base/CLAUDE.md):
+idf.py -C firmware/base -B firmware/base/build-191 -D SDKCONFIG=firmware/base/build-191/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board_191" build
+idf.py -C firmware/monitor build                      # the Live / Standby monitors (1.64)
 ```
 
 Testing radio commands without pressing buttons: write commands (plus
