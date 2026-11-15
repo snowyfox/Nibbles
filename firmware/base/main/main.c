@@ -11,6 +11,7 @@
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -22,6 +23,7 @@
 #include "mirror_link.h"
 #include "ota.h"
 #include "rtc.h"
+#include "ble_time.h"
 #include "nibbles_espnow.h"
 #include "nvs_flash.h"
 #include "power.h"
@@ -763,6 +765,12 @@ static void console_task(void *arg)
         }
         else if (!strcmp(line, "time")) printf("TIME %lu%s\n", (unsigned long)rtc_now(), rtc_chip_found() ? "" : " no clock chip");
         else if (!strcmp(line, "time forget")) rtc_forget();
+        else if (!strcmp(line, "ble on")) {   // set the clock again from a phone: forget it, Bluetooth on (until set, or 10 min)
+            rtc_forget();
+            ble_time_start();
+        }
+        else if (!strcmp(line, "ble")) printf("BLE %s\n", ble_time_state() == BLE_TIME_WAITING ? "advertising" :
+                                               ble_time_state() == BLE_TIME_CONNECTED ? "phone connected" : "off");
         else if (!strncmp(line, "time ", 5)) printf("TIME %s %lu\n", rtc_set(strtoul(line + 5, NULL, 10)) ? "set" : "failed", (unsigned long)rtc_now());
         else if (!strcmp(line, "log on") || !strcmp(line, "log off")) logger_enable(line[5] == 'n');
         else if (!strcmp(line, "log tail")) logger_print_tail(8);
@@ -917,7 +925,10 @@ void app_main(void)
     ota_wifi_init();   // the Wi-Fi netif before the radio starts Wi-Fi
     ESP_ERROR_CHECK(nl_espnow_start(&cfg));
     if (power_start() != ESP_OK) ESP_LOGE(TAG, "no power board bus");
-    rtc_start();
+    // No time (the 1.91 has no clock chip): let a phone set it over Bluetooth.
+    if (!rtc_start() && !mirror_is_mirror()) ble_time_start();
+    ESP_LOGI(TAG, "internal RAM free: %u KB (largest block %u KB)", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
     if (logger_start() != ESP_OK) ESP_LOGE(TAG, "no logger");
     if (keypad_start(on_key) != ESP_OK) ESP_LOGE(TAG, "no keypad task");
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
@@ -1011,6 +1022,24 @@ void app_main(void)
         echo_was = leds_echo;
 
         // The time from the radio. A few seconds' difference isn't worth a write.
+        // The time from a phone over Bluetooth, read once; then Bluetooth goes off.
+        {
+            static ble_time_state_t bt_was;
+            uint32_t bt_time;
+            if (ble_time_poll(rtc_time_known(), &bt_time)) {
+                ESP_LOGI(TAG, "time from the phone: %lu", (unsigned long)bt_time);
+                rtc_set(bt_time);
+                display_event("Clock set from the phone, Bluetooth off");
+            }
+            const ble_time_state_t bt = ble_time_state();
+            if (bt != bt_was) {
+                if (bt == BLE_TIME_WAITING) display_event("Bluetooth: connect to \"%s\" to set the clock", BLE_TIME_NAME);
+                else if (bt == BLE_TIME_CONNECTED) display_event("Bluetooth: phone connected, reading the time");
+                else if (!rtc_time_known()) display_event("Bluetooth off, clock not set");
+                else display_event("Clock set, Bluetooth off");
+                bt_was = bt;
+            }
+        }
         const uint32_t heard = heard_time;
         if (heard) {
             heard_time = 0;

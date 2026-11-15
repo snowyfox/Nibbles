@@ -36,7 +36,7 @@ static const char *TAG = "display";
 #define PIN_RST        17
 #define LCD_W          240         // portrait: the panel's own orientation
 #define LCD_H          536
-#define BUF_ROWS       40          // LVGL draws in bands this tall, two buffers
+#define BUF_ROWS       20          // LVGL draws in bands this tall, two buffers (internal RAM: Bluetooth needs its share)
 #define BRIGHTNESS     0xD0        // 0..255 (register 0x51)
 #define UPDATE_MS      250
 

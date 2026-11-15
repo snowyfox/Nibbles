@@ -43,6 +43,35 @@ stays as the fallback until the new set has run a rehearsal.
   Standby by name, links/channel/keypads, the log line and the event line. No
   touch; the sharks, fins, eyes, palette viewer and survey page are left out
   (their functions are empty). `shot` works (240 x 536).
+- **Clock from a phone over Bluetooth** (`main/ble_time.c`, 2026-11-14; only
+  builds with NimBLE, the 1.91's `sdkconfig.board_191`): with no time at boot
+  the base advertises as "Nibbles Base" (`BLE_TIME_NAME`) for up to 10 min
+  (`BLE_TIME_WINDOW_MS`). A phone that connects is paired (Just Works, bonds
+  in NVS) and its Current Time Service (0x1805: Current Time 0x2A2B, Local
+  Time Information 0x2A0F; iOS provides it itself) is read and turned into UTC;
+  then the link drops and NimBLE is stopped and deinitialised, so ESP-NOW has
+  the radio again. It also stops when the time comes another way. Serial:
+  `ble on` (forget the time, open the window again), `ble` (state). Event line:
+  "Bluetooth: connect to ...", "phone connected", "Clock set from the phone".
+  The GATT client needs `CONFIG_BT_NIMBLE_ROLE_CENTRAL` in ESP-IDF's Kconfig;
+  NimBLE's buffers are in PSRAM and the screen's draw bands are 20 rows, or
+  the logger and keypad tasks can't start (internal RAM: 49 KB free after).
+  **It also looks like a media remote** (HID over GATT, consumer control,
+  one 16-bit report it never sends, plus battery and device information
+  services; advertised with the HID service and appearance 0x0180): iOS lists
+  only some kinds of accessory in Settings > Bluetooth and reconnects only
+  those by itself. Soliciting Apple's notification service (ANCS), tried
+  first, did not list it; LightBlue worked but needed a tap at every power-up.
+  **Tested 2026-11-14 with the user's iPhone:** pair once from Settings >
+  Bluetooth ("Nibbles Base" under Other Devices); after that, with the phone
+  nearby (it was **locked** the whole time), a restart is set with no touch: the phone reconnected 1.3 s
+  after advertising began, the clock was set 3.6 s after power-up, Bluetooth
+  off at 3.7 s. The phone then shows it "not connected", and it can't be
+  reconnected by hand until the board advertises again (next boot, or
+  `ble on`): that's by design. The on-screen keyboard: no problem seen, but
+  none was open during the test. iOS hides it for a connected keyboard-type
+  HID device; this one is a consumer control (media keys), and it's connected
+  for about a second, so at worst a keyboard open at that moment could blink.
 - **Live / Standby to the monitors**: the main loop broadcasts `NL_MSG_SHOW`
   (`nl_show_t`, one packet per side) every 500 ms and on a change
   (`show_broadcast` in `main.c`), on both boards.

@@ -104,6 +104,12 @@
 #define PIN_RTC_SDA          47
 #define PIN_RTC_SCL          48
 #endif
+// Setting the clock from a phone over Bluetooth (ble_time.c; builds with
+// NimBLE, the 1.91's): advertised under this name from boot until the time
+// is known, for at most this long.
+#define BLE_TIME_NAME        "Nibbles Base"
+#define BLE_TIME_WINDOW_MS   (10 * 60 * 1000)
+
 #define POWER_I2C_HZ         100000
 #define POWER_POLL_MS        200
 #define BASE_LOAD_MW         2000    // the base itself, for the runtime estimate (estimate)
