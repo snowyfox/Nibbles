@@ -21,6 +21,7 @@ static const char *const key_names[] = {
     "polepower",
     "left", "right", "up", "down",
     "pageup", "pagedown",
+    "monitors", "detail",
 };
 _Static_assert(sizeof(key_names) / sizeof(key_names[0]) == KEY_COUNT, "a name for every key");
 
@@ -629,6 +630,16 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
         if (down) c->lock_toggled = false;  // ctl_tick toggles once it's been held long enough
         return 0;
     }
+    if (key == KEY_DETAIL) {   // held: details while held; a tap toggles them on or off for good
+        if (down) c->detail = true;
+        else {
+            const bool tap = now_ms - c->down_ms[key] < CTL_DETAIL_TAP_MS;
+            const bool was_latched = c->detail_latched;
+            c->detail_latched = tap && !was_latched;
+            c->detail = c->detail_latched;
+        }
+        return 0;
+    }
     if (c->locked) {
         // Only releases of keys that were doing something when the lock came on matter.
         if (!down && (c->bump_slots || c->take_preview || c->nheld)) {
@@ -678,6 +689,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             break;
         case KEY_POLE_POWER:
             if (down) emit(&o, ACT_POLE_POWER, 0, 0, 0);
+            break;
+        case KEY_MONITORS:
+            if (down) {
+                c->monitors_by_brain = !c->monitors_by_brain;
+                emit(&o, ACT_MONITORS, 0, 0, c->monitors_by_brain);
+            }
             break;
         case KEY_LEFT: case KEY_RIGHT: case KEY_PAGE_UP: case KEY_PAGE_DOWN:   // the palette viewer: a screenful
             if (down && ctl_mode(c) == PAGE_PALETTES)
@@ -889,6 +906,8 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     rgb[KEY_MOD_LAYER] = c->down[KEY_MOD_LAYER] ? 0xffffff : 0x006050;
     rgb[KEY_MOD_BRIGHT] = c->down[KEY_MOD_BRIGHT] ? 0xffffff : 0x504000;
     rgb[KEY_POLE_POWER] = c->down[KEY_POLE_POWER] ? 0xff0000 : 0x301000;
+    rgb[KEY_DETAIL] = c->detail ? 0xffffff : 0x303030;
+    rgb[KEY_MONITORS] = c->down[KEY_MONITORS] ? 0xffffff : c->monitors_by_brain ? 0x2040c0 : 0x303030;   // blue: by brain
     for (int k = KEY_LEFT; k <= KEY_PAGE_DOWN; k++)   // lit while they do something: palettes showing
         rgb[k] = c->down[k] ? 0xffffff : ctl_mode(c) == PAGE_PALETTES ? 0x404040 : C_OFF;
     for (int k = KEY_ALL; k <= KEY_FINS; k++) {

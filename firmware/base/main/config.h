@@ -68,11 +68,14 @@
 #if CONFIG_BASE_BOARD_AMOLED_191
 // ESP32-S3-AMOLED-1.91 (2026-11-14): GPIO 1 has the battery ADC's 100k/100k
 // divider and 5-7, 17, 18, 47, 48 are the screen's, so the bus is on 2/3
-// (header H1 pins 6 and 7), INT and dock detect on 11/12 (H1 9, 10).
+// (header H1 pins 6 and 7), INT on 11 (H1 9); the power board's DOCK_UART
+// (unused) on 12 (H1 10) and dock detect on 13 (H1 11), in the cable's order
+// (the user's wiring, 2026-11-14).
 #define PIN_PWR_SDA          2
 #define PIN_PWR_SCL          3
 #define PIN_PWR_INT          11
-#define PIN_DOCK_DET         12
+#define PIN_DOCK_UART        12      // not used by the firmware
+#define PIN_DOCK_DET         13
 
 // The TF card, 1-bit SD on the board's "V2" wiring (Waveshare's SD example:
 // CLK 9, CMD 42, D0 8; the older wiring shared the screen's clock, GPIO 47).
@@ -147,7 +150,7 @@
 // hub's J1 pin 7. The ROM prints its boot banner on this pin, so the LEDs
 // may flicker for a moment at power-up until the firmware sets them.
 #if CONFIG_BASE_BOARD_AMOLED_191
-#define PIN_KEY_LEDS         13      // H1 pin 11: no boot banner on it
+#define PIN_KEY_LEDS         14      // H1 pin 12: no boot banner on it
 #else
 #define PIN_KEY_LEDS         43
 #endif

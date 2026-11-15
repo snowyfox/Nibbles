@@ -320,6 +320,7 @@ class NibblesUsermod : public Usermod {
     int8_t abSide = -1;                  // setting, on a brain: 0 Right Brain, 1 Left Brain, -1 no A/B
     nl_ab_state_t abHeard = {};
     bool abHeardAny = false;
+    unsigned long abHeardAt = 0;          // when the controller's A/B state last came (for the status LED)
     uint32_t wireBaud = NL_PIX_BAUD;     // setting
     int8_t wirePinUp = -1;               // the pin the UART runs on now
     uint32_t wireBaudUp = 0;
@@ -1125,7 +1126,7 @@ class NibblesUsermod : public Usermod {
       const bool last = previewNext + n >= total;
       if (previewNext == 0) previewFrameAt = now;
       m.frame = previewFrame;
-      m.flags = last ? NL_PREVIEW_LAST : 0;
+      m.flags = (last ? NL_PREVIEW_LAST : 0) | (abSide == 0 ? NL_PREVIEW_RIGHT : abSide == 1 ? NL_PREVIEW_LEFT : 0);
       m.start = previewNext;
       m.total = total;
       for (unsigned i = 0; i < n; i++) {
@@ -1515,6 +1516,73 @@ class NibblesUsermod : public Usermod {
 
     // ---- A/B brains
     bool abStandby() const { return abSide >= 0 && nl_ab_is_standby(abSide, abHeardAny, &abHeard); }
+
+#ifdef NIBBLES_STATUS_LED
+    // ---- the board's RGB LED shows this brain's A/B state (2026-11-14; brains only:
+    // NIBBLES_STATUS_LED is the pin, a WS2812-type LED taking RGB order). Not a WLED output: the brains'
+    // only output is the virtual one the wire copies, so the pin is free.
+    //   red        Live (on the LEDs)          red blinking   Live, but TAKE shows the other brain
+    //   green      Standby                     amber          Standby, on the LEDs (TAKE held)
+    //   magenta blinking  the controller is heard, but not this brain's wire
+    //   blue blinking     the controller not heard (no A/B state for 2 s)
+    //   off        no ab_side (not a brain)
+    uint32_t statusLedShown = 0xFFFFFFFF;
+    unsigned long statusLedAt = 0;
+    unsigned long statusLedTestAt = 0;    // "ledtest": red, green, blue, 2 s each, from then
+
+    // One WS2812 pixel, bit-banged with interrupts off (~30 us): no RMT channel
+    // taken from WLED's buses. Straight register writes and the cycle counter,
+    // all in IRAM: a library call that missed the flash cache stretched the
+    // pulses (the first version showed red for "off", 2026-11-14).
+    static inline uint32_t IRAM_ATTR ccount() { uint32_t c; __asm__ __volatile__("rsr %0, ccount" : "=a"(c)); return c; }
+    static void IRAM_ATTR ws2812Write(int pin, uint8_t r, uint8_t g, uint8_t b) {
+      const uint32_t mhz = getCpuFrequencyMhz();
+      const uint32_t t0h = mhz * 35 / 100, t1h = mhz * 75 / 100, period = mhz * 125 / 100;
+      const uint32_t bits = (uint32_t)r << 16 | (uint32_t)g << 8 | b;   // this board's LED takes RGB, not WS2812's usual GRB (tested)
+      const uint32_t set = pin >= 32 ? GPIO_OUT1_W1TS_REG : GPIO_OUT_W1TS_REG;
+      const uint32_t clr = pin >= 32 ? GPIO_OUT1_W1TC_REG : GPIO_OUT_W1TC_REG;
+      const uint32_t mask = 1u << (pin & 31);
+      static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+      portENTER_CRITICAL(&mux);
+      uint32_t start = ccount() - period;   // the first bit starts at once
+      for (int i = 23; i >= 0; i--) {
+        const uint32_t high = (bits >> i) & 1 ? t1h : t0h;
+        while (ccount() - start < period) {}   // the previous bit's low time (none before the first)
+        start = ccount();
+        REG_WRITE(set, mask);
+        while (ccount() - start < high) {}
+        REG_WRITE(clr, mask);
+      }
+      while (ccount() - start < period) {}
+      portEXIT_CRITICAL(&mux);
+    }
+
+    void statusLedLoop(unsigned long now) {
+      static bool pinReady;
+      if (!pinReady) {
+        if (!PinManager::allocatePin(NIBBLES_STATUS_LED, true, PinOwner::UM_Unspecified)) return;   // WLED has it
+        gpio_set_direction((gpio_num_t)NIBBLES_STATUS_LED, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)NIBBLES_STATUS_LED, 0);
+        pinReady = true;
+      }
+      const bool blinkOn = (now / 500) % 2;
+      uint32_t c = 0;   // 0xRRGGBB at full; scaled below
+      if (statusLedTestAt && now - statusLedTestAt < 6000) c = (uint32_t[]){ 0xFF0000, 0x00FF00, 0x0000FF }[(now - statusLedTestAt) / 2000];
+      else if (abSide < 0 || display) c = 0;
+      else if (!abHeardAny || now - abHeardAt > 2000) c = blinkOn ? 0x0000FF : 0;
+      else if (!(abHeard.flags & (abSide ? NL_AB_B_UP : NL_AB_A_UP))) c = (now / 150) % 2 ? 0xFF00FF : 0;
+      else {
+        const bool standby = abStandby(), showing = abHeard.showing == abSide;
+        if (!standby) c = showing || blinkOn ? 0xFF0000 : 0;
+        else c = showing ? 0xFF8000 : 0x00FF00;
+      }
+      if (c == statusLedShown && now - statusLedAt < 1000) return;   // again every second, in case of a glitch
+      statusLedShown = c;
+      statusLedAt = now;
+      const uint8_t lvl = NIBBLES_STATUS_LED_LEVEL;
+      ws2812Write(NIBBLES_STATUS_LED, (c >> 16 & 0xFF) * lvl / 255, (c >> 8 & 0xFF) * lvl / 255, (c & 0xFF) * lvl / 255);
+    }
+#endif
 
     void abSendState() {
       const uint8_t fps[2] = { (uint8_t)min(wireIn[0].fps, (uint16_t)255), (uint8_t)min(wireIn[1].fps, (uint16_t)255) };
@@ -2295,6 +2363,7 @@ class NibblesUsermod : public Usermod {
         if (abSide >= 0 && !display) {
           memcpy(&abHeard, pl, sizeof(abHeard));
           abHeardAny = true;
+          abHeardAt = millis();
           if (fromWire) {   // the controller's radio may be off: tell the base ourselves
             abWireAt = millis();
             send(ESPNOW_BROADCAST_ADDRESS, NL_MSG_AB, pl, len);
@@ -2523,6 +2592,9 @@ class NibblesUsermod : public Usermod {
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
       presetQueueLoop(millis());
       trackPresets(millis());
+#ifdef NIBBLES_STATUS_LED
+      statusLedLoop(millis());
+#endif
       if (!display) slotLoop();
       netLoop(millis());
       if (!display) hopLoop(millis());
@@ -2782,6 +2854,10 @@ class NibblesUsermod : public Usermod {
         if (display) ctlWifi(on);
         else sendCtlWifi(on);
       }
+#ifdef NIBBLES_STATUS_LED
+      // {"nibbles":{"ledtest":true}}: the status LED shows red, green, blue for 2 s each (colour order check)
+      if (root[F("nibbles")][F("ledtest")] | false) statusLedTestAt = millis();
+#endif
       // {"nibbles":{"preview":true|false}}: the preview stream, until the next reboot
       if (!root[F("nibbles")][F("preview")].isNull()) previewOn = root[F("nibbles")][F("preview")].as<bool>();
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test

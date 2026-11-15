@@ -2170,9 +2170,14 @@ void display_show_page(int page)
 
 void display_update(const display_status_t *s)
 {
+    static bool detail;
     taskENTER_CRITICAL(&lock);
     status = *s;
     taskEXIT_CRITICAL(&lock);
+    if (s->detail != detail) {   // DETAIL: Live and Standby (page 1) while it's on, then back to the main page
+        detail = s->detail;
+        display_show_page(detail ? 1 : 0);
+    }
 }
 
 void display_event(const char *fmt, ...)

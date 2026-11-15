@@ -393,6 +393,30 @@ static void send_preset_both(int n)
     send_cmd_to(NL_TARGET_EYES, NL_OP_PRESET_SET, n - 1);
 }
 
+// The monitors' mode (NL_SHOW_BY_BRAIN), kept in NVS across restarts.
+static bool monitors_load(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open("base", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, "mon_brain", &v);
+        nvs_close(h);
+    }
+    return v != 0;
+}
+
+static void monitors_saved(bool by_brain)
+{
+    nvs_handle_t h;
+    if (nvs_open("base", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "mon_brain", by_brain);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    display_event("Monitors: %s", by_brain ? "Right / Left brain" : "Live / Standby");
+    ESP_LOGI(TAG, "monitors: %s", by_brain ? "by brain (Right, Left)" : "by side (Live, Standby)");
+}
+
 // Toggle the pole's power; it only goes off with a USB-C supply on the LEMO.
 static void pole_power(void)
 {
@@ -439,6 +463,7 @@ static void do_ctl_action(const ctl_action_t *a)
             break;
         case ACT_BUMP_END:   slot_stop(a->target == TGT_EYES ? SLOT_EYES : a->target == TGT_FINS ? SLOT_FINS : SLOT_WLED); break;
         case ACT_POLE_POWER: pole_power(); break;
+        case ACT_MONITORS:   monitors_saved(a->value); break;
     }
 }
 
@@ -741,6 +766,19 @@ static void console_task(void *arg)
                         st.flags & NL_AB_A_UP ? "up" : "down", st.fps[0], st.flags & NL_AB_B_UP ? "up" : "down", st.fps[1], st.takes, st.failovers,
                         stby_age >= 0 && stby_age < 2000000 ? "heard" : "not heard", ab_in_use ? "in use" : "not in use");
         }
+        else if (!strncmp(line, "monitors", 8) && (!line[8] || line[8] == ' ')) {   // monitors [sides|brains|toggle]
+            const char *arg = line[8] ? line + 9 : "";
+            xSemaphoreTake(ctl_mutex, portMAX_DELAY);
+            const bool was = ctl.monitors_by_brain;
+            if (!strcmp(arg, "brains")) ctl.monitors_by_brain = true;
+            else if (!strcmp(arg, "sides")) ctl.monitors_by_brain = false;
+            else if (!strcmp(arg, "toggle")) ctl.monitors_by_brain = !was;
+            const bool now_by_brain = ctl.monitors_by_brain;
+            xSemaphoreGive(ctl_mutex);
+            if (now_by_brain != was) monitors_saved(now_by_brain);
+            else if (arg[0] && strcmp(arg, "brains") && strcmp(arg, "sides")) printf("? monitors [sides|brains|toggle]\n");
+            printf("monitors: %s\n", now_by_brain ? "brains (Right, Left)" : "sides (Live, Standby)");
+        }
         else if (!strcmp(line, "ab hold on")) slot_start(SLOT_AB, NL_BUMP_AB, 0, 255);
         else if (!strcmp(line, "ab hold off")) slot_stop(SLOT_AB);
         else if (!strncmp(line, "ab take", 7)) {   // as TAKE + LATCH, so Standby keeps Live as it was
@@ -841,7 +879,8 @@ static void show_side(nl_show_t *o, int side, const display_status_t *s)
     memset(o, 0, sizeof(*o));
     o->side = side;
     o->flags = (s->keys_locked ? NL_SHOW_LOCKED : 0) | (s->latch ? NL_SHOW_LATCH : 0) | (s->take_preview ? NL_SHOW_PREVIEW : 0) |
-               (s->diff ? NL_SHOW_DIFFERS : 0) | (s->wled_fresh ? NL_SHOW_WLED_HEARD : 0) | (s->eyes_fresh ? NL_SHOW_EYES_HEARD : 0);
+               (s->diff ? NL_SHOW_DIFFERS : 0) | (s->wled_fresh ? NL_SHOW_WLED_HEARD : 0) | (s->eyes_fresh ? NL_SHOW_EYES_HEARD : 0) |
+               (s->monitors_by_brain ? NL_SHOW_BY_BRAIN : 0) | (s->detail ? NL_SHOW_DETAIL : 0);
     o->target = s->target;
     o->brain = s->ab_live < 0 ? -1 : stby ? !s->ab_live : s->ab_live;
     o->brightness = stby ? 0 : s->brightness;
@@ -919,6 +958,7 @@ void app_main(void)
     bump_mutex = xSemaphoreCreateMutex();
     ctl_mutex = xSemaphoreCreateMutex();
     ctl_init(&ctl, KEYPAD_AUTOLOCK_MS);
+    ctl.monitors_by_brain = monitors_load();
     actions = xQueueCreate(16, sizeof(action_t));
     timed_bumps = xQueueCreate(1, sizeof(timed_bump_t));
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
@@ -1138,6 +1178,8 @@ void app_main(void)
             else snprintf(ds.log_text, sizeof(ds.log_text), "Log L%05d%s", l.file_number, rtc_time_known() ? "" : " no clock");
         }
         ds.ab_live = ab_on ? abs.live : -1;
+        ds.monitors_by_brain = c.monitors_by_brain;
+        ds.detail = c.detail;
         display_update(&ds);
         show_broadcast(&ds);
         if (n % 40) continue;  // log every 2 s

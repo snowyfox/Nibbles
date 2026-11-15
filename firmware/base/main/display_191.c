@@ -39,6 +39,7 @@ static const char *TAG = "display";
 #define BUF_ROWS       20          // LVGL draws in bands this tall, two buffers (internal RAM: Bluetooth needs its share)
 #define BRIGHTNESS     0xD0        // 0..255 (register 0x51)
 #define UPDATE_MS      250
+#define SIMPLE_EVENT_MS 8000       // the simple page shows an event this long
 
 #define CMD(c)         ((0x02u << 24) | ((uint32_t)(c) << 8))     // command and parameters on one line
 #define COLOR_CMD(c)   ((0x32u << 24) | ((uint32_t)(c) << 8))     // pixels on four
@@ -161,6 +162,11 @@ static lv_obj_t *label_at(lv_obj_t *parent, const lv_font_t *font, uint32_t colo
 static void set_col(lv_obj_t *l, uint32_t c) { lv_obj_set_style_text_color(l, lv_color_hex(c), 0); }
 
 static struct {
+    lv_obj_t *simple, *detail;   // the two pages: big text (normal), small text (DETAIL)
+    // The simple page
+    lv_obj_t *s_pct, *s_icon, *s_bar, *s_cap1, *s_val1, *s_cap2, *s_val2, *s_problem, *s_problem_t;
+    lv_obj_t *s_target, *s_target_name, *s_target_note, *s_warn, *s_event;
+    // The detail page
     lv_obj_t *power, *pct, *pack_v, *chg, *input, *runtime, *lights, *temps, *problem;
     lv_obj_t *target, *target_name, *page, *latch;
     lv_obj_t *live_t, *live_body, *live_eyes, *live_fins, *stby_t, *stby_body, *stby_eyes, *stby_fins;
@@ -209,11 +215,79 @@ static void graph_update(int pct)
     lv_obj_invalidate(m.graph);
 }
 
+// A plain rectangle (no padding, no scrolling), for boxes and pages.
+static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, uint32_t bg, lv_opa_t opa, int radius)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(o, x, y);
+    lv_obj_set_size(o, w, h);
+    lv_obj_set_style_bg_color(o, lv_color_hex(bg), 0);
+    lv_obj_set_style_bg_opa(o, opa, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, radius, 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
+    return o;
+}
+
+// The simple page (2026-11-14, the user: read from half a metre or more, in
+// the dark, no touch): nothing smaller than 20 px, the numbers 40-48 px. The
+// pack's charge and a bar; time left (or what charging does); the lights'
+// watts; the worst problem in a red box; the keypad's target; only what's
+// missing; the last event for a few seconds. Everything else: DETAIL.
+static void build_simple(lv_obj_t *pg)
+{
+    const int w = LCD_W - 16;
+    m.s_pct = label_at(pg, &lv_font_montserrat_48, COL_TEXT, 8, 2, 0);
+    m.s_icon = label_at(pg, &lv_font_montserrat_48, COL_OK, 0, 2, 0);
+    lv_obj_align(m.s_icon, LV_ALIGN_TOP_RIGHT, -8, 2);
+    m.s_bar = lv_bar_create(pg);
+    lv_obj_set_pos(m.s_bar, 8, 60);
+    lv_obj_set_size(m.s_bar, w, 30);
+    lv_bar_set_range(m.s_bar, 0, 100);
+    lv_obj_set_style_bg_color(m.s_bar, lv_color_hex(COL_CARD), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(m.s_bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(m.s_bar, lv_color_hex(COL_TITLE), LV_PART_MAIN);
+    lv_obj_set_style_border_width(m.s_bar, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(m.s_bar, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(m.s_bar, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(m.s_bar, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_anim_duration(m.s_bar, 0, LV_PART_MAIN);
+
+    m.s_cap1 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8, 100, w);
+    m.s_val1 = label_at(pg, &lv_font_montserrat_40, COL_TEXT, 8, 122, w);
+    m.s_cap2 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8, 176, w);
+    m.s_val2 = label_at(pg, &lv_font_montserrat_40, COL_TEXT, 8, 198, w);
+    lv_label_set_text(m.s_cap2, "LIGHTS");
+
+    m.s_problem = box(pg, 8, 254, w, 72, COL_BAD, LV_OPA_COVER, 8);
+    m.s_problem_t = label_at(m.s_problem, &lv_font_montserrat_28, COL_TEXT, 8, 2, w - 16);
+    lv_label_set_long_mode(m.s_problem_t, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(m.s_problem_t, 68);
+
+    m.s_target = box(pg, 8, 336, w, 96, COL_DIM, LV_OPA_COVER, 10);
+    m.s_target_name = label_at(m.s_target, &lv_font_montserrat_48, COL_BG, 0, 4, w);
+    lv_obj_set_style_text_align(m.s_target_name, LV_TEXT_ALIGN_CENTER, 0);
+    m.s_target_note = label_at(m.s_target, &lv_font_montserrat_28, COL_BG, 0, 60, w);
+    lv_obj_set_style_text_align(m.s_target_note, LV_TEXT_ALIGN_CENTER, 0);
+
+    m.s_warn = label_at(pg, &lv_font_montserrat_20, COL_WARN, 8, 440, w);
+    m.s_event = label_at(pg, &lv_font_montserrat_20, COL_TEXT, 8, 466, w);   // three lines, to the bottom
+    lv_label_set_long_mode(m.s_event, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(m.s_event, LCD_H - 466);
+}
+
 static void ui_build(void)
 {
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), 0);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *scr0 = lv_screen_active();
+    lv_obj_set_style_bg_color(scr0, lv_color_hex(COL_BG), 0);
+    lv_obj_remove_flag(scr0, LV_OBJ_FLAG_SCROLLABLE);
+    m.simple = box(scr0, 0, 0, LCD_W, LCD_H, COL_BG, LV_OPA_TRANSP, 0);
+    build_simple(m.simple);
+    // The detail page: the first layout, small text, while DETAIL is on.
+    m.detail = box(scr0, 0, 0, LCD_W, LCD_H, COL_BG, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(m.detail, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *scr = m.detail;
     const int w = LCD_W - 16;   // 8 px each side
 
     // Top: power (0..219), framed in red when there's a problem
@@ -305,6 +379,107 @@ static void fill_side(lv_obj_t *body, lv_obj_t *eyes, lv_obj_t *fins, const ctl_
     lv_label_set_text_fmt(fins, "Fins  %s", sc->fins < 0 ? "--" : sc->fins ? p : "follow body");
 }
 
+// The worst power problem as a line of text, or NULL.
+static const char *power_problem(const power_status_t *p, char *buf, size_t n)
+{
+    if (p->have_charger && !p->charger_ok) return "Charger NOT set up";
+    if (p->pole_off) return NULL;
+    if (p->lights_off) return "LIGHTS SWITCHED OFF";
+    if (p->have_expander && !p->efuse_pg) return "eFuse tripped / off";
+    if (p->fault0 || p->fault1) {
+        snprintf(buf, n, "Charger fault %02x %02x", p->fault0, p->fault1);
+        return buf;
+    }
+    if (p->ts_flags & 0x09) return (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge";
+    return NULL;
+}
+
+static void simple_update(const display_status_t *s)
+{
+    const power_status_t *p = &s->power;
+    const bool board = p->have_charger || p->have_monitor || p->have_expander;
+    const chg_state_t cs = (chg_state_t)p->chg_state;
+    const bool charging = p->docked && p->have_charger && p->charger_ok && cs != CHG_DONE && cs != CHG_NOT_CHARGING;
+
+    // The pack: percent, the bar, and an icon: a bolt charging, the plug on a supply.
+    if (p->pack_pct >= 0) {
+        const pack_level_t lv = pack_level(p->pack_pct);
+        const uint32_t col = lv == PACK_CRITICAL ? COL_BAD : lv == PACK_LOW ? COL_WARN : charging ? COL_OK : COL_TEXT;
+        lv_label_set_text_fmt(m.s_pct, "%d%%", p->pack_pct);
+        set_col(m.s_pct, col);
+        lv_bar_set_value(m.s_bar, p->pack_pct, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(m.s_bar, lv_color_hex(lv == PACK_CRITICAL ? COL_BAD : lv == PACK_LOW ? COL_WARN : COL_OK), LV_PART_INDICATOR);
+    } else {
+        lv_label_set_text(m.s_pct, board ? "--%" : "???");
+        set_col(m.s_pct, COL_DIM);
+        lv_bar_set_value(m.s_bar, 0, LV_ANIM_OFF);
+    }
+    lv_label_set_text(m.s_icon, charging ? LV_SYMBOL_CHARGE : p->docked ? LV_SYMBOL_USB : "");
+    set_col(m.s_icon, charging ? COL_OK : COL_TITLE);
+
+    // Time left on the pack, or what charging is doing.
+    if (p->docked && p->have_charger) {
+        if (charging) {
+            const int a10 = ((p->ibat_ma > 0 ? p->ibat_ma : 0) + 50) / 100;
+            lv_label_set_text(m.s_cap1, "CHARGING");
+            lv_label_set_text_fmt(m.s_val1, "%d.%d A", a10 / 10, a10 % 10);
+            set_col(m.s_val1, COL_OK);
+        } else {
+            lv_label_set_text(m.s_cap1, "PLUGGED IN");
+            lv_label_set_text(m.s_val1, cs == CHG_DONE ? "Full" : p->starved ? "Weak" : "Idle");
+            set_col(m.s_val1, cs == CHG_DONE ? COL_OK : COL_WARN);
+        }
+    } else {
+        lv_label_set_text(m.s_cap1, "TIME LEFT");
+        if (p->runtime_min >= 0) {
+            const int mins = p->runtime_min < 99 * 60 + 59 ? p->runtime_min : 99 * 60 + 59;
+            lv_label_set_text_fmt(m.s_val1, "%dh %02dm", mins / 60, mins % 60);
+            set_col(m.s_val1, p->runtime_min > 45 ? COL_TEXT : COL_WARN);
+        } else {
+            lv_label_set_text(m.s_val1, "--");
+            set_col(m.s_val1, COL_DIM);
+        }
+    }
+
+    // The lights.
+    if (p->pole_off) {
+        lv_label_set_text(m.s_val2, "POLE OFF");
+        set_col(m.s_val2, COL_WARN);
+    } else if (p->have_monitor) {
+        lv_label_set_text_fmt(m.s_val2, "%d W", (p->light_mw > 0 ? p->light_mw + 500 : 0) / 1000);
+        set_col(m.s_val2, COL_TEXT);
+    } else {
+        lv_label_set_text(m.s_val2, "--");
+        set_col(m.s_val2, COL_DIM);
+    }
+
+    // The worst problem.
+    char ptext[40];
+    const char *problem = board ? power_problem(p, ptext, sizeof(ptext)) : "No power board";
+    if (problem) {
+        lv_label_set_text(m.s_problem_t, problem);
+        lv_obj_remove_flag(m.s_problem, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(m.s_problem, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // The keypad's target, and LOCKED, LATCH or what the numbers are.
+    lv_obj_set_style_bg_color(m.s_target, lv_color_hex(s->keys_locked ? COL_DIM : target_col(s->target)), 0);
+    lv_label_set_text(m.s_target_name, ctl_target_name((ctl_target_t)s->target));
+    lv_label_set_text(m.s_target_note, s->keys_locked ? "LOCKED" : s->latch ? "LATCH" : ctl_page_name(s->page));
+
+    // Only what's missing.
+    const char *miss[3];
+    int nm = 0;
+    if (!s->wled_fresh) miss[nm++] = "WLED";
+    if (!s->eyes_fresh) miss[nm++] = "eyes";
+    if (!s->keypads_found) miss[nm++] = "keys";
+    char warn[40] = "";
+    if (nm) snprintf(warn, sizeof(warn), "No %s%s%s%s%s", miss[0], nm > 1 ? ", " : "", nm > 1 ? miss[1] : "",
+                     nm > 2 ? ", " : "", nm > 2 ? miss[2] : "");
+    lv_label_set_text(m.s_warn, warn);
+}
+
 static void ui_update(const display_status_t *s)
 {
     const power_status_t *p = &s->power;
@@ -366,16 +541,8 @@ static void ui_update(const display_status_t *s)
     }
 
     // Temperatures, or the worst problem in their place with a red border.
-    const char *problem = NULL;
     char ptext[40];
-    if (p->have_charger && !p->charger_ok) problem = "Charger NOT set up";
-    else if (p->pole_off) problem = NULL;
-    else if (p->lights_off) problem = "LIGHTS SWITCHED OFF";
-    else if (p->have_expander && !p->efuse_pg) problem = "eFuse tripped / off";
-    else if (p->fault0 || p->fault1) {
-        snprintf(ptext, sizeof(ptext), "Charger fault %02x %02x", p->fault0, p->fault1);
-        problem = ptext;
-    } else if (p->ts_flags & 0x09) problem = (p->ts_flags & 1) ? "Cells too hot to charge" : "Cells too cold to charge";
+    const char *problem = power_problem(p, ptext, sizeof(ptext));
     if (problem) {
         lv_label_set_text(m.problem, problem);
         lv_obj_remove_flag(m.problem, LV_OBJ_FLAG_HIDDEN);
@@ -438,8 +605,26 @@ static void display_task(void *arg)
             event_new = false;
             memcpy(ev, event_text, sizeof(ev));
             taskEXIT_CRITICAL(&lock);
+            if (s.detail != !lv_obj_has_flag(m.detail, LV_OBJ_FLAG_HIDDEN)) {   // DETAIL: the small-text page
+                if (s.detail) {
+                    lv_obj_add_flag(m.simple, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_remove_flag(m.detail, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(m.detail, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_remove_flag(m.simple, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
             ui_update(&s);
-            if (new_event) lv_label_set_text(m.event, ev);
+            simple_update(&s);
+            static int64_t event_until;
+            if (new_event) {
+                lv_label_set_text(m.event, ev);
+                lv_label_set_text(m.s_event, ev);   // the simple page shows it for a while
+                event_until = now + SIMPLE_EVENT_MS * 1000LL;
+            } else if (event_until && now > event_until) {
+                lv_label_set_text(m.s_event, "");
+                event_until = 0;
+            }
         }
         if (shot_wanted && !shot_filling) {
             shot_wanted = false;

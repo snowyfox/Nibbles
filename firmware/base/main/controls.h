@@ -36,6 +36,7 @@
 #define CTL_SCROLL_FAST_REPEAT_MS 80   // this often
 #define CTL_LAYERS   16    // layer looks (NL_LAYER_PRESET_COUNT)
 #define CTL_BRIGHTS  8     // brightness steps (eighths)
+#define CTL_DETAIL_TAP_MS 400   // DETAIL let go sooner than this is a tap (stays on the details)
 
 // Logical keys (where each physical key lands is set in config.h, KEYPAD_MAP).
 typedef enum {
@@ -66,6 +67,9 @@ typedef enum {
     KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,   // palettes showing: LEFT/RIGHT a screenful back/on, UP/DOWN one
                                              // (held: on by itself, CTL_SCROLL_*)
     KEY_PAGE_UP, KEY_PAGE_DOWN,              // palettes showing: a screenful back / on
+    KEY_MONITORS,    // tap: the Live / Standby monitors show sides (Live, Standby) or brains (Right, Left)
+    KEY_DETAIL,      // held: every screen shows its detail page while held; tap: stays there until tapped again
+                     // (works while locked: it changes nothing on the shark)
     KEY_COUNT
 } ctl_key_t;
 
@@ -99,6 +103,7 @@ typedef enum {
     ACT_AB_HOLD,     // two brains: value 1 show the Standby brain on the LEDs while held, 0 back
     ACT_AB_TAKE,     // two brains: swap Live and Standby on the controller
     ACT_BRIGHTNESS_STANDBY, // two brains: value = 0..255, the Standby brain only (from main)
+    ACT_MONITORS,    // MONITORS: value = the new mode (ctl_t.monitors_by_brain); main saves it
 } ctl_act_type_t;
 
 typedef struct {
@@ -174,6 +179,9 @@ typedef struct {
     uint8_t bump_slots;              // bit per slot (1 << TGT_BODY, TGT_EYES, TGT_FINS) with a bump on
     bool ab;                         // two brains up: Standby runs on the other brain, TAKE switches to it
     bool ab_holding;                 // TAKE is showing the Standby brain
+    bool monitors_by_brain;          // the monitors follow brains (Right, Left), not sides (NL_SHOW_BY_BRAIN)
+    bool detail;                     // the screens show their detail pages (DETAIL held or tapped; NL_SHOW_DETAIL)
+    bool detail_latched;             // DETAIL was tapped: they stay there until it's tapped again
 } ctl_t;
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms);

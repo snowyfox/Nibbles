@@ -22,3 +22,6 @@ CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 # Bluetooth's buffers in PSRAM: in internal RAM they left too little for the
 # logger and keypad tasks to start (2026-11-14).
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+
+# The simple page's big numbers (display_191.c, 2026-11-14).
+CONFIG_LV_FONT_MONTSERRAT_48=y

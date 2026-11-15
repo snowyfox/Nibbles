@@ -26,16 +26,47 @@ stays as the fallback until the new set has run a rehearsal.
   `idf.py -B build-191 -D SDKCONFIG=build-191/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board_191" build`
   (then `-p PORT flash` with the same `-B` and `-D SDKCONFIG`).
 - **1.91 pins** (`config.h`): power-board I2C SDA 2 / SCL 3 (header H1 6, 7;
-  GPIO 1 has the battery ADC's 100k divider), INT 11, dock detect 12, key LEDs
-  13 (no boot banner on it), TF card 1-bit SD CLK 9 / CMD 42 / D0 8 (the
+  GPIO 1 has the battery ADC's 100k divider), INT 11, DOCK_UART 12 (unused),
+  dock detect 13, key LEDs 14 (no boot banner on it), TF card 1-bit SD CLK 9 / CMD 42 / D0 8 (the
   board's "V2" wiring in Waveshare's SD example; the older wiring shared the
   screen's clock, GPIO 47). Screen: CS 6, SCLK 47, D0 18, D1 7, D2 48, D3 5,
   RST 17. 33-37 reach the header but are the octal PSRAM's.
+- **Power board cable** (its J10, JST-GH 8, as for the 3.49; 1.91 headers per
+  Waveshare's schematic, H1 = the row with GP43 at pin 1, H2 = the row with
+  VBUS at pin 1; go by the silkscreen labels, not by counting):
+
+  | J10 | Signal | 1.91 | Note |
+  |---|---|---|---|
+  | 1 | +5V_349 | H2-1 VBUS | the USB-C 5 V, as on the 3.49; the power board feeds it through D5 |
+  | 2 | GND | H1-3 GND (or any GND) | |
+  | 3 | +3V3 | H2-5 3V3 | the 1.91's 3.3 V out, for the bus pull-ups. **Not H2-4 (3V3_EN)**: low there switches the board off |
+  | 4 | SDA | H1-6 GP2 | |
+  | 5 | SCL | H1-7 GP3 | |
+  | 6 | INT | H1-9 GP11 | |
+  | 7 | DOCK_UART | H1-10 GP12 | unused by the firmware (`PIN_DOCK_UART`) |
+  | 8 | DOCK_DET | H1-11 GP13 | |
+
+  The keypad LEDs' data (not on J10) goes to H1-12 GP14.
 - **No clock chip** on the 1.91 (Waveshare's "onboard RTC" is the ESP32's
   own): `rtc.c` skips the PCF85063 (`BASE_HAS_RTC_CHIP 0`); the time comes
   from `time` or a WLED's `NL_MSG_TIME`, as with the 3.49 after a power-off.
-- **Screen** (`main/display_191.c`, same `display.h` API): one **portrait**
-  page (240 x 536, the panel's own orientation; the user mounts it that way;
+- **DETAIL key** (`KEY_DETAIL`, 2026-11-14; not in `KEYPAD_BOARDS` yet): the
+  screens are read from half a metre or more, in the rain, with no touch, so
+  each normally shows a **simple page** of big text, and DETAIL flips all three
+  (this one and both monitors, `NL_SHOW_DETAIL`) to the small-text page: held,
+  while held; a tap (under `CTL_DETAIL_TAP_MS`, 400 ms) keeps it there until the
+  next tap. It works with the keys locked. Its LED is white while the details
+  show. On the 3.49 it shows page 1 (Live and Standby). Serial: `key detail`.
+- **Simple page** (2026-11-14, `build_simple` / `simple_update`; 48 px font in
+  `sdkconfig.board_191`): nothing under 20 px. Pack % (48 px, coloured) with a
+  bolt (charging) or the USB plug (on a supply) on the right; a charge bar; TIME
+  LEFT on the pack, or CHARGING and its current, or PLUGGED IN with Full / Weak /
+  Idle (40 px); LIGHTS in watts or POLE OFF; the worst power problem in a red box
+  ("No power board" without one); the keypad's target in a 48 px box with LOCKED,
+  LATCH or what the numbers are; "No WLED, eyes, keys" for what's missing; the last
+  event for 8 s (`SIMPLE_EVENT_MS`).
+- **Detail page** (`main/display_191.c`, same `display.h` API): the first
+  **portrait** layout (240 x 536, the panel's own orientation; the user mounts it that way;
   `DISPLAY_191_UPSIDE_DOWN` turns it round), power at the top: pack % (40 px), voltage and charger state; the LEMO input;
   lights A and W; time left; cell and charger temperatures, or the worst
   problem in red with a red border; the pack's charge over the last hour.
@@ -74,7 +105,11 @@ stays as the fallback until the new set has run a rehearsal.
   for about a second, so at worst a keyboard open at that moment could blink.
 - **Live / Standby to the monitors**: the main loop broadcasts `NL_MSG_SHOW`
   (`nl_show_t`, one packet per side) every 500 ms and on a change
-  (`show_broadcast` in `main.c`), on both boards.
+  (`show_broadcast` in `main.c`), on both boards. The monitors' mode, by side
+  (Live, Standby) or by brain (Right, Left), goes with it (`NL_SHOW_BY_BRAIN`):
+  the **MONITORS** key (`KEY_MONITORS`, tap to toggle; LED grey / blue; not in
+  `KEYPAD_BOARDS` yet) or `monitors [sides|brains|toggle]`; kept in NVS
+  (`base`/`mon_brain`). See `firmware/monitor/CLAUDE.md`.
 - Tested 2026-11-14 on the bench with nothing attached: boots, screen drawn
   (screenshots), the monitors hear it. TF card: with a card in, it mounts and
   logs (L00014, 2026-11-14; the 0x107 timeout before was an empty slot). Power board and keypads not

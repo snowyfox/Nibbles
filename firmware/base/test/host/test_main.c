@@ -309,6 +309,31 @@ static void test_modifiers_and_own_keys(void)
     release(&c, KEY_BRIGHT1 + 7);
     CHECK(press(&c, KEY_POLE_POWER) == 1 && acts[0].type == ACT_POLE_POWER);
     release(&c, KEY_POLE_POWER);
+    // MONITORS toggles the monitors' mode, back and forth
+    CHECK(!c.monitors_by_brain);
+    CHECK(press(&c, KEY_MONITORS) == 1 && acts[0].type == ACT_MONITORS && acts[0].value == 1 && c.monitors_by_brain);
+    release(&c, KEY_MONITORS);
+    CHECK(press(&c, KEY_MONITORS) == 1 && acts[0].value == 0 && !c.monitors_by_brain);
+    release(&c, KEY_MONITORS);
+    CHECK(ctl_key_by_name("monitors") == KEY_MONITORS);
+    // DETAIL: held shows the details while held; a tap keeps them until the next tap; works locked
+    CHECK(!c.detail);
+    ctl_key(&c, KEY_DETAIL, true, now, acts);
+    CHECK(c.detail);
+    now += 1000;
+    ctl_key(&c, KEY_DETAIL, false, now, acts);   // held a second: back
+    CHECK(!c.detail);
+    ctl_key(&c, KEY_DETAIL, true, now, acts);
+    now += 100;
+    ctl_key(&c, KEY_DETAIL, false, now, acts);   // a tap: stays
+    CHECK(c.detail && c.detail_latched);
+    c.locked = true;
+    ctl_key(&c, KEY_DETAIL, true, now, acts);
+    CHECK(c.detail);
+    now += 100;
+    ctl_key(&c, KEY_DETAIL, false, now, acts);   // tapped again, locked: off
+    CHECK(!c.detail && !c.detail_latched);
+    c.locked = false;
     // LEDs: the live preset's own key is red on any page
     ctl_led_colors(&c, now, rgb);
     CHECK(rgb[KEY_PRESET1 + 13] == 0xff1010 && rgb[KEY_PRESET1] != 0xff1010);

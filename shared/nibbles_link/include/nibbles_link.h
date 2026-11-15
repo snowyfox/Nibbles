@@ -273,6 +273,15 @@ typedef struct NL_PACKED {
     uint8_t rgb332[NL_PREVIEW_CHUNK_LEDS];  // as many as the packet has room for
 } nl_preview_t;
 #define NL_PREVIEW_LAST         0x01
+// Which brain sent it (2026-11-14, for the monitors' Left / Right mode): set
+// by a brain with an A/B side; neither from older builds or a lone WLED.
+#define NL_PREVIEW_RIGHT        0x02    // the Right Brain (ab_side 0)
+#define NL_PREVIEW_LEFT         0x04    // the Left Brain (ab_side 1)
+// The brain a preview chunk came from: 0 Right, 1 Left, -1 not known.
+static inline int nl_preview_brain(uint8_t flags)
+{
+    return flags & NL_PREVIEW_RIGHT ? 0 : flags & NL_PREVIEW_LEFT ? 1 : -1;
+}
 #define NL_PREVIEW_HEADER_LEN   6
 
 // ---------------------------------------------------------------- WLED layer slots
@@ -413,6 +422,12 @@ uint32_t nl_power_limiter_tick(nl_power_limiter_t *l, uint32_t now_ms);
 #define NL_SHOW_DIFFERS     0x08    // Standby differs from Live (TAKE would change something)
 #define NL_SHOW_WLED_HEARD  0x10
 #define NL_SHOW_EYES_HEARD  0x20
+// The monitors' mode (2026-11-14; the base's MONITORS key or "monitors"): clear,
+// each monitor shows a side (Live or Standby, whichever brain is on it); set,
+// each follows one brain (Right or Left) and says whether it is Live.
+#define NL_SHOW_BY_BRAIN    0x40
+// The base's DETAIL key is held (or was tapped): the monitors show their small-text page.
+#define NL_SHOW_DETAIL      0x80
 typedef struct __attribute__((packed)) {
     uint8_t side;           // NL_SHOW_LIVE or NL_SHOW_STANDBY
     uint8_t flags;          // NL_SHOW_*

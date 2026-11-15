@@ -4,7 +4,10 @@
 // (NL_MSG_PREVIEW) and, under it, what the base's switcher says that side is
 // (NL_MSG_SHOW): body, eyes, fins, look. Radio only: no cable to the base.
 // Which side: by MAC (MONITOR_STANDBY_MACS), or "side live|standby" over USB
-// (saved). "shot" prints the screen as the base's does (tools/base_shot.py).
+// (saved). Two modes, chosen on the base (its MONITORS key, NL_SHOW_BY_BRAIN):
+// by side (each shows Live or Standby, whichever brain that is) or by brain
+// (each follows one brain, the Live monitor the Right Brain and the Standby one
+// the Left unless "brain right|left" says otherwise, and shows which it is). "shot" prints the screen as the base's does (tools/base_shot.py).
 #include <stdio.h>
 #include <string.h>
 #include "driver/gpio.h"
@@ -73,7 +76,8 @@ static const char *TAG = "monitor";
 #define COL_WLED    0xff7ad9
 #define COL_FINS    0xff8000
 
-static int side;   // NL_SHOW_LIVE or NL_SHOW_STANDBY
+static int side;      // NL_SHOW_LIVE or NL_SHOW_STANDBY: this monitor's side in the side mode
+static int my_brain;  // 0 Right, 1 Left: the brain this monitor follows in the brain mode
 static bool flipped_from_settings(void);
 
 static esp_lcd_panel_io_handle_t io;
@@ -86,8 +90,12 @@ static uint8_t incoming[LED_POS_COUNT];
 static volatile int64_t last_rx_us, last_show_us;
 static volatile uint32_t rx_frames, rx_lost, frame_gen;
 static int last_frame = -1;
-static nl_show_t show;
-static volatile int one_brain_since_us;   // a Live preview heard without any Standby one
+static nl_show_t shows[2];                 // the base's latest per side (NL_SHOW_LIVE, NL_SHOW_STANDBY)
+static volatile int64_t show_us[2];
+static volatile bool by_brain;            // the base's mode (NL_SHOW_BY_BRAIN)
+static volatile int brain_side = -1;      // the brain mode: the side my brain is on (from its stream), -1 not heard
+static volatile int64_t brain_us;
+static volatile bool detail;              // the base's DETAIL key (NL_SHOW_DETAIL)
 
 // Screenshots.
 static volatile bool shot_wanted, shot_filling;
@@ -183,18 +191,35 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *hdr, const uint
     const int64_t now = esp_timer_get_time();
     if (hdr->type == NL_MSG_SHOW && len == sizeof(nl_show_t)) {
         const nl_show_t *s = (const nl_show_t *)payload;
-        if (s->side != side) return;
+        if (s->side > NL_SHOW_STANDBY) return;
         taskENTER_CRITICAL(&lock);
-        show = *s;
+        shows[s->side] = *s;
         taskEXIT_CRITICAL(&lock);
+        show_us[s->side] = now;
         last_show_us = now;
+        detail = s->flags & NL_SHOW_DETAIL;
+        const bool mode = s->flags & NL_SHOW_BY_BRAIN;
+        if (mode != by_brain) {
+            by_brain = mode;
+            last_frame = -1;   // another stream from now on
+        }
         return;
     }
     if (hdr->type != NL_MSG_PREVIEW || len <= NL_PREVIEW_HEADER_LEN) return;
-    // The Live brain sends as a WLED, the Standby one as NL_ROLE_WLED_STANDBY.
-    const bool from_standby = hdr->role == NL_ROLE_WLED_STANDBY;
-    if (from_standby != (side == NL_SHOW_STANDBY)) return;
+    // The Live brain sends as a WLED, the Standby one as NL_ROLE_WLED_STANDBY;
+    // brains with an A/B side also say which they are (NL_PREVIEW_RIGHT, _LEFT).
     const nl_preview_t *m = (const nl_preview_t *)payload;
+    const int from_side = hdr->role == NL_ROLE_WLED_STANDBY ? NL_SHOW_STANDBY : NL_SHOW_LIVE;
+    if (by_brain) {
+        if (nl_preview_brain(m->flags) != my_brain) return;
+        if (brain_side != from_side) {
+            brain_side = from_side;
+            last_frame = -1;   // the same brain's frames, but don't count the swap as lost
+        }
+        brain_us = now;
+    } else if (from_side != side) {
+        return;
+    }
     size_t n = len - NL_PREVIEW_HEADER_LEN;
     if (m->start >= LED_POS_COUNT) return;
     if (m->start + n > LED_POS_COUNT) n = LED_POS_COUNT - m->start;
@@ -213,6 +238,8 @@ static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *hdr, const uint
 // ------------------------------------------------------------------ UI
 
 static struct {
+    lv_obj_t *simple, *detail;   // big text (normal), small text (the base's DETAIL key)
+    lv_obj_t *s_banner, *s_title, *s_note, *s_cap, *s_val, *s_body;
     lv_obj_t *banner, *title, *note, *shark, *shark_note;
     lv_obj_t *body, *eyes, *fins, *look, *bri, *foot, *target;
 } u;
@@ -233,16 +260,52 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
     return l;
 }
 
+#define SHARK_Y_SIMPLE 62
+#define SHARK_Y_DETAIL 42
+
+static lv_obj_t *page_box(lv_obj_t *parent)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(o, 0, 0);
+    lv_obj_set_size(o, SCR_W, SCR_H);
+    lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, 0, 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
+    return o;
+}
+
 // Landscape, 456 x 280: the banner across the top; the shark left, the
 // target and look on the right; the body preset big along the bottom, eyes
 // and fins under it.
 static void ui_build(void)
 {
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), 0);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *scr0 = lv_screen_active();
+    lv_obj_set_style_bg_color(scr0, lv_color_hex(COL_BG), 0);
+    lv_obj_remove_flag(scr0, LV_OBJ_FLAG_SCROLLABLE);
     const uint32_t accent = side == NL_SHOW_STANDBY ? COL_STANDBY : COL_LIVE;
     const int rx = SHARK_W + 8, rw = SCR_W - rx - 6;   // the right column
+
+    // The simple page (2026-11-14, read from half a metre): a 56 px banner
+    // (LIVE / STANDBY, or the brain and its role), the shark, one big number
+    // or word on the right, the body preset big along the bottom.
+    u.simple = page_box(scr0);
+    u.s_banner = page_box(u.simple);
+    lv_obj_set_size(u.s_banner, SCR_W, 56);
+    lv_obj_set_style_bg_opa(u.s_banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(u.s_banner, lv_color_hex(accent), 0);
+    u.s_title = label(u.s_banner, &lv_font_montserrat_40, COL_BG, 10, 6, 0, false);
+    u.s_note = label(u.s_banner, &lv_font_montserrat_28, COL_BG, 296, 13, SCR_W - 306, false);
+    lv_obj_set_style_text_align(u.s_note, LV_TEXT_ALIGN_RIGHT, 0);
+    u.s_cap = label(u.simple, &lv_font_montserrat_20, COL_TITLE, rx, 92, rw, false);
+    u.s_val = label(u.simple, &lv_font_montserrat_40, COL_TEXT, rx, 116, rw, false);
+    u.s_body = label(u.simple, &lv_font_montserrat_40, COL_TEXT, 8, 222, SCR_W - 16, false);
+
+    // The detail page: the first layout.
+    u.detail = page_box(scr0);
+    lv_obj_add_flag(u.detail, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *scr = u.detail;
 
     u.banner = lv_obj_create(scr);
     lv_obj_remove_flag(u.banner, LV_OBJ_FLAG_SCROLLABLE);
@@ -256,11 +319,12 @@ static void ui_build(void)
     u.note = label(u.banner, &lv_font_montserrat_20, COL_BG, 240, 10, SCR_W - 250, false);
     lv_obj_set_style_text_align(u.note, LV_TEXT_ALIGN_RIGHT, 0);
 
+    // The shark, on both pages (moved by page_show).
     shark_px = heap_caps_calloc(SHARK_W * SHARK_H, 2, MALLOC_CAP_SPIRAM);
-    u.shark = lv_canvas_create(scr);
+    u.shark = lv_canvas_create(scr0);
     lv_canvas_set_buffer(u.shark, shark_px, SHARK_W, SHARK_H, LV_COLOR_FORMAT_RGB565);
-    lv_obj_set_pos(u.shark, 4, 42);
-    u.shark_note = label(scr, &lv_font_montserrat_14, COL_DIM, 4, 44, SHARK_W, false);   // above the shark's back
+    lv_obj_set_pos(u.shark, 4, SHARK_Y_SIMPLE);
+    u.shark_note = label(scr0, &lv_font_montserrat_20, COL_DIM, 4, SHARK_Y_SIMPLE + 2, SHARK_W, false);   // above the shark's back
     lv_obj_set_style_text_align(u.shark_note, LV_TEXT_ALIGN_CENTER, 0);
 
     u.target = lv_obj_create(scr);
@@ -295,30 +359,93 @@ static void fmt_preset(char *out, size_t n, const char *what, int preset, const 
     else snprintf(out, n, "%sPreset %d", what, preset);
 }
 
+// The side to show now: this monitor's own in the side mode; in the brain mode
+// the side its brain is on (from the brain's stream, else from the base's
+// A/B brains), -1 while that isn't known.
+static int shown_side(int64_t now)
+{
+    if (!by_brain) return side;
+    if (brain_side >= 0 && now - brain_us < STREAM_LOST_MS * 1000LL) return brain_side;
+    for (int i = 0; i < 2; i++)
+        if (show_us[i] && now - show_us[i] < SHOW_LOST_MS * 1000LL && shows[i].brain == my_brain) return i;
+    return -1;
+}
+
 static void ui_update(void)
 {
     const int64_t now = esp_timer_get_time();
-    nl_show_t s;
-    taskENTER_CRITICAL(&lock);
-    s = show;
-    taskEXIT_CRITICAL(&lock);
-    const bool heard = last_show_us && now - last_show_us < SHOW_LOST_MS * 1000LL;
-    const bool stby = side == NL_SHOW_STANDBY;
+    const int vs = shown_side(now);
+    nl_show_t s = { 0 };
+    if (vs >= 0) {
+        taskENTER_CRITICAL(&lock);
+        s = shows[vs];
+        taskEXIT_CRITICAL(&lock);
+    }
+    const bool base_heard = last_show_us && now - last_show_us < SHOW_LOST_MS * 1000LL;
+    const bool heard = vs >= 0 && show_us[vs] && now - show_us[vs] < SHOW_LOST_MS * 1000LL;
+    const bool stby = vs == NL_SHOW_STANDBY;
+    const char *brain_name = my_brain ? "LEFT" : "RIGHT";
     char text[64];
 
-    if (!heard) {
-        lv_label_set_text(u.title, stby ? "STANDBY" : "LIVE");
-        lv_label_set_text(u.note, "no base");
-    } else {
-        if (s.brain < 0) lv_label_set_text(u.title, stby ? "STANDBY" : "LIVE");
-        else lv_label_set_text_fmt(u.title, "%s %s", stby ? "STANDBY" : "LIVE", s.brain ? "L" : "R");
-        const char *note = s.flags & NL_SHOW_LOCKED ? "LOCKED" : s.flags & NL_SHOW_LATCH ? "LATCH" : "";
-        if (stby && (s.flags & NL_SHOW_PREVIEW)) note = "ON SHARK";
-        lv_label_set_text(u.note, note);
+    // The banner: red Live, green Standby, grey when this brain's side isn't known.
+    static uint32_t banner_col;
+    const uint32_t bc = vs < 0 ? COL_DIM : stby ? COL_STANDBY : COL_LIVE;
+    if (bc != banner_col) {
+        lv_obj_set_style_bg_color(u.banner, lv_color_hex(bc), 0);
+        lv_obj_set_style_bg_color(u.s_banner, lv_color_hex(bc), 0);
+        banner_col = bc;
     }
+    // Which page: the base's DETAIL key (the simple page without the base).
+    static int page = -1;
+    const int want = base_heard && detail ? 1 : 0;
+    if (want != page) {
+        page = want;
+        lv_obj_add_flag(want ? u.simple : u.detail, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(want ? u.detail : u.simple, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_y(u.shark, want ? SHARK_Y_DETAIL : SHARK_Y_SIMPLE);
+        lv_obj_set_y(u.shark_note, (want ? SHARK_Y_DETAIL : SHARK_Y_SIMPLE) + 2);
+        lv_obj_set_style_text_font(u.shark_note, want ? &lv_font_montserrat_14 : &lv_font_montserrat_20, 0);
+    }
+    const char *note = !heard ? "" : s.flags & NL_SHOW_LOCKED ? "LOCKED" : s.flags & NL_SHOW_LATCH ? "LATCH" : "";
+    if (heard && stby && (s.flags & NL_SHOW_PREVIEW)) note = "ON SHARK";
+    if (!base_heard) note = "no base";
+    if (by_brain) {
+        // "RIGHT  LIVE": the brain first, as it's what this screen is now.
+        if (vs < 0) lv_label_set_text_fmt(u.title, "%s BRAIN", brain_name);
+        else lv_label_set_text_fmt(u.title, "%s %s", brain_name, stby ? "STANDBY" : "LIVE");
+        if (vs < 0 && base_heard) note = "not heard";
+    } else if (!heard || s.brain < 0) {
+        lv_label_set_text(u.title, stby ? "STANDBY" : "LIVE");
+    } else {
+        lv_label_set_text_fmt(u.title, "%s %s", stby ? "STANDBY" : "LIVE", s.brain ? "L" : "R");
+    }
+    lv_label_set_text(u.note, note);
+    lv_label_set_text(u.s_title, lv_label_get_text(u.title));
+    lv_label_set_text(u.s_note, note);
 
     fmt_preset(text, sizeof(text), "", s.body, s.body_name);
     lv_label_set_text(u.body, heard ? text : "--");
+    lv_label_set_text(u.s_body, heard ? text : "--");
+    // The simple page's one number or word: Live's brightness; Standby: NEW
+    // (TAKE would change something) or SAME.
+    if (!heard) {
+        lv_label_set_text(u.s_cap, "");
+        lv_label_set_text(u.s_val, "");
+    } else if (stby) {
+        const bool differs = s.flags & NL_SHOW_DIFFERS;
+        lv_label_set_text(u.s_cap, "vs LIVE");
+        lv_label_set_text(u.s_val, differs ? "NEW" : "SAME");
+        set_col(u.s_val, differs ? COL_STANDBY : COL_DIM);
+    } else {
+        lv_label_set_text(u.s_cap, "BRIGHT");
+        if (s.flags & NL_SHOW_WLED_HEARD) {
+            lv_label_set_text_fmt(u.s_val, "%d%%", (s.brightness * 100 + 127) / 255);
+            set_col(u.s_val, COL_TEXT);
+        } else {
+            lv_label_set_text(u.s_val, "--");
+            set_col(u.s_val, COL_DIM);
+        }
+    }
     fmt_preset(text, sizeof(text), "Eyes  ", s.eyes, s.eyes_name);
     lv_label_set_text(u.eyes, heard ? text : "Eyes  --");
     if (s.fins > 0) fmt_preset(text, sizeof(text), "Fins  ", s.fins, s.fins_name);
@@ -347,6 +474,7 @@ static void ui_update(void)
     set_col(u.eyes, c);
     set_col(u.fins, c);
     set_col(u.look, c);
+    set_col(u.s_body, c);
 
     static const char *const names[] = { "ALL", "BODY", "EYES", "FINS" };
     static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS };
@@ -409,8 +537,24 @@ static void ui_task(void *arg)
             shark_draw(false);
         }
         if (stream != was_stream) {
-            lv_label_set_text(u.shark_note, stream ? "" : side == NL_SHOW_STANDBY ? "no Standby brain heard" : "no Live brain heard");
             was_stream = stream;
+        }
+        {
+            static bool was_mode;
+            static const char *shown_note;
+            const char *n = stream ? "" : by_brain ? (my_brain ? "Left Brain not heard" : "Right Brain not heard")
+                          : side == NL_SHOW_STANDBY ? "no Standby brain heard" : "no Live brain heard";
+            if (n != shown_note) {
+                lv_label_set_text(u.shark_note, n);
+                shown_note = n;
+            }
+            if (by_brain != was_mode) {   // the other stream: clear the picture until it comes
+                was_mode = by_brain;
+                taskENTER_CRITICAL(&lock);
+                memset(incoming, 0, sizeof(incoming));
+                taskEXIT_CRITICAL(&lock);
+                shark_draw(false);
+            }
         }
         if (now >= next_ui) {
             next_ui = now + 250000;
@@ -427,8 +571,11 @@ static void ui_task(void *arg)
             param(0x51, (uint8_t[]){ BRIGHTNESS }, 1);
         }
         if (now - last_log >= 5000000) {
-            ESP_LOGI(TAG, "%s: %s, %lu frames in, %lu lost, %lu drawn; base %s",
-                     side == NL_SHOW_STANDBY ? "STANDBY" : "LIVE", stream ? "picture" : "NO PICTURE",
+            const int vs = shown_side(now);
+            ESP_LOGI(TAG, "%s%s%s: %s, %lu frames in, %lu lost, %lu drawn; base %s",
+                     by_brain ? (my_brain ? "LEFT BRAIN, " : "RIGHT BRAIN, ") : "",
+                     vs < 0 ? "side not known" : vs == NL_SHOW_STANDBY ? "STANDBY" : "LIVE", by_brain ? "" : " (by side)",
+                     stream ? "picture" : "NO PICTURE",
                      (unsigned long)rx_frames, (unsigned long)rx_lost, (unsigned long)drawn,
                      last_show_us && now - last_show_us < SHOW_LOST_MS * 1000LL ? "heard" : "NOT heard");
             drawn = 0;
@@ -509,7 +656,17 @@ static void console_task(void *arg)
             printf("FLIP %s, restarting\n", v ? "on" : "off");
             vTaskDelay(pdMS_TO_TICKS(100));
             esp_restart();
-        } else if (line[0]) printf("? commands: side live|standby, flip, shot\n");
+        } else if (!strcmp(line, "brain right") || !strcmp(line, "brain left")) {   // the brain mode's brain (saved)
+            nvs_handle_t h;
+            const uint8_t v = line[6] == 'l';
+            if (nvs_open("monitor", NVS_READWRITE, &h) == ESP_OK) {
+                nvs_set_u8(h, "brain", v);
+                nvs_commit(h);
+                nvs_close(h);
+            }
+            my_brain = v;
+            printf("BRAIN %s\n", v ? "left" : "right");
+        } else if (line[0]) printf("? commands: side live|standby, brain right|left, flip, shot\n");
     }
 }
 
@@ -541,6 +698,20 @@ static int side_from_settings(void)
     return NL_SHOW_LIVE;
 }
 
+// The brain mode's brain: saved ("brain right|left"), else the Live monitor
+// follows the Right Brain and the Standby one the Left.
+static int brain_from_settings(void)
+{
+    nvs_handle_t h;
+    uint8_t v;
+    if (nvs_open("monitor", NVS_READONLY, &h) == ESP_OK) {
+        const esp_err_t err = nvs_get_u8(h, "brain", &v);
+        nvs_close(h);
+        if (err == ESP_OK) return v ? 1 : 0;
+    }
+    return side == NL_SHOW_STANDBY ? 1 : 0;
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -550,6 +721,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
     side = side_from_settings();
+    my_brain = brain_from_settings();
     usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usb);
 

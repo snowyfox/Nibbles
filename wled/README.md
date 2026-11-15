@@ -432,7 +432,9 @@ no LEDs confirmed attached: both wires 42-44 fps at once, take, hold, a 1.5 s fa
 42-44 fps), and the stopped brain rejoining as Standby. Lost-frame and CRC counts
 (controller Info page): none new in a 9-minute soak, no LEDs attached as far as known.
 Both brains send the preview (`NL_MSG_PREVIEW`, 12 fps), whatever `preview` says; the base
-sorts them by role into its Live and Standby sharks.
+sorts them by role into its Live and Standby sharks. Since 2026-11-14 each chunk's flags
+also say which brain sent it (`NL_PREVIEW_RIGHT` for `ab_side` 0, `NL_PREVIEW_LEFT` for 1),
+for the monitors' by-brain mode (`firmware/monitor/CLAUDE.md`).
 
 | Board | Settings |
 |---|---|
@@ -444,6 +446,14 @@ sorts them by role into its Live and Standby sharks.
   boards. GPIO 34 and 35 are input only with no internal pull-up: each needs its own
   10 kOhm pull-up to the Bong69's 3.3 V (H1 has it). Pin order on H2 and H3 isn't
   documented, so measure before connecting; H4 carries 5 V.
+- **Status LED** (2026-11-14, `NIBBLES_STATUS_LED=38` in `nibbles_brain_s3`): each brain's
+  on-board RGB LED (WS2812-type, but RGB order, checked with the test below; bit-banged so it takes no RMT channel; level 40/255)
+  shows its A/B state: **red** Live; **red blinking** Live while TAKE shows the other brain;
+  **green** Standby; **amber** Standby on the LEDs (TAKE held); **magenta, fast blink** the
+  controller is heard but not this brain's wire; **blue blinking** no A/B state from the
+  controller for 2 s. Off with no `ab_side`. Left alone if a WLED output has GPIO 38.
+  `{"nibbles":{"ledtest":true}}` (USB serial, the board's native USB port) shows red, green,
+  blue for 2 s each, to check the colour order.
 - **The presets must match on both brains**, by number: copy `presets.json`, the
   ledmap and the settings across.
 - **On the Info page:** "Nibbles wire" shows both wires, which brain is Live, takes and

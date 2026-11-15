@@ -12,7 +12,41 @@ these two show Live and Standby. Radio only: no cable to the base.
 
 `side live|standby` over USB overrides it (saved in NVS, restarts).
 
-## What it shows (456 x 280, landscape)
+## Two modes: by side or by brain (2026-11-14)
+
+The base chooses, for both monitors at once: its **MONITORS** key
+(`KEY_MONITORS`, a key of its own to put in `KEYPAD_BOARDS`; its LED is grey
+by side, blue by brain) or `monitors [sides|brains|toggle]` over its USB. The
+base keeps the choice in NVS and sends it in every `NL_MSG_SHOW`
+(`NL_SHOW_BY_BRAIN`).
+
+- **By side** (the first design): each monitor shows a side, Live or Standby,
+  whichever brain is on it; a TAKE + LATCH moves the pictures between screens.
+- **By brain**: each monitor follows one brain. The Live-by-MAC board follows the
+  **Right Brain** and the Standby one the **Left**, unless `brain right|left` over
+  USB (saved, no restart) says otherwise. The banner says `RIGHT  LIVE` or
+  `LEFT  STANDBY` and takes the colour of the brain's role (red, green), so a take
+  swaps the banners, not the pictures. The brain is told by the preview's flags
+  (`NL_PREVIEW_RIGHT` / `_LEFT`, set by brains with an `ab_side`, WLED build of
+  2026-11-14), the role by the sender's radio role as before; the rows under it are
+  that side's `NL_MSG_SHOW`. With the brain not heard: a grey banner, `RIGHT BRAIN`,
+  "not heard".
+- Tested on the bench 2026-11-14 (both brains on USB, no controller): both modes,
+  switched back and forth from the base's serial; screenshots right. **Not tested:
+  a take in the brain mode** (needs the controller and the brains' wires).
+
+## Two pages: simple, and detail while the base's DETAIL key says so (2026-11-14)
+
+Read from half a metre or more, so normally a **simple page**: a 56 px banner
+(40 px title: LIVE / STANDBY with the brain's letter, or RIGHT LIVE / LEFT STANDBY in
+the brain mode; LOCKED, LATCH or ON SHARK at 28 px on the right), the shark (a bit
+lower), one big value on the right (Live: BRIGHT and the %; Standby: vs LIVE, NEW in
+green or SAME dim) and the body preset at 40 px along the bottom. The detail page
+below is shown while the base's DETAIL key is held, or after a tap until the next
+(`NL_SHOW_DETAIL`); without the base, the simple page. 40 and 48 px fonts are in
+`sdkconfig.defaults` (delete `sdkconfig` after changing them).
+
+## The detail page (456 x 280, landscape)
 
 Mounted in landscape (the user, 2026-11-14). The CO5300 can't turn the
 picture, so LVGL draws 456 x 280 with `lv_display_set_rotation` (90 degrees,
@@ -24,7 +58,7 @@ the body preset big along the bottom, eyes and fins under it, the radio line
 last.
 
 
-- A banner in the side's colour: LIVE (red) / STANDBY (green), the brain's
+- (By side; see above for by brain.) A banner in the side's colour: LIVE (red) / STANDBY (green), the brain's
   letter with two brains (R / L), and LOCKED, LATCH, or ON SHARK (Standby
   while TAKE is held).
 - The shark's side view from that side's brain (`NL_MSG_PREVIEW`: the Live
