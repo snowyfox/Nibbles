@@ -34,7 +34,7 @@ how the firmware works and why.
 | Base 1.91 | 3C:0F:02:D9:7A:08 | `firmware/base` on the 1.91 (was the preview screen until 2026-11-14) |
 | Live monitor | 28:84:85:8D:40:4C | ESP32-S3-Touch-AMOLED-1.64 running `firmware/monitor` |
 | Standby monitor | 28:84:85:8D:4C:4C | same, Standby by MAC |
-| Right Brain | E8:3D:C1:F7:79:E4 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14 |
+| Right Brain | 14:C1:9F:2B:15:34 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14. Replaced 2026-11-15 (the first, E8:3D:C1:F7:79:E4, was shorted on the bench); restored from the 2026-11-09 brainA backup |
 | Left Brain | 14:C1:9F:2A:6E:48 | same; GPIO 13 to controller GPIO 34, return wire on GPIO 14 |
 
 Eye cable (8-pin headers): GND↔GND (pin 2), starboard GPIO 17 (pin 6) → port GPIO 18

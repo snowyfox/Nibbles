@@ -14,7 +14,7 @@ does one bump so the Live brain shows its look, and keeps the ports open.
 Shark-side USB: follow the ground rule (the shark off the power board).
 """
 import serial, sys, time, json, random, urllib.request
-BRAINS = {"right": "/dev/cu.usbmodem1313101", "left": "/dev/cu.usbmodem1311101"}   # Right Brain E8:3D:C1:F7:79:E4, Left Brain 14:C1:9F:2A:6E:48
+BRAINS = {"right": "/dev/cu.usbmodem1313101", "left": "/dev/cu.usbmodem1311101"}   # Right Brain 14:C1:9F:2B:15:34 (was E8:3D:C1:F7:79:E4 until 2026-11-15), Left Brain 14:C1:9F:2A:6E:48
 ports = {}
 for k, p in BRAINS.items():
     s = serial.Serial(); s.port = p; s.baudrate = 115200; s.timeout = 0.1; s.dtr = False; s.rts = False; s.open(); ports[k] = s
