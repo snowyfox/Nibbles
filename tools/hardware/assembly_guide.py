@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Make the power + charger board's step-by-step placement page.
+"""Make the power + charger board's step-by-step placement page (and, through
+build(), the keypad boards': see keypad_assembly_guide.py).
 
     /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 \
         tools/hardware/assembly_guide.py
@@ -191,17 +192,44 @@ SIDE_TITLE = {"top": "Top side: stencil, place, hot plate",
               "bottom": "Bottom side: by iron, after the top",
               "tht": "Through-hole parts: by iron"}
 
+META = dict(
+    title="Power Board Placement",
+    heading="Power + charger board: placement",
+    intro="One step per bag. Click a step (or use ← →); its parts light up on the map. Tick it when placed. "
+          "Map: upright, XT30 end (J2, J5) at the top, as in the microscope photos; top side as you look down on it, "
+          "bottom side as you see it turned over side to side.",
+    key="nibbles-power-placement",
+    landmarks=["J2", "J5", "J3"],
+)
+
 
 def mm(v):
     return round(pcbnew.ToMM(v), 3)
 
 
-def main():
-    board = pcbnew.LoadBoard(PCB)
+def part_on_bottom(fp):
+    """A part's assembly side: where its SMD pads are (a footprint can sit on the
+    front with its pads on the back, like the keypads' hotswap sockets)."""
+    smd = [p for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
+    if smd:
+        return all(p.IsOnLayer(pcbnew.B_Cu) and not p.IsOnLayer(pcbnew.F_Cu) for p in smd)
+    return fp.IsFlipped()
+
+
+def build(pcb, out, steps, sides, meta, pin1=PIN1, skip=("H", "TP", "LOGO")):
+    """Write one placement page. sides: {name: title, or dict(title=, face="top"|"bottom")};
+    a step's side picks its section, and the face is the side of the board the map shows."""
+    sides = {k: (v if isinstance(v, dict) else dict(title=v, face="bottom" if k == "bottom" else "top"))
+             for k, v in sides.items()}
+    board = pcbnew.LoadBoard(pcb)
     outline = pcbnew.SHAPE_POLY_SET()
     board.GetBoardPolygonOutlines(outline, True)
     ol = outline.Outline(0)
     pts = [(mm(ol.CPoint(i).x), mm(ol.CPoint(i).y)) for i in range(ol.PointCount())]
+    holes = []   # cutouts in the outline (the keypads' LED windows)
+    for h in range(outline.HoleCount(0)):
+        hl = outline.Hole(0, h)
+        holes.append([(mm(hl.CPoint(i).x), mm(hl.CPoint(i).y)) for i in range(hl.PointCount())])
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
     box = (min(xs), min(ys), max(xs), max(ys))
 
@@ -215,11 +243,12 @@ def main():
                              round=p.GetShape() in (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_OVAL),
                              tht=p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)))
         bb = fp.GetBoundingBox(False, False)
-        parts[ref] = dict(ref=ref, value=fp.GetValue(), bottom=fp.IsFlipped(), pads=pads,
+        parts[ref] = dict(ref=ref, value=fp.GetValue(), bottom=part_on_bottom(fp), pads=pads,
                           bx=mm(bb.GetX()), by=mm(bb.GetY()), bw=mm(bb.GetWidth()), bh=mm(bb.GetHeight()))
 
     seen = {}
-    for i, s in enumerate(STEPS):
+    steps = [dict(s) for s in steps]
+    for i, s in enumerate(steps):
         s["refs"] = s["refs"].split(",")
         for r in s["refs"]:
             if r not in parts:
@@ -227,19 +256,26 @@ def main():
             if r in seen:
                 sys.exit(f"{r} is in steps {seen[r] + 1} and {i + 1}")
             seen[r] = i
-            if parts[r]["bottom"] != (s["side"] == "bottom"):
+            if parts[r]["bottom"] != (sides[s["side"]]["face"] == "bottom"):
                 sys.exit(f"{r}: step side {s['side']} but the board has it on the {'bottom' if parts[r]['bottom'] else 'top'}")
-        s["pin1text"] = PIN1.get(s["pin1"]) if s["pin1"] else None
-    skip = ("H", "TP", "LOGO")
+        s["pin1text"] = pin1.get(s["pin1"]) if s["pin1"] else None
     missing = [r for r in parts if r not in seen and not r.startswith(skip)]
     if missing:
         sys.exit("not in any step: " + ", ".join(sorted(missing)))
 
-    data = dict(box=box, outline=pts, parts=parts, steps=STEPS, sides=SIDE_TITLE)
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    page = TEMPLATE.replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
-    open(OUT, "w").write(page)
-    print(f"{len(STEPS)} steps, {len(seen)} parts -> {os.path.relpath(OUT, ROOT)}")
+    data = dict(box=box, outline=pts, holes=holes, parts=parts, steps=steps, sides=sides,
+                key=meta["key"], landmarks=[r for r in meta.get("landmarks", []) if r in parts])
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    page = (TEMPLATE.replace("/*TITLE*/", html.escape(meta["title"]))
+            .replace("/*HEADING*/", html.escape(meta["heading"]))
+            .replace("/*INTRO*/", html.escape(meta["intro"]))
+            .replace("/*DATA*/null", json.dumps(data, separators=(",", ":"))))
+    open(out, "w").write(page)
+    print(f"{len(steps)} steps, {len(seen)} parts -> {os.path.relpath(out, ROOT)}")
+
+
+def main():
+    build(PCB, OUT, STEPS, SIDE_TITLE, META)
 
 
 TEMPLATE = r"""<!doctype html>
@@ -247,7 +283,7 @@ TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Power Board Placement</title>
+<title>/*TITLE*/</title>
 <style>
 :root {
   --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a64; --line: #dcdad2;
@@ -301,6 +337,10 @@ header { flex: none; }
 .cardgrid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
 svg { display: block; height: calc(100vh - 130px); height: calc(100dvh - 130px); min-height: 360px;
   width: auto; background: var(--panel); }
+svg.zoom { width: 100%; height: auto; max-height: 42vh; max-height: 42dvh; min-height: 0; }
+.zoomwrap { margin-bottom: 10px; }
+svg.wide { width: 100%; height: auto; max-height: 50vh; min-height: 0; }
+.cardgrid:has(svg.wide) { grid-template-columns: minmax(0, 1fr); }
 .nav { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); cursor: pointer; }
@@ -319,9 +359,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 </head>
 <body>
 <header>
-  <h1>Power + charger board: placement</h1>
-  <div class="sub">One step per bag. Click a step (or use ← →); its parts light up on the map. Tick it when placed.
-  Map: upright, XT30 end (J2, J5) at the top, as in the microscope photos; top side as you look down on it, bottom side as you see it turned over side to side.</div>
+  <h1>/*HEADING*/</h1>
+  <div class="sub">/*INTRO*/</div>
 </header>
 <div class="wrap">
   <div class="list" id="list"></div>
@@ -331,7 +370,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 </div>
 <script>
 const D = /*DATA*/null;
-const KEY = "nibbles-power-placement";
+const KEY = D.key;
 let done = {};
 try { done = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
 function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) {} }
@@ -348,17 +387,17 @@ function rect(p, bottom, cls, extra) {
   return `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${w.toFixed(3)}" height="${h.toFixed(3)}" rx="${r.toFixed(3)}" ${cls} ${extra || ""}/>`;
 }
 function pin1Pad(part, kind) {
-  const want = kind === "xt30" ? "2" : "1";
+  const want = kind === "xt30" ? "2" : (D.pin1pads && D.pin1pads[kind]) || "1";
   return part.pads.find(p => p.n === want);
 }
 function draw(step) {
-  const side = step.side === "bottom";
+  const side = D.sides[step.side].face === "bottom";
   const hi = new Set(step.refs);
   const doneRefs = new Set();
   D.steps.forEach((s, i) => { if (done[i]) s.refs.forEach(r => doneRefs.add(r)); });
-  let s = `<svg viewBox="0 0 ${W + 2 * M} ${L + 2 * M}" style="aspect-ratio: ${W + 2 * M} / ${L + 2 * M}" xmlns="http://www.w3.org/2000/svg">`;
-  const o = D.outline.map(([x, y]) => tx(x, y, side).map(v => v.toFixed(3)).join(",")).join(" ");
-  s += `<polygon points="${o}" fill="var(--board)" stroke="var(--edge)" stroke-width=".4"/>`;
+  let s = "";
+  const ring = r => "M" + r.map(([x, y]) => tx(x, y, side).map(v => v.toFixed(3)).join(",")).join("L") + "Z";
+  s += `<path d="${[D.outline, ...(D.holes || [])].map(ring).join("")}" fill-rule="evenodd" fill="var(--board)" stroke="var(--edge)" stroke-width=".4"/>`;
   for (const ref in D.parts) {
     const p = D.parts[ref];
     const onSide = p.pads.some(q => q.tht) || p.bottom === side;
@@ -384,12 +423,28 @@ function draw(step) {
     const lx = Math.max(ref.length * .7, Math.min(W + 2 * M - ref.length * .7, c[0]));
     s += `<text x="${lx.toFixed(2)}" y="${Math.max(2.2, Math.min(L + 2 * M - .6, ly)).toFixed(2)}" font-size="2.1" font-weight="700" text-anchor="middle" fill="var(--label)" stroke="var(--edge)" stroke-width=".5" paint-order="stroke">${ref}</text>`;
   }
-  for (const ref of ["J2", "J5", "J3"]) {
+  for (const ref of D.landmarks) {
     if (hi.has(ref)) continue;
     const p = D.parts[ref], c = tx(p.bx + p.bw / 2, p.by + p.bh / 2, side);
     s += `<text x="${c[0].toFixed(2)}" y="${c[1].toFixed(2)}" font-size="1.8" text-anchor="middle" fill="var(--label)" opacity=".75">${ref}</text>`;
   }
-  return s + "</svg>";
+  // the overview, and (for a step in a small part of the board) a close-up of that part
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (const ref of step.refs) {
+    const p = D.parts[ref], a = tx(p.bx, p.by, side), b = tx(p.bx + p.bw, p.by + p.bh, side);
+    bx0 = Math.min(bx0, a[0], b[0]); bx1 = Math.max(bx1, a[0], b[0]);
+    by0 = Math.min(by0, a[1], b[1]); by1 = Math.max(by1, a[1], b[1]);
+  }
+  const full = `<svg class="${W > L ? "wide" : ""}" viewBox="0 0 ${W + 2 * M} ${L + 2 * M}" style="aspect-ratio: ${W + 2 * M} / ${L + 2 * M}" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+  const pad = 4, minSide = 22;
+  let zw = Math.max(bx1 - bx0 + 2 * pad, minSide), zh = Math.max(by1 - by0 + 2 * pad, minSide);
+  // small boards are big enough on the overview
+  if (Math.max(W, L) < 60 || zw * zh > .4 * (W + 2 * M) * (L + 2 * M)) return {full, zoom: ""};
+  const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+  zw = Math.min(zw, W + 2 * M); zh = Math.min(zh, L + 2 * M);
+  const zx = Math.max(0, Math.min(W + 2 * M - zw, cx - zw / 2)), zy = Math.max(0, Math.min(L + 2 * M - zh, cy - zh / 2));
+  const zoom = `<svg class="zoom" viewBox="${zx.toFixed(2)} ${zy.toFixed(2)} ${zw.toFixed(2)} ${zh.toFixed(2)}" style="aspect-ratio: ${zw.toFixed(2)} / ${zh.toFixed(2)}" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+  return {full, zoom};
 }
 function esc(t) { return String(t).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c])); }
 function md(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"); }
@@ -401,9 +456,10 @@ function renderCard() {
   if (s.pin1text) rows.push(["Orientation", s.pin1text + " (yellow dot on the map)"]);
   if (s.tip) rows.push(["Tip", s.tip]);
   const n = D.steps.filter((_, i) => done[i]).length;
+  const maps = draw(s);
   document.getElementById("card").innerHTML =
-    `<div class="cardgrid"><div class="map">${draw(s)}</div><div class="info">
-     <div class="sub">Step ${cur + 1} of ${D.steps.length} · ${esc(D.sides[s.side])}</div>
+    `<div class="cardgrid"><div class="map">${maps.full}</div><div class="info">${maps.zoom ? `<div class="zoomwrap">${maps.zoom}<div class="legend">Close-up of this step's area</div></div>` : ""}
+     <div class="sub">Step ${cur + 1} of ${D.steps.length} · ${esc(D.sides[s.side].title)}</div>
      <h2>${esc(vals.length > 28 ? s.pkg.split(" (")[0] : vals)}: ${s.refs.length} part${s.refs.length > 1 ? "s" : ""}</h2>
      <div class="refs">${s.refs.join("  ")}</div>
      <div class="legend">Red: this step · blue: placed · grey-green: still to do · yellow dot: pin 1 / cathode / +</div>
@@ -416,7 +472,7 @@ function renderCard() {
 function renderList() {
   let h = "", side = "";
   D.steps.forEach((s, i) => {
-    if (s.side !== side) { side = s.side; h += `<div class="side">${esc(D.sides[side])}</div>`; }
+    if (s.side !== side) { side = s.side; h += `<div class="side">${esc(D.sides[side].title)}</div>`; }
     h += `<div class="step${i === cur ? " cur" : ""}${done[i] ? " done" : ""}" data-i="${i}">
       <input type="checkbox" ${done[i] ? "checked" : ""} data-c="${i}" aria-label="Placed">
       <span class="n">${i + 1}</span><div><div class="t">${esc(s.refs.join(", "))}</div>

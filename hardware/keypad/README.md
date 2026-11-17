@@ -27,6 +27,8 @@ thermals) are still open; DRC lists them as unconnected.
 | `key_column/` | 8 keys in one column, the earlier hub version (one connector), kept as it was | 18 x 156.2 mm |
 | `key_hub/` | the earlier hub: power board keypad port out to 4 hub-version boards | 48 x 24 mm |
 
+**Building them:** `ASSEMBLY.md`, with a step-by-step placement page per board in `assembly/`.
+
 `nibbles_keys.pretty` holds the hotswap socket footprint, shared by the key
 boards. Everything else is KiCad's own library.
 
@@ -42,6 +44,51 @@ wired straight through: 1 GND, 2 +3V3, 3 SDA, 4 SCL, 5 INT, 6 +5V, 7 LED
 data (in on J1, out on J2), 8 unused. Pins 1-6 are the power board's GH6
 keypad pinout (J9, J11). Plain straight-through GH8 cables link the boards;
 the order of the boards sets the order of the LEDs.
+
+**Wire colours.** The GH cables built for Nibbles keep one colour per signal
+on every connector (J10, J9/J11, the key boards' J1/J2), checked against the
+working 1.91-to-power-board cable on 2026-11-16. Pin 1 is the end with the
+red wire on a J10 plug and the black wire on a keypad plug.
+
+| Signal | Colour | J10 (base) | J9 / J11 (keypad) | Key board J1 / J2 |
+|---|---|---|---|---|
+| +5V | red | 1 | 6 | 6 |
+| GND | black | 2 | 1 | 1 |
+| +3V3 | orange | 3 | 2 | 2 |
+| SDA | yellow | 4 | 3 | 3 |
+| SCL | grey | 5 | 4 | 4 |
+| INT | white | 6 | 5 | 5 |
+| DOCK_UART | green | 7 | | |
+| DOCK_DET | purple | 8 | | |
+| LED data | (not chosen yet) | | | 7 (hub version: 7 in, 8 out) |
+
+J10's order differs from the keypad ports (+5V first, then GND): a key
+board plugged into J10 would get 5 V on its GND pin. The colours make that
+easy to spot.
+
+**Hub-version boards without the hub (2026-11-16).** The boards built so far
+are hub-version key_columns (one GH8, J1: pin 7 LED data in, pin 8 LED data
+out from the last LED). They hang on one harness instead of the key_hub:
+pins 1-6 to every board's plug in parallel, the base's LED wire to the first
+board's pin 7, then each board's pin 8 to the next board's pin 7; the last
+board's pin 8 is the data out (for the mirror panel, if fitted). The data
+order must follow `KEYPAD_BOARDS` (0x38 first, then 0x39, 0x3A), since the
+base colours the LEDs in that order: set each board's address jumpers
+(JP1-JP3, as on the chain boards) to match its place on the harness.
+key_column has no buffer of its own (the hub's U1 was it), so the first
+board's LEDs get the base's 3.3 V data straight: usually fine on a short
+wire, but a flickering or wrong-coloured first LED means it needs a
+74AHCT1G125 (the hub, or one inline, as on the chain boards' U3).
+
+The mirror panel can be that buffer: Adafruit's NeoPixel FeatherWing has a
+74AHCT1G125 (IC2) between its DIN and its first LED, powered like the LEDs
+from the higher of its USB and BAT pins through two MBR120 Schottkys (about
+4.6-4.8 V from the cable's 5 V), and a chain-out pad (JP3) on its last LED's
+data out. Put it first: the base's LED wire to the Feather pin its DIN
+jumper selects, the cable's +5V to its USB pin, GND to GND, and JP3 to the
+first key board's pin 7. Then set `KEYPAD_PANEL_FIRST 1` in
+`firmware/base/main/config.h`, so the base sends the panel's 32 pixels
+first.
 
 - **The cable from the power board** is J9's GH6 plus one wire from the
   3.49's GPIO 43, on the first board's J1 pin 7. GPIO 43 is free (UART0 TX; the base's
