@@ -35,22 +35,23 @@ stays as the fallback until the new set has run a rehearsal.
   Waveshare's schematic, H1 = the row with GP43 at pin 1, H2 = the row with
   VBUS at pin 1; go by the silkscreen labels, not by counting):
 
-  | J10 | Signal | 1.91 | Note |
-  |---|---|---|---|
-  | 1 | +5V_349 | H2-1 VBUS | the USB-C 5 V, as on the 3.49; the power board feeds it through D5 |
-  | 2 | GND | H1-3 GND (or any GND) | |
-  | 3 | +3V3 | H2-5 3V3 | the 1.91's 3.3 V out, for the bus pull-ups. **Not H2-4 (3V3_EN)**: low there switches the board off |
-  | 4 | SDA | H1-6 GP2 | |
-  | 5 | SCL | H1-7 GP3 | |
-  | 6 | INT | H1-9 GP11 | |
-  | 7 | DOCK_UART | H1-10 GP12 | unused by the firmware (`PIN_DOCK_UART`) |
-  | 8 | DOCK_DET | H1-11 GP13 | |
+  | J10 | Signal | Colour | 1.91 | Note |
+  |---|---|---|---|---|
+  | 1 | +5V_349 | red | H2-1 VBUS | the USB-C 5 V, as on the 3.49; the power board feeds it through D5 |
+  | 2 | GND | black | H1-3 GND (or any GND) | |
+  | 3 | +3V3 | orange | H2-5 3V3 | the 1.91's 3.3 V out, for the bus pull-ups. **Not H2-4 (3V3_EN)**: low there switches the board off |
+  | 4 | SDA | yellow | H1-6 GP2 | |
+  | 5 | SCL | grey | H1-7 GP3 | |
+  | 6 | INT | white | H1-9 GP11 | |
+  | 7 | DOCK_UART | green | H1-10 GP12 | unused by the firmware (`PIN_DOCK_UART`) |
+  | 8 | DOCK_DET | purple | H1-11 GP13 | |
 
-  The keypad LEDs' data (not on J10) goes to H1-12 GP14.
+  The keypad LEDs' data (not on J10) goes to H1-12 GP14. The colours are the
+  ones every Nibbles GH cable uses (`hardware/keypad/README.md`, "Wire colours").
 - **No clock chip** on the 1.91 (Waveshare's "onboard RTC" is the ESP32's
   own): `rtc.c` skips the PCF85063 (`BASE_HAS_RTC_CHIP 0`); the time comes
   from `time` or a WLED's `NL_MSG_TIME`, as with the 3.49 after a power-off.
-- **DETAIL key** (`KEY_DETAIL`, 2026-11-14; not in `KEYPAD_BOARDS` yet): the
+- **DETAIL key** (`KEY_DETAIL`, 2026-11-14; on the third key board since 2026-11-16): the
   screens are read from half a metre or more, in the rain, with no touch, so
   each normally shows a **simple page** of big text, and DETAIL flips all three
   (this one and both monitors, `NL_SHOW_DETAIL`) to the small-text page: held,
@@ -107,8 +108,8 @@ stays as the fallback until the new set has run a rehearsal.
   (`nl_show_t`, one packet per side) every 500 ms and on a change
   (`show_broadcast` in `main.c`), on both boards. The monitors' mode, by side
   (Live, Standby) or by brain (Right, Left), goes with it (`NL_SHOW_BY_BRAIN`):
-  the **MONITORS** key (`KEY_MONITORS`, tap to toggle; LED grey / blue; not in
-  `KEYPAD_BOARDS` yet) or `monitors [sides|brains|toggle]`; kept in NVS
+  the **MONITORS** key (`KEY_MONITORS`, tap to toggle; LED grey / blue; on the
+  third key board since 2026-11-16) or `monitors [sides|brains|toggle]`; kept in NVS
   (`base`/`mon_brain`). See `firmware/monitor/CLAUDE.md`.
 - Tested 2026-11-14 on the bench with nothing attached: boots, screen drawn
   (screenshots), the monitors hear it. TF card: with a card in, it mounts and
@@ -157,6 +158,45 @@ file. All of it can also be driven from USB serial.
   `espressif/led_strip`), scaled by `KEYPAD_LED_LEVEL` (48/255) to keep the
   cable's 5 V current low. GPIO 43 is UART0 TX, so the ROM's boot banner
   can flicker them at power-up.
+- **Key assignment and the mirror panel** (2026-11-16): three 8-key chain
+  boards, 0x38 / 0x39 / 0x3A, no key_upper. The assignment in `KEYPAD_BOARDS`
+  is a placeholder (third board: TAKE, FLASH, UNLOCK, PALETTE, LAYER,
+  MONITORS, DETAIL, one free) and the user expects to change all of it later:
+  that table is the only place it lives. The **mirror panel** (an Adafruit
+  NeoPixel FeatherWing, 4 x 8 WS2812B, at the end of the LED chain on the last
+  board's J2) repeats every key's colour so the keys, facing away from the user,
+  can be read from behind: `KEYPAD_PANEL_*` in `config.h`, pixels after the
+  keys on the same strip, or before them with `KEYPAD_PANEL_FIRST 1` (the
+  panel's own 74AHCT1G125 then buffers the data for the hub-version key boards). Each pixel row is a key board in chain order and each
+  pixel along it a switch (`keypad_panel.h`, host-tested), so it follows the
+  boards, not the key names; flips for how it's mounted, its own level
+  (`KEYPAD_PANEL_LEVEL`, 16). Built, not run on hardware (no keypads or panel
+  wired yet; the orientation flags are a guess until it's mounted).
+- **Remapping without a firmware change** (2026-11-16, `keymap` on the USB
+  console; `keypad_console` in `keypad.c`, text in `keymap_text.c`,
+  host-tested): `KEYPAD_BOARDS` is the default and each board's map can be
+  replaced, saved in NVS (namespace `keymap`, key `k` + address in hex, the key
+  names comma-separated, so a firmware update that reorders `ctl_key_t` keeps
+  it). `keymap` lists every board (number, address, its 8 keys, "(changed)"),
+  `keymap B S NAME` sets one switch (B: 1-N or `0x38`; NAME as `keys` lists
+  them, `none` clears), `keymap B a,b,c,...` a whole board, `keymap B reset`,
+  `keymap reset` (everything back to `KEYPAD_BOARDS`). The keypad task takes
+  the change on its next poll, letting go of a key held on a switch that
+  changed; the LEDs and the mirror panel follow. A saved map that no longer
+  parses (a renamed key) is ignored with a warning. Built for both boards, not
+  run on hardware yet (no base on USB).
+- **Remapping from a phone** (2026-11-16): the brains' `/keys` page (WLED
+  usermod, `wled/usermod_nibbles/keys_page.h`) asks the base over the radio
+  with `NL_MSG_CONSOLE` (`nl_console_*` in the shared protocol: one question
+  packet, the answer in parts). `on_packet` queues questions from a brain
+  (role WLED or WLED_STANDBY) for the main loop (`radio_console_poll`; no task of its own, the 1.91 is short of internal RAM), which runs
+  `keypad_console` with its answer collected and sends it back to that brain;
+  anything but `keymap ...` and `keys` gets an ERROR line. For the page:
+  `keymap colors` (KEYCOLORS: each switch's LED colour now), `keymap last`
+  (KEYLAST: the switch pressed last and how long ago, to find which switch is
+  which), `keymap all` (all of it plus KEYFOUND). `keys` moved from `main.c`
+  into `keypad_console`. The USB console and the radio share a mutex. Built
+  for both boards, not run on hardware yet.
 - **Live / Standby** (`main/controls.c`, no ESP-IDF calls, host-tested in
   `test/host`): like a video switcher. Live is what the shark shows (from
   telemetry); Standby is staged.
@@ -449,7 +489,7 @@ Earlier features, still there (`main/main.c`):
   `wled next`, `wled set N`; `wled slot look S N` (WLED layer slot S takes
   layer preset N, 0 switches it off), `wled slot pal S N`; `bri N`, `wled bri N` (0..255, or `+N`/`-N` to
   step; both set WLED's brightness, which the eyes follow, as does the eyes
-  card's slider); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `fins on|off|toggle` (WLED's fin
+  card's slider); `auto on|off`; `preset N` (as a grid tap); `page 0|1`; `react preset|beats|peaks`; `fins cal port|starboard|both up|down|clear` (NL_OP_FIN_CAL to both brains: the fin sensor reading now becomes that limit; hold the fin at its limit first); `fins on|off|toggle` (WLED's fin
   LEDs follow the fins, or stay at the modelled angle); `shot`; `[eyes|wled] bump flash MS`,
   `[eyes|wled] bump black MS`, `[eyes|wled] bump preset N MS` (no prefix:
   flash and blackout go to both, preset bumps to WLED, as the preset numbers

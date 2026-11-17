@@ -64,6 +64,14 @@ static int64_t stby_layers_us;
 static volatile int64_t stby_sync_after;   // not until the roles have settled after a swap
 static volatile bool ab_in_use;            // both brains up: Standby runs on the other one
 
+// A console question from a brain (radio_console_poll).
+typedef struct {
+    uint8_t mac[6];
+    uint16_t id;
+    char text[NL_CONSOLE_TEXT];
+} radio_question_t;
+static QueueHandle_t radio_questions;
+
 static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
     if (h->type == NL_MSG_AB && len == sizeof(nl_ab_state_t)) {
@@ -96,6 +104,16 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         }
         taskEXIT_CRITICAL(&lock);
         if (h->type != NL_MSG_PREVIEW && h->type != NL_MSG_TIME) return;
+    }
+    if (h->type == NL_MSG_CONSOLE && (h->role == NL_ROLE_WLED || h->role == NL_ROLE_WLED_STANDBY)) {
+        nl_console_t m;
+        if (radio_questions && nl_console_parse(pl, len, &m) && !(m.flags & NL_CONSOLE_ANSWER)) {
+            radio_question_t q = { .id = m.id };
+            memcpy(q.mac, mac, 6);
+            strlcpy(q.text, m.text, sizeof(q.text));
+            xQueueSend(radio_questions, &q, 0);   // full: dropped, the page asks again
+        }
+        return;
     }
     if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second from each brain: straight to the screen
         display_preview(h->role == NL_ROLE_WLED_STANDBY, pl, len);
@@ -576,6 +594,7 @@ static void buttons_task(void *arg)
 // "wled slot look S N" / "wled slot pal S N" (WLED layer slot S: layer preset N, 0 off; palette N),
 // "preset N" (preset N on both, as a grid tap), "page N" (0 main, 1 Live and Standby, 2 grid, 3 details),
 // "key NAME [down|up]" (a keypad key; tapped without down/up), "keys" (list),
+// "keymap ..." (change which key each switch is, saved; see keypad.h),
 // "leds on|off" (print the key LED colours when they change),
 // "lights on|off", "pole on|off" (off only on a USB-C supply), "power" (log the power board).
 static void console_key(const char *args)
@@ -673,6 +692,46 @@ static void shot_task(void *arg)
 
 static void console_reply(void *ctx, const char *line) { printf("%s\n", line); }
 
+// Console questions from a brain's /keys page (NL_MSG_CONSOLE): only the
+// keypad's commands (`keymap ...`, `keys`), answered to the brain that asked.
+
+typedef struct {
+    char text[NL_CONSOLE_MAX_ANSWER];
+    size_t len;
+} radio_answer_t;
+
+static void radio_answer_line(void *ctx, const char *line)
+{
+    radio_answer_t *a = ctx;
+    const int w = snprintf(a->text + a->len, sizeof(a->text) - a->len, "%s\n", line);
+    if (w > 0) a->len += (size_t)w < sizeof(a->text) - a->len ? (size_t)w : sizeof(a->text) - a->len - 1;
+}
+
+// Called by the main loop: answers one waiting question (no task of its own:
+// the 1.91's internal RAM is short; the answer's buffer is in PSRAM).
+static void radio_console_poll(void)
+{
+    static radio_answer_t *a;
+    radio_question_t q;
+    if (!radio_questions || xQueueReceive(radio_questions, &q, 0) != pdTRUE) return;
+    if (!a) a = heap_caps_malloc(sizeof(*a), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!a) a = malloc(sizeof(*a));
+    if (!a) return;
+    a->len = 0;
+    a->text[0] = 0;
+    if (!keypad_console(q.text, radio_answer_line, a))
+        radio_answer_line(a, "ERROR the base takes only keymap and keys over the radio");
+    ESP_LOGI(TAG, "radio console: %s (%u bytes back)", q.text, (unsigned)a->len);
+    size_t off = 0;
+    for (uint8_t part = 0;; part++) {
+        nl_console_t m;
+        const size_t n = nl_console_answer_part(&m, q.id, part, a->text, &off);
+        nl_espnow_send(q.mac, NL_MSG_CONSOLE, &m, n);
+        if (m.flags & NL_CONSOLE_LAST) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
 static void console_task(void *arg)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -695,6 +754,7 @@ static void console_task(void *arg)
             continue;
         }
         if (ota_command(line, console_reply, NULL)) continue;
+        if (keypad_console(line, NULL, NULL)) continue;   // keymap ..., keys: which key each switch is (keypad.h)
         if (!strcmp(line, "role mirror") || !strcmp(line, "role base")) {
             const bool m = line[5] == 'm';
             printf("ROLE %s%s\n", m ? "mirror" : "base", mirror_set_role(m) ? ", restarting" : ": could not save");
@@ -740,10 +800,6 @@ static void console_task(void *arg)
         else if (!strcmp(line, "survey")) survey_start();
         else if (!strncmp(line, "radio move ", 11)) radio_move(atoi(line + 11));
         else if (!strncmp(line, "key ", 4)) console_key(line + 4);
-        else if (!strcmp(line, "keys")) {
-            for (int k = 1; k < KEY_COUNT; k++) printf("%s ", ctl_key_name((ctl_key_t)k));
-            printf("\n");
-        }
         else if (!strcmp(line, "lights on") || !strcmp(line, "lights off")) power_set_lights(line[8] == 'n');
         else if (!strcmp(line, "log")) {
             logger_status_t l;
@@ -822,7 +878,15 @@ static void console_task(void *arg)
                         !strcmp(line + 6, "beats") ? NL_REACT_BEATS : !strcmp(line + 6, "peaks") ? NL_REACT_PEAKS : NL_REACT_PRESET);
         else if (!strncmp(line, "preset ", 7)) send_preset_both(atoi(line + 7));
         else if (!strcmp(line, "fins on") || !strcmp(line, "fins off") || !strcmp(line, "fins toggle"))
-            send_cmd_to(NL_TARGET_WLED, NL_OP_FIN_FOLLOW, line[6] == 'n' ? 1 : line[6] == 'f' ? 0 : 2);
+            send_wled_both(NL_OP_FIN_FOLLOW, line[6] == 'n' ? 1 : line[6] == 'f' ? 0 : 2);
+        else if (!strncmp(line, "fins cal ", 9)) {   // fins cal port|starboard|both up|down|clear: both brains at once
+            char fin[12] = "", what[8] = "";
+            sscanf(line + 9, "%11s %7s", fin, what);
+            const int f = !strcmp(fin, "port") ? NL_FIN_PORT : !strcmp(fin, "starboard") ? NL_FIN_STARBOARD : !strcmp(fin, "both") ? NL_FIN_CAL_BOTH : -1;
+            const int w = !strcmp(what, "up") ? NL_FIN_CAL_UP : !strcmp(what, "down") ? NL_FIN_CAL_DOWN : !strcmp(what, "clear") ? NL_FIN_CAL_CLEAR : -1;
+            if (f < 0 || w < 0) ESP_LOGW(TAG, "fins cal port|starboard|both up|down|clear");
+            else send_wled_both(NL_OP_FIN_CAL, nl_fin_cal_arg(f, w));
+        }
         else if (!strcmp(line, "auto on") || !strcmp(line, "auto off")) send_cmd_to(NL_TARGET_EYES, NL_OP_AUTO_CYCLE, line[6] == 'n');
         else if (!strncmp(line, "bri ", 4))  // the eyes follow WLED's brightness: same as "wled bri"
             send_cmd_to(NL_TARGET_WLED, line[4] == '+' || line[4] == '-' ? NL_OP_BRIGHTNESS_STEP : NL_OP_BRIGHTNESS_SET, atoi(line + 4));
@@ -971,6 +1035,7 @@ void app_main(void)
              (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
     if (logger_start() != ESP_OK) ESP_LOGE(TAG, "no logger");
     if (keypad_start(on_key) != ESP_OK) ESP_LOGE(TAG, "no keypad task");
+    radio_questions = xQueueCreate(4, sizeof(radio_question_t));
     xTaskCreate(buttons_task, "buttons", 4096, NULL, 4, NULL);
     xTaskCreate(actions_task, "actions", 4096, NULL, 4, NULL);
     xTaskCreate(timed_bump_task, "timed_bump", 3072, NULL, 4, NULL);
@@ -980,6 +1045,7 @@ void app_main(void)
     int64_t next_battery = 0;
     char update_shown[100] = "";
     for (int n = 0;; n++) {
+        radio_console_poll();   // the /keys page's questions
         vTaskDelay(pdMS_TO_TICKS(50));
         const int64_t now = esp_timer_get_time();
         taskENTER_CRITICAL(&lock);

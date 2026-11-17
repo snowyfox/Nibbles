@@ -45,6 +45,7 @@ typedef enum {
     NL_MSG_AR_SYNC = 20,    // the controller's sound analysis, controller -> brains over the return wire, ~50 Hz (nl_ar_sync_t)
     NL_MSG_HOP = 21,        // move to another radio channel together (nl_hop_t), broadcast; boards without it ignore it
     NL_MSG_SHOW = 22,       // what Live and Standby are, base -> radio, 2 Hz per side and on a change (nl_show_t)
+    NL_MSG_CONSOLE = 23,    // a text command for the base and its answer, brain <-> base, unicast (nl_console_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -173,7 +174,19 @@ typedef enum {
     NL_OP_CTL_WIFI = 14,        // controller (NL_TARGET_AB, through a brain's wire): arg 1 joins the Nibbles
                                 // network until its next restart (web page, OTA), 0 radio off again
     NL_OP_SLOT_PALETTE = 10,    // WLED: arg = nl_slot_arg(slot, palette): the slot's palette (the effect keeps running)
+    NL_OP_FIN_CAL = 15,         // WLED (each brain): calibrate the fin sensors wired to it; arg = nl_fin_cal_arg()
 } nl_op_t;
+
+// NL_OP_FIN_CAL's arg: which fin (NL_FIN_PORT, NL_FIN_STARBOARD, or
+// NL_FIN_CAL_BOTH) and what: the reading now is that fin's down or up limit,
+// or forget both limits.
+#define NL_FIN_CAL_BOTH     2
+#define NL_FIN_CAL_DOWN     0
+#define NL_FIN_CAL_UP       1
+#define NL_FIN_CAL_CLEAR    2
+static inline int16_t nl_fin_cal_arg(int fin, int what) { return (int16_t)((what << 4) | fin); }
+static inline int nl_fin_cal_arg_fin(int16_t arg) { return arg & 0x0F; }
+static inline int nl_fin_cal_arg_what(int16_t arg) { return (arg >> 4) & 0x0F; }
 
 // NL_OP_PRESET_SET to WLED: arg | NL_PRESET_NO_EYES applies the preset to the
 // body (and fins) only, skipping any eye settings stored in it (the base's
@@ -441,6 +454,52 @@ typedef struct __attribute__((packed)) {
     char body_name[NL_NAME_LEN], eyes_name[NL_NAME_LEN], fins_name[NL_NAME_LEN], pal_name[NL_NAME_LEN];
 } nl_show_t;
 
+// ---------------------------------------------------------------- console text
+// A brain's web page (/keys) asks the base something it would type on the
+// base's USB serial (only the commands the base allows over the radio:
+// `keymap ...`, `keys`), and the base answers with the lines it would print.
+// The question is one packet; the answer comes in parts (part 0, 1, ...; the
+// last has NL_CONSOLE_LAST), each sent once: a lost part leaves the answer
+// unfinished and the asker asks again. Only the text up to its NUL is sent.
+#define NL_CONSOLE_TEXT     200     // text per packet, NUL included
+#define NL_CONSOLE_ANSWER   0x01    // base -> asker (without: a question)
+#define NL_CONSOLE_LAST     0x02    // the answer's last part
+#define NL_CONSOLE_HEAD     4       // id, part, flags
+
+typedef struct NL_PACKED {
+    uint16_t id;            // the asker's number for the question; the answer repeats it
+    uint8_t part;           // the answer's part number, from 0 (0 on a question)
+    uint8_t flags;          // NL_CONSOLE_*
+    char text[NL_CONSOLE_TEXT];
+} nl_console_t;
+
+// A question: fills m and returns the bytes to send (0: text too long or empty).
+size_t nl_console_question(nl_console_t *m, uint16_t id, const char *text);
+
+// The next part of an answer `all` (the whole text, lines ending in \n),
+// starting at *offset, which moves on. Returns the bytes to send. An empty
+// answer is one empty last part.
+size_t nl_console_answer_part(nl_console_t *m, uint16_t id, uint8_t part, const char *all, size_t *offset);
+
+// A received packet: true, with m filled and its text NUL-terminated, if it's
+// a well-formed nl_console_t.
+bool nl_console_parse(const uint8_t *payload, size_t len, nl_console_t *m);
+
+// Putting an answer back together on the asker's side.
+#define NL_CONSOLE_MAX_ANSWER 2048
+typedef struct {
+    uint16_t id;            // the question being answered
+    uint8_t next;           // the part expected next
+    bool done, broken;      // all parts in / a part was missed
+    size_t len;
+    char text[NL_CONSOLE_MAX_ANSWER];
+} nl_console_rx_t;
+
+// Starts waiting for the answer to question id.
+void nl_console_rx_start(nl_console_rx_t *rx, uint16_t id);
+// Takes a parsed answer part (others are ignored). Returns true once complete.
+bool nl_console_rx_add(nl_console_rx_t *rx, const nl_console_t *m);
+
 // ---------------------------------------------------------------- the time
 // Nothing here has a network clock. A phone opening WLED's /time page tells that
 // WLED the time; it passes it on so the base can timestamp its logs.
@@ -465,6 +524,23 @@ typedef struct NL_PACKED {
     int16_t angle_cdeg[2];  // [NL_FIN_PORT], [NL_FIN_STARBOARD]: calibrated hinge angle, or NL_FIN_NONE
     uint16_t raw[2];        // the sensor's own reading (e.g. ADC counts), or NL_FIN_RAW_NONE
 } nl_fin_pose_t;
+
+// A sensor reading to the calibrated angle (centidegrees), from the readings
+// taken at the down and up limits (either way round). A little past either
+// limit is allowed (clamped to +-NL_FIN_CLAMP_CDEG); further than
+// NL_FIN_REJECT_CDEG is taken as no sensor (a cable off: the input floats).
+// NL_FIN_NONE when uncalibrated (a limit < 0, or both the same).
+#define NL_FIN_CLAMP_CDEG   10000
+#define NL_FIN_REJECT_CDEG  11000
+static inline int16_t nl_fin_angle_cdeg(float raw, int cal_down, int cal_up)
+{
+    if (cal_down < 0 || cal_up < 0 || cal_down == cal_up || raw < 0) return NL_FIN_NONE;
+    float a = -9000.0f + 18000.0f * (raw - (float)cal_down) / (float)(cal_up - cal_down);
+    if (a > NL_FIN_REJECT_CDEG || a < -NL_FIN_REJECT_CDEG) return NL_FIN_NONE;
+    if (a > NL_FIN_CLAMP_CDEG) a = NL_FIN_CLAMP_CDEG;
+    if (a < -NL_FIN_CLAMP_CDEG) a = -NL_FIN_CLAMP_CDEG;
+    return (int16_t)(a < 0 ? a - 0.5f : a + 0.5f);
+}
 
 typedef enum {
     NL_FIN_SRC_NONE = 0,    // no angle (no sensor heard)

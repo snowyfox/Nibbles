@@ -132,9 +132,13 @@
 
 // ---------------------------------------------------------------- keypad
 // Key boards on the power board's bus (TCA9534A, address set by each board's
-// jumpers) in the order their LEDs are chained (hub J2, J3, ...). Each lists
-// its switches top to bottom (switch 1 = P0 = its first LED); KEY_NONE for
-// a switch with no job. See controls.h for what the keys do.
+// jumpers) in the order their LEDs are chained (J1 from the power board, then
+// each board's J2 to the next one's J1). Each lists its switches top to bottom
+// (switch 1 = P0 = its first LED); KEY_NONE for a switch with no job. See
+// controls.h for what the keys do.
+// The key assignment is a placeholder (2026-11-16) and will change: this table
+// is the only place it lives (the LEDs, the mirror panel and the logic follow
+// it), so moving a key is editing its name here. Planned: three 8-key boards.
 // The last entry is the breadboard prototype: a PCF8574T module (no LEDs;
 // switches between a pin and GND, its pins pull themselves up) at 0x27, all
 // three address jumpers high (PCF8574T: 0x20-0x27; PCF8574AT: 0x38-0x3F).
@@ -142,20 +146,41 @@
 #define KEYPAD_BOARDS { \
     { 0x38, KEYPAD_TCA9534, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8 } }, \
     { 0x39, KEYPAD_TCA9534, 8, { KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS, KEY_PAGE, KEY_LATCH, KEY_BLACKOUT, KEY_FIN_SENSOR } }, \
-    { 0x3A, KEYPAD_TCA9534, 3, { KEY_TAKE, KEY_FLASH, KEY_UNLOCK } }, \
+    { 0x3A, KEYPAD_TCA9534, 8, { KEY_TAKE, KEY_FLASH, KEY_UNLOCK, KEY_MOD_PALETTE, KEY_MOD_LAYER, KEY_MONITORS, KEY_DETAIL, KEY_NONE } }, \
     { 0x27, KEYPAD_PCF8574, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_EYES, KEY_BODY, KEY_LATCH, KEY_TAKE } }, \
 }
 #define KEYPAD_POLL_MS       10
 // The key LEDs' data: GPIO 43 (U0TXD; the console is on USB), wired to the
-// hub's J1 pin 7. The ROM prints its boot banner on this pin, so the LEDs
+// first board's J1 pin 7. The ROM prints its boot banner on this pin, so the LEDs
 // may flicker for a moment at power-up until the firmware sets them.
 #if CONFIG_BASE_BOARD_AMOLED_191
 #define PIN_KEY_LEDS         14      // H1 pin 12: no boot banner on it
 #else
 #define PIN_KEY_LEDS         43
 #endif
-// Scale for the key LEDs (0-255): 19 SK6812s at full white would draw ~1.1 A
-// from the keypad cable's 5 V; 48 keeps it under ~0.25 A and is plenty at night.
+// Scale for the key LEDs (0-255): 24 SK6812s at full white would draw ~1.4 A
+// from the keypad cable's 5 V; 48 keeps it under ~0.3 A and is plenty at night.
 #define KEYPAD_LED_LEVEL     48
+// Mirror panel: an LED panel at the end of the key LED chain (on the last key
+// board's J2: pin 7 data, pin 6 +5V, pin 1 GND; or first, KEYPAD_PANEL_FIRST) that repeats every key's
+// colour, to see the keys from behind. Made for Adafruit's NeoPixel FeatherWing
+// (4 x 8 WS2812B, pixel 0 in a corner, rows of 8 along the long side). Each
+// pixel row is one key board (row 0 = the first board on the chain, LED
+// boards only) and each pixel along a row one switch (switch 1 first), so it
+// follows the boards, not the key names. A row or pixel with no key stays
+// dark (the 4th row while there are three boards). KEYPAD_PANEL_PIXELS 0: no
+// panel. Turn the panel round or view it from the other side: set the flips.
+#define KEYPAD_PANEL_PIXELS      32
+// 1: the panel is first on the LED data, between the base and the first key
+// board. The FeatherWing buffers its data input (a 74AHCT1G125, powered from
+// its USB/BAT pins), so it can stand in for the hub's buffer in front of the
+// hub-version key_columns, which have none (2026-11-16).
+#define KEYPAD_PANEL_FIRST       0
+#define KEYPAD_PANEL_ROW         8    // pixels per row
+#define KEYPAD_PANEL_FLIP_ROWS   0    // 1: the first board on the last row
+#define KEYPAD_PANEL_FLIP_KEYS   0    // 1: switch 1 at the end of its row
+// Its own scale (0-255): the 5050 WS2812Bs are much brighter than the keys'
+// SK6812MINI-Es; 24 x 60 mA x 16/255 = ~90 mA at full white.
+#define KEYPAD_PANEL_LEVEL       16
 // Lock the keypad after this long without a key press (0: only by holding UNLOCK).
 #define KEYPAD_AUTOLOCK_MS   0

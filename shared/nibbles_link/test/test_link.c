@@ -530,6 +530,16 @@ static void test_power_limiter(void)
     CHECK(sizeof(nl_battery_t) == 7, "battery message is 7 bytes (got %u)", (unsigned)sizeof(nl_battery_t));
     CHECK(sizeof(nl_fin_pose_t) == 8, "fin pose message is 8 bytes (got %u)", (unsigned)sizeof(nl_fin_pose_t));
     CHECK(sizeof(nl_fin_state_t) == 9, "fin state message is 9 bytes (got %u)", (unsigned)sizeof(nl_fin_state_t));
+    // Fin angles from a sensor reading (the port fin's real limits, 2026-10-21: down 2992, up 1651).
+    CHECK(nl_fin_angle_cdeg(1651, 2992, 1651) == 9000, "at the up limit: +90 deg");
+    CHECK(nl_fin_angle_cdeg(2992, 2992, 1651) == -9000, "at the down limit: -90 deg");
+    CHECK(nl_fin_angle_cdeg(2321.5f, 2992, 1651) == 0, "midway: 0 (got %d)", nl_fin_angle_cdeg(2321.5f, 2992, 1651));
+    CHECK(nl_fin_angle_cdeg(1500, 1500, 2500) == -9000, "limits either way round");
+    CHECK(nl_fin_angle_cdeg(1560, 2992, 1651) == NL_FIN_CLAMP_CDEG, "a little past up: clamped (got %d)", nl_fin_angle_cdeg(1560, 2992, 1651));
+    CHECK(nl_fin_angle_cdeg(0, 2992, 1651) == NL_FIN_NONE, "far outside the range: no sensor");
+    CHECK(nl_fin_angle_cdeg(4095, 2992, 1651) == NL_FIN_NONE, "far outside the other way: no sensor");
+    CHECK(nl_fin_angle_cdeg(2000, -1, 1651) == NL_FIN_NONE, "uncalibrated: none");
+    CHECK(nl_fin_angle_cdeg(2000, 1651, 1651) == NL_FIN_NONE, "both limits the same: none");
     CHECK(sizeof(nl_show_t) == 14 + 4 * NL_NAME_LEN && sizeof(nl_show_t) <= NL_MAX_PAYLOAD,
           "show message is %u bytes and fits a packet", (unsigned)sizeof(nl_show_t));
 }
@@ -794,6 +804,53 @@ static void test_pixels(void)
     CHECK(ok == 0 && p.bad_chunks == 1, "a non-pixel frame is dropped");
 }
 
+static void test_console(void)
+{
+    nl_console_t m, got;
+    uint8_t buf[sizeof(nl_console_t)];
+    size_t n = nl_console_question(&m, 7, "keymap 2");
+    CHECK(n == NL_CONSOLE_HEAD + 9 && m.flags == 0, "a question is its text and NUL");
+    memcpy(buf, &m, n);
+    CHECK(nl_console_parse(buf, n, &got) && got.id == 7 && !strcmp(got.text, "keymap 2"), "a question parses");
+    CHECK(!nl_console_parse(buf, n - 1, &got), "a question cut short is refused");
+    buf[n - 3] = 0;
+    CHECK(!nl_console_parse(buf, n, &got), "text with a NUL inside is refused");
+    char big[NL_CONSOLE_TEXT + 1];
+    memset(big, 'a', sizeof(big) - 1);
+    big[sizeof(big) - 1] = 0;
+    CHECK(nl_console_question(&m, 1, big) == 0 && nl_console_question(&m, 1, "") == 0, "too long or empty questions are refused");
+
+    // A 450-character answer: three parts, put back together in order.
+    char all[451];
+    for (int i = 0; i < 450; i++) all[i] = (char)('a' + i % 26);
+    all[450] = 0;
+    nl_console_t parts[4];
+    size_t off = 0;
+    int count = 0;
+    do {
+        n = nl_console_answer_part(&parts[count], 9, (uint8_t)count, all, &off);
+        memcpy(buf, &parts[count], n);
+        CHECK(nl_console_parse(buf, n, &got) && got.part == count, "each part parses");
+        count++;
+    } while (!(parts[count - 1].flags & NL_CONSOLE_LAST) && count < 4);
+    CHECK(count == 3 && off == 450, "450 characters take three parts");
+    static nl_console_rx_t rx;
+    nl_console_rx_start(&rx, 9);
+    nl_console_t other = parts[0];
+    other.id = 8;
+    CHECK(!nl_console_rx_add(&rx, &other) && rx.len == 0, "another question's answer is ignored");
+    CHECK(!nl_console_rx_add(&rx, &parts[0]) && !nl_console_rx_add(&rx, &parts[0]), "a repeated part is ignored");
+    CHECK(!nl_console_rx_add(&rx, &parts[1]) && nl_console_rx_add(&rx, &parts[2]), "the last part finishes it");
+    CHECK(rx.len == 450 && !strcmp(rx.text, all), "the answer comes back whole");
+    nl_console_rx_start(&rx, 9);
+    nl_console_rx_add(&rx, &parts[0]);
+    CHECK(!nl_console_rx_add(&rx, &parts[2]) && rx.broken && !nl_console_rx_add(&rx, &parts[1]), "a missed part spoils the answer");
+    off = 0;
+    n = nl_console_answer_part(&m, 3, 0, "", &off);
+    nl_console_rx_start(&rx, 3);
+    CHECK(n == NL_CONSOLE_HEAD + 1 && nl_console_rx_add(&rx, &m) && rx.len == 0, "an empty answer is one empty last part");
+}
+
 int main(void)
 {
     srand(1);
@@ -816,6 +873,7 @@ int main(void)
     test_preview();
     test_ab();
     test_relay();
+    test_console();
     CHECK(sizeof(nl_ar_sync_t) == 44 && sizeof(NL_AR_SYNC_HEADER) == 6, "the sound sync packet matches AudioReactive's");
     CHECK(sizeof(nl_time_t) == 4 && !nl_time_valid(0) && !nl_time_valid(12345) && nl_time_valid(1793566000), "the time packet");
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);

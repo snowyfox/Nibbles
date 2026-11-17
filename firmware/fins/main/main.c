@@ -58,14 +58,10 @@ static float reading(void)
 }
 
 // Calibrated angle in centidegrees: +9000 at the up limit, -9000 at the down
-// limit (a little past either end is allowed).
+// limit (shared with the brains, which can read the sensors themselves).
 static int16_t angle_cdeg(float raw)
 {
-    if (cal_up < 0 || cal_down < 0 || cal_up == cal_down || raw < 0) return NL_FIN_NONE;
-    float a = -9000.0f + 18000.0f * (raw - cal_down) / (float)(cal_up - cal_down);
-    if (a > 10000) a = 10000;
-    if (a < -10000) a = -10000;
-    return (int16_t)a;
+    return nl_fin_angle_cdeg(raw, cal_down, cal_up);
 }
 
 static void sensor_task(void *arg)

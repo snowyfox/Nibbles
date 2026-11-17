@@ -10,6 +10,8 @@
 #include "wled_palettes.h"
 #include "log_format.h"
 #include "eye_thumb.h"
+#include "keypad_panel.h"
+#include "keymap_text.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -1112,6 +1114,50 @@ static void test_held_bumps_stack(void)
     CHECK(acts[0].type == ACT_BUMP_END && c.live.body == 7);
 }
 
+// Key maps as text (NVS and the keymap command): names, comma-separated.
+static void test_keymap_text(void)
+{
+    const ctl_key_t keys[8] = { KEY_TAKE, KEY_FLASH, KEY_NONE, KEY_NUM1, KEY_PRESET_LAST, KEY_DETAIL, KEY_MOD_PALETTE, KEY_FIN_SENSOR };
+    char text[200];
+    CHECK(keymap_format(keys, 8, text, sizeof(text)) > 0);
+    CHECK(!strcmp(text, "take,flash,none,1,preset16,detail,palette,finsensor"));
+    ctl_key_t back[8] = { 0 };
+    CHECK(keymap_parse(text, back, 8) && !memcmp(back, keys, sizeof(keys)));
+    // wrong count, an unknown name, empty names: refused, nothing changed
+    ctl_key_t same[3] = { KEY_NUM1, KEY_NUM2, KEY_NUM3 };
+    CHECK(!keymap_parse("take,flash", same, 3) && same[0] == KEY_NUM1);
+    CHECK(!keymap_parse("take,flash,latch,eyes", same, 3) && same[0] == KEY_NUM1);
+    CHECK(!keymap_parse("take,flsh,latch", same, 3) && same[0] == KEY_NUM1);
+    CHECK(!keymap_parse("take,,latch", same, 3) && same[0] == KEY_NUM1);
+    CHECK(!keymap_parse("", same, 3));
+    CHECK(keymap_parse("none,none,latch", same, 3) && same[0] == KEY_NONE && same[2] == KEY_LATCH);
+    // too small a buffer
+    CHECK(keymap_format(keys, 8, text, 10) == -1);
+    ctl_key_t k = KEY_NUM1;
+    CHECK(keymap_key("none", &k) && k == KEY_NONE);
+    CHECK(!keymap_key("nope", &k) && k == KEY_NONE);
+}
+
+// The mirror panel: rows are key boards in chain order, pixels along a row their switches.
+static void test_keypad_panel(void)
+{
+    int b, k;
+    CHECK(keypad_panel_source(0, 32, 8, false, false, &b, &k) && b == 0 && k == 0);
+    CHECK(keypad_panel_source(7, 32, 8, false, false, &b, &k) && b == 0 && k == 7);
+    CHECK(keypad_panel_source(8, 32, 8, false, false, &b, &k) && b == 1 && k == 0);
+    CHECK(keypad_panel_source(31, 32, 8, false, false, &b, &k) && b == 3 && k == 7);
+    // flipped rows: the first board on the last row; flipped keys: switch 1 at the end
+    CHECK(keypad_panel_source(0, 32, 8, true, false, &b, &k) && b == 3 && k == 0);
+    CHECK(keypad_panel_source(24, 32, 8, true, false, &b, &k) && b == 0 && k == 0);
+    CHECK(keypad_panel_source(0, 32, 8, false, true, &b, &k) && b == 0 && k == 7);
+    CHECK(keypad_panel_source(31, 32, 8, true, true, &b, &k) && b == 0 && k == 0);
+    // outside the panel, or no rows
+    CHECK(!keypad_panel_source(32, 32, 8, false, false, &b, &k));
+    CHECK(!keypad_panel_source(-1, 32, 8, false, false, &b, &k));
+    CHECK(!keypad_panel_source(0, 0, 8, false, false, &b, &k));
+    CHECK(!keypad_panel_source(0, 32, 0, false, false, &b, &k));
+}
+
 int main(void)
 {
     test_standby_fills_from_live();
@@ -1141,6 +1187,8 @@ int main(void)
     test_ab_take();
     test_overlapping_keys_never_latch();
     test_held_bumps_stack();
+    test_keypad_panel();
+    test_keymap_text();
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;

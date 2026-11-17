@@ -115,6 +115,7 @@ eye. Framing: COBS with CRC-16, a message type and a sequence number.
   | `CMD` / `ACK` | base → eyes or WLED, unicast | on demand: preset set/next/prev, brightness set/step, eyes' auto-cycle; up to 3 tries of 60 ms |
   | `BUMP` | base → broadcast (target mask) | START, HOLD every 100 ms, STOP: flash, blackout, preset while held |
   | `AUDIO` | WLED → broadcast | every 32 ms when its `audio` setting is on |
+  | `CONSOLE` | brain ↔ base, unicast | on demand: the `/keys` page's `keymap` questions to the base, its answer in parts |
 - The WLED usermod receives messages through
   `Usermod::onEspNowMessage(sender, payload, len)`, so WLED's own ESP-NOW
   handling is untouched.
@@ -322,6 +323,12 @@ boards or ports once installed. Plan for programming and powering them:
     LED power wires away. Keep the 0/360 wrap in the unreachable half or
     unwrap in software; calibrate both limits (straight up and down) in
     software rather than burning a zero into the chip.
+  - *Decided 2026-11-15*: the brains read the sensors themselves, both fins
+    on both brains (each MT6701's analog output wired to the same ADC1 pin
+    on each brain: port GPIO 1, starboard GPIO 2), each brain calibrated on
+    its own; no fin sensor node in the top box. Code done (usermod
+    "fin_pins" / "fin_cal", NL_OP_FIN_CAL, the base's "fins cal ..."); not
+    yet tried with a sensor. `wled/README.md` has the details.
   - Order: simulator first (per-fin hinge sliders; the 3D view rotates the
     fins), then the usermod on the bench fed a test angle through JSON, then
     hardware. Unknowns: room at the hinge for a magnet and sensor, whether a

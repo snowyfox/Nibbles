@@ -25,6 +25,10 @@
 //   period_s,"starboard":period_s,"s":seconds}}}): the fin's angle swings
 //   smoothly through -90..+90 deg, in place of the sensor, until the request
 //   runs out (renewed every 2 s while the simulator wants it).
+// - Fin sensors wired to this board ("fin_pins"; the brains: each fin's
+//   MT6701 analog output to both brains): read on ADC1 pins in a task on core
+//   0 and calibrated per board (NL_OP_FIN_CAL from the base, or "fincal" JSON).
+//   A fin with a pin here ignores the fin sensor node for that fin.
 // - Fin hinge angles from the fin sensor node (NL_MSG_FIN_POSE): shown on the
 //   Info page and passed to the simulator. With the 2D map, a fin whose angle
 //   is known follows it: each of its LEDs shows the side view's colour at the
@@ -104,6 +108,7 @@
 // and base). See docs/architecture.md in the Nibbles repo.
 #include "wled.h"
 #include "nibbles_link.h"
+#include "keys_page.h"
 #include <esp_now.h>
 #include <driver/uart.h>
 #include <driver/gpio.h>
@@ -112,6 +117,14 @@
 #include <map>
 #ifdef NIBBLES_ES7210
 #include <Wire.h>
+#endif
+
+// Fin sensors wired to this board (setting "fin_pins"): defaults for a fresh config.
+#ifndef NIBBLES_FIN_PIN_PORT
+#define NIBBLES_FIN_PIN_PORT -1
+#endif
+#ifndef NIBBLES_FIN_PIN_STARBOARD
+#define NIBBLES_FIN_PIN_STARBOARD -1
 #endif
 
 #ifdef WLED_DISABLE_ESPNOW
@@ -212,6 +225,16 @@ class NibblesUsermod : public Usermod {
     RxItem rx[RX_QUEUE];
     volatile uint8_t rxHead = 0, rxTail = 0;
     portMUX_TYPE rxLock = portMUX_INITIALIZER_UNLOCKED;
+
+    // The /keys page: questions for the base's console (NL_MSG_CONSOLE). The web
+    // server's task asks and reads the answer; loop() sends and collects it.
+    uint8_t baseMac[6] = { 0 };
+    unsigned long baseAt = 0;           // last heartbeat from the base (0: never)
+    nl_console_rx_t *consoleRx = nullptr;
+    char consoleAsk[NL_CONSOLE_TEXT];
+    uint16_t consoleId = 0;
+    volatile bool consolePending = false;
+    portMUX_TYPE consoleLock = portMUX_INITIALIZER_UNLOCKED;
 
     // Last command, so a retry (same id) is acked but applied once.
     uint16_t lastCmdId = 0;
@@ -386,6 +409,116 @@ class NibblesUsermod : public Usermod {
     nl_fin_pose_t fins = { { NL_FIN_NONE, NL_FIN_NONE }, { NL_FIN_RAW_NONE, NL_FIN_RAW_NONE } };
     unsigned long finsAt[2] = { 0, 0 };
     uint32_t finRx = 0;
+
+    // Fin sensors wired to this board: each fin's MT6701 analog output, wired
+    // to both brains in parallel so each reads both fins itself (no radio in
+    // between). Setting "fin_pins" [port, starboard], -1 = none; ADC1 pins only
+    // (ADC2 can't be read while the radio is on: GPIO 1-10 on the S3).
+    // "fin_cal" [[port down, up], [starboard down, up]] in ADC counts, -1 =
+    // not set: NL_OP_FIN_CAL from the base ("fins cal ..." on its serial port,
+    // both brains at once) or {"nibbles":{"fincal":{"fin":"port"|"starboard"|
+    // "both","at":"down"|"up"|"clear"}}}. A fin with a pin here ignores
+    // NL_MSG_FIN_POSE from a fin sensor node.
+    int8_t finPin[2] = { NIBBLES_FIN_PIN_PORT, NIBBLES_FIN_PIN_STARBOARD };
+    int16_t finCal[2][2] = { { -1, -1 }, { -1, -1 } };   // [fin][NL_FIN_CAL_DOWN / NL_FIN_CAL_UP]
+    int8_t finPinOwned[2] = { -1, -1 };         // pins we hold (PinManager)
+    volatile int8_t finPinLive[2] = { -1, -1 };  // what the sampling task reads
+    const char *finPinProblem[2] = { nullptr, nullptr };
+    bool finPinsRecheck = true;
+    float finRawLocal[2] = { -1, -1 };          // smoothed ADC counts (finMux), -1 = none yet
+    portMUX_TYPE finMux = portMUX_INITIALIZER_UNLOCKED;
+    TaskHandle_t finTask = nullptr;
+    unsigned long finLocalAt = 0;
+    static constexpr int FIN_SAMPLE_MS = 10, FIN_SAMPLES = 16;   // as the fin sensor node (firmware/fins)
+    static constexpr float FIN_SMOOTH = 0.35f;
+
+    bool finLocal(int f) const { return finPinLive[f] >= 0; }
+
+    float finRawNow(int f) {
+      portENTER_CRITICAL(&finMux);
+      const float r = finRawLocal[f];
+      portEXIT_CRITICAL(&finMux);
+      return r;
+    }
+
+    // Its own task on core 0 at low priority (WLED renders on core 1): 2 x 16
+    // conversions every 10 ms would otherwise cost the render loop ~1 ms.
+    static void finTaskFn(void *arg) {
+      NibblesUsermod *um = static_cast<NibblesUsermod *>(arg);
+      for (;;) {
+        for (int f = 0; f < 2; f++) {
+          const int pin = um->finPinLive[f];
+          if (pin < 0) continue;
+          uint32_t sum = 0;
+          for (int i = 0; i < FIN_SAMPLES; i++) sum += analogRead(pin);
+          const float r = (float)sum / FIN_SAMPLES;
+          portENTER_CRITICAL(&um->finMux);
+          if (um->finPinLive[f] == pin) um->finRawLocal[f] = um->finRawLocal[f] < 0 ? r : um->finRawLocal[f] + FIN_SMOOTH * (r - um->finRawLocal[f]);
+          portEXIT_CRITICAL(&um->finMux);
+        }
+        vTaskDelay(pdMS_TO_TICKS(FIN_SAMPLE_MS));
+      }
+    }
+
+    // Takes and lets go of the pins as the setting changes; starts the task.
+    void finPinsLoop() {
+      if (!finPinsRecheck) return;
+      finPinsRecheck = false;
+      for (int f = 0; f < 2; f++) {
+        int want = display ? -1 : finPin[f];
+        if (want == finPinOwned[f] && (want < 0 || finPinLive[f] == want)) continue;
+        portENTER_CRITICAL(&finMux);
+        finPinLive[f] = -1;
+        finRawLocal[f] = -1;
+        portEXIT_CRITICAL(&finMux);
+        if (finPinOwned[f] >= 0) PinManager::deallocatePin(finPinOwned[f], PinOwner::UM_Unspecified);
+        finPinOwned[f] = -1;
+        finPinProblem[f] = nullptr;
+        if (want < 0) continue;
+        const int8_t ch = digitalPinToAnalogChannel(want);
+        if (ch < 0 || ch >= SOC_ADC_MAX_CHANNEL_NUM) { finPinProblem[f] = "not an ADC1 pin"; continue; }  // ADC2: channel 10 and up
+        if (!PinManager::allocatePin(want, false, PinOwner::UM_Unspecified)) { finPinProblem[f] = "pin in use"; continue; }
+        finPinOwned[f] = want;
+        analogSetPinAttenuation(want, ADC_11db);   // 0-3.1 V or so: the MT6701 swings 0-3.3 V
+        portENTER_CRITICAL(&finMux);
+        finPinLive[f] = want;
+        portEXIT_CRITICAL(&finMux);
+      }
+      if (!finTask && (finPinLive[0] >= 0 || finPinLive[1] >= 0))
+        xTaskCreatePinnedToCore(finTaskFn, "nibbles_fins", 2560, this, 1, &finTask, 0);
+    }
+
+    // The local readings into the fins' state, as a fin sensor node's would arrive (50 Hz).
+    void finLocalLoop(unsigned long now) {
+      if (now - finLocalAt < 20) return;
+      finLocalAt = now;
+      for (int f = 0; f < 2; f++) {
+        if (!finLocal(f)) continue;
+        const float r = finRawNow(f);
+        if (r < 0) continue;
+        fins.raw[f] = (uint16_t)(r + 0.5f);
+        fins.angle_cdeg[f] = nl_fin_angle_cdeg(r, finCal[f][NL_FIN_CAL_DOWN], finCal[f][NL_FIN_CAL_UP]);
+        finsAt[f] = now;
+      }
+    }
+
+    // NL_OP_FIN_CAL / "fincal": the reading now becomes that fin's limit. False if there is nothing to read.
+    bool finCalibrate(int fin, int what) {
+      bool any = false;
+      for (int f = 0; f < 2; f++) {
+        if (fin != f && fin != NL_FIN_CAL_BOTH) continue;
+        if (what == NL_FIN_CAL_CLEAR) { finCal[f][0] = finCal[f][1] = -1; any = true; continue; }
+        const float r = finLocal(f) ? finRawNow(f) : -1;
+        if (r < 0) continue;
+        finCal[f][what] = (int16_t)(r + 0.5f);
+        any = true;
+#ifdef NIBBLES_DEBUG
+        Serial.printf("nibbles: %s fin %s limit = %d\n", f ? "starboard" : "port", what ? "up" : "down", finCal[f][what]);
+#endif
+      }
+      if (any) configNeedsWrite = true;
+      return any;
+    }
 
     // Battery-aware current limit.
     bool powerEnabled = true;
@@ -1925,6 +2058,12 @@ class NibblesUsermod : public Usermod {
           setFinFollow(cmd.arg == 2 ? !finFollowOn : cmd.arg == 1);
           id = NO_ACTION;
           return NL_ACK_OK;
+        case NL_OP_FIN_CAL: {
+          const int f = nl_fin_cal_arg_fin(cmd.arg), w = nl_fin_cal_arg_what(cmd.arg);
+          if (f > NL_FIN_CAL_BOTH || w > NL_FIN_CAL_CLEAR) return NL_ACK_BAD_ARG;
+          id = NO_ACTION;
+          return finCalibrate(f, w) ? NL_ACK_OK : NL_ACK_UNSUPPORTED;   // no sensor wired here
+        }
         default: break;
       }
       refreshPresets();
@@ -2354,6 +2493,19 @@ class NibblesUsermod : public Usermod {
           return;
         }
       }
+      if (h.type == NL_MSG_HEARTBEAT && h.role == NL_ROLE_BASE && !display && !fromWire) {
+        memcpy(baseMac, it.mac, 6);   // where the /keys page's questions go
+        baseAt = millis();
+      }
+      if (h.type == NL_MSG_CONSOLE) {
+        nl_console_t m;
+        if (consoleRx && !fromWire && nl_console_parse(pl, len, &m)) {
+          portENTER_CRITICAL(&consoleLock);
+          nl_console_rx_add(consoleRx, &m);
+          portEXIT_CRITICAL(&consoleLock);
+        }
+        return;
+      }
       if (h.type == NL_MSG_HEARTBEAT && !display) heardAnchor(h, pl, len);
       if (h.type == NL_MSG_HOP && len == sizeof(nl_hop_t)) {
         if (!display && !fromWire) heardHop(h, pl);
@@ -2405,6 +2557,7 @@ class NibblesUsermod : public Usermod {
         memcpy(&p, pl, sizeof(p));
         for (int f = 0; f < 2; f++) {
           if (p.raw[f] == NL_FIN_RAW_NONE) continue;  // this node doesn't read that fin
+          if (finLocal(f)) continue;                   // wired to this board: our own reading wins
           fins.angle_cdeg[f] = p.angle_cdeg[f];
           fins.raw[f] = p.raw[f];
           finsAt[f] = millis();
@@ -2454,6 +2607,12 @@ class NibblesUsermod : public Usermod {
             ".then(r=>{s.textContent=r.ok?'Time set: '+new Date().toLocaleString():'Failed'})"
             ".catch(()=>{s.textContent='Failed'})</script>"));
       });
+      // The key map page. The two below first: a handler for "/keys" also takes "/keys/...".
+      server.on("/keys/ask", HTTP_GET, [this](AsyncWebServerRequest *request) { keysAsk(request); });
+      server.on("/keys/answer", HTTP_GET, [this](AsyncWebServerRequest *request) { keysAnswer(request); });
+      server.on("/keys", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/html", FPSTR(NIBBLES_KEYS_PAGE));
+      });
       nl_power_limiter_init(&power, &powerModel);
       nl_bump_rx_init(&bumps);
       nl_bump_rx_init(&finBumps);
@@ -2468,6 +2627,62 @@ class NibblesUsermod : public Usermod {
       } else if (enabled && !enableESPNow) {
         enableESPNow = true;
       }
+    }
+
+    // /keys/ask?c=TEXT: send TEXT to the base's console; answers {"id":N} for /keys/answer.
+    void keysAsk(AsyncWebServerRequest *request) {
+      if (!request->hasArg("c") || request->arg("c").length() == 0 || request->arg("c").length() >= NL_CONSOLE_TEXT) {
+        request->send(400, "text/plain", F("Nothing to ask, or too long"));
+        return;
+      }
+      if (display || !radioUp() || !baseAt || millis() - baseAt > 5000) {
+        request->send(503, "text/plain", F("The base isn't heard on the radio"));
+        return;
+      }
+      if (!consoleRx) consoleRx = (nl_console_rx_t *)malloc(sizeof(nl_console_rx_t));
+      if (!consoleRx) {
+        request->send(500, "text/plain", F("No memory"));
+        return;
+      }
+      const String c = request->arg("c");
+      portENTER_CRITICAL(&consoleLock);
+      if (!++consoleId) ++consoleId;
+      const uint16_t id = consoleId;
+      nl_console_rx_start(consoleRx, id);
+      strlcpy(consoleAsk, c.c_str(), sizeof(consoleAsk));
+      consolePending = true;
+      portEXIT_CRITICAL(&consoleLock);
+      request->send(200, "application/json", String(F("{\"id\":")) + id + "}");
+    }
+
+    // /keys/answer?id=N: 200 with the answer, 202 still coming, 410 lost (ask again).
+    void keysAnswer(AsyncWebServerRequest *request) {
+      static char copy[NL_CONSOLE_MAX_ANSWER];   // the web server answers one request at a time
+      const uint16_t id = (uint16_t)request->arg("id").toInt();
+      int state;   // 0 coming, 1 here, 2 lost
+      portENTER_CRITICAL(&consoleLock);
+      if (!consoleRx || consoleRx->id != id || consoleRx->broken) state = 2;
+      else if (!consoleRx->done) state = 0;
+      else {
+        memcpy(copy, consoleRx->text, consoleRx->len + 1);
+        state = 1;
+      }
+      portEXIT_CRITICAL(&consoleLock);
+      if (state == 1) request->send(200, "text/plain", copy);
+      else if (state == 0) request->send(202, "text/plain", "");
+      else request->send(410, "text/plain", F("Answer lost"));
+    }
+
+    // loop(): the page's question to the base.
+    void consoleLoop() {
+      if (!consolePending) return;
+      nl_console_t m;
+      size_t n;
+      portENTER_CRITICAL(&consoleLock);
+      n = nl_console_question(&m, consoleId, consoleAsk);
+      consolePending = false;
+      portEXIT_CRITICAL(&consoleLock);
+      if (n) send(baseMac, NL_MSG_CONSOLE, &m, n);
     }
 
     // WLED joins a network only if one is configured, and opens its own as apBehavior says.
@@ -2590,6 +2805,8 @@ class NibblesUsermod : public Usermod {
       wireLoop();    // likewise
       mirrorLoop();  // on request only, and independent of the radio (works with the usermod disabled)
       powerLoop(millis());  // also without the radio, so it can be tried with test readings
+      finPinsLoop();
+      finLocalLoop(millis());  // also without the radio
       presetQueueLoop(millis());
       trackPresets(millis());
 #ifdef NIBBLES_STATUS_LED
@@ -2612,6 +2829,7 @@ class NibblesUsermod : public Usermod {
         if (!got) break;
         handle(it);
       }
+      if (!display) consoleLoop();
       if (display) {   // listening only (battery readings, in handle()); just the stream reports out
         abLoop();      // with the radio off too: the wires and the return wire carry it all
         retAudio(millis());
@@ -2698,6 +2916,11 @@ class NibblesUsermod : public Usermod {
     void addToJsonInfo(JsonObject &root) override {
       JsonObject user = root["u"];
       if (user.isNull()) user = root.createNestedObject("u");
+      // Buttons to the usermod's pages: a captive-portal sheet on a phone can't type an address.
+      if (!display)
+        user.createNestedArray(F("Nibbles pages"))
+            .add(F("<button class=\"btn btn-xs\" onclick=\"location.href='/keys'\">Keys</button> "
+                   "<button class=\"btn btn-xs\" onclick=\"location.href='/time'\">Set the time</button>"));
       if (eyeNote[0]) user.createNestedArray(F("Nibbles eye settings")).add(eyeNote);
       JsonArray radio = user.createNestedArray(F("Nibbles radio"));
       if (!radioUp()) {
@@ -2751,9 +2974,13 @@ class NibblesUsermod : public Usermod {
         for (int f = 0; f < 2; f++) {
           if (!finFollowOn) { if (!f) n += snprintf(buf + n, sizeof(buf) - n, "following off (fins locked at the modelled angle)"); }
           else if (finSweeping(f, millis())) n += snprintf(buf + n, sizeof(buf) - n, "%s%s sweeping (%.1f s)", f ? "; " : "", names[f], finSweepPeriod[f]);
+          else if (finPinProblem[f]) n += snprintf(buf + n, sizeof(buf) - n, "%s%s GPIO %d: %s", f ? "; " : "", names[f], finPin[f], finPinProblem[f]);
           else if (!finsAt[f] || millis() - finsAt[f] > 2000) n += snprintf(buf + n, sizeof(buf) - n, "%s%s not heard", f ? "; " : "", names[f]);
+          else if (finLocal(f) && fins.angle_cdeg[f] == NL_FIN_NONE && finCal[f][0] >= 0 && finCal[f][1] >= 0)
+            n += snprintf(buf + n, sizeof(buf) - n, "%s%s raw %u: out of range (sensor off?)", f ? "; " : "", names[f], fins.raw[f]);
           else if (fins.angle_cdeg[f] == NL_FIN_NONE) n += snprintf(buf + n, sizeof(buf) - n, "%s%s raw %u (uncalibrated)", f ? "; " : "", names[f], fins.raw[f]);
           else n += snprintf(buf + n, sizeof(buf) - n, "%s%s %+.1f deg", f ? "; " : "", names[f], fins.angle_cdeg[f] / 100.0f);
+          if (finFollowOn && finLocal(f) && !finSweeping(f, millis())) n += snprintf(buf + n, sizeof(buf) - n, " (GPIO %d)", finPin[f]);
         }
         fa.add(buf);
       }
@@ -2858,6 +3085,14 @@ class NibblesUsermod : public Usermod {
       // {"nibbles":{"ledtest":true}}: the status LED shows red, green, blue for 2 s each (colour order check)
       if (root[F("nibbles")][F("ledtest")] | false) statusLedTestAt = millis();
 #endif
+      // {"nibbles":{"fincal":{"fin":"port"|"starboard"|"both","at":"down"|"up"|"clear"}}}: fin sensor limits
+      JsonObject fc = root[F("nibbles")][F("fincal")];
+      if (!fc.isNull()) {
+        const char *fn = fc[F("fin")] | "both", *at = fc[F("at")] | "";
+        const int f = !strcmp(fn, "port") ? NL_FIN_PORT : !strcmp(fn, "starboard") ? NL_FIN_STARBOARD : NL_FIN_CAL_BOTH;
+        const int w = !strcmp(at, "up") ? NL_FIN_CAL_UP : !strcmp(at, "down") ? NL_FIN_CAL_DOWN : !strcmp(at, "clear") ? NL_FIN_CAL_CLEAR : -1;
+        if (w >= 0) finCalibrate(f, w);
+      }
       // {"nibbles":{"preview":true|false}}: the preview stream, until the next reboot
       if (!root[F("nibbles")][F("preview")].isNull()) previewOn = root[F("nibbles")][F("preview")].as<bool>();
       // {"nibbles":{"finsweep":{"port":4,"starboard":0,"s":6}}}: sweep test
@@ -2915,6 +3150,10 @@ class NibblesUsermod : public Usermod {
       top[F("net_fallback")] = netFallback;        // on a brain that joins the network: host it while the host is gone                  // return wire: TX on the display (A/B state, sound), RX on a brain; -1 = off
       top[F("preview")] = previewOn;               // preview stream for a preview screen
       top[F("preview_fps")] = previewFps;
+      JsonArray fp = top.createNestedArray(F("fin_pins"));   // fin sensors wired here: [port, starboard], -1 = none
+      fp.add(finPin[0]); fp.add(finPin[1]);
+      JsonArray fcal = top.createNestedArray(F("fin_cal"));  // [[port down, up], [starboard down, up]], ADC counts
+      for (int f = 0; f < 2; f++) { JsonArray c = fcal.createNestedArray(); c.add(finCal[f][0]); c.add(finCal[f][1]); }
     }
 
     bool readFromConfig(JsonObject &root) override {
@@ -2945,6 +3184,17 @@ class NibblesUsermod : public Usermod {
       wireRecheck = true;
       complete &= getJsonValue(top[F("preview")], previewOn, false);
       complete &= getJsonValue(top[F("preview_fps")], previewFps, (uint8_t)12);
+      JsonArray fp = top[F("fin_pins")];
+      if (fp.isNull() || fp.size() != 2) { finPin[0] = NIBBLES_FIN_PIN_PORT; finPin[1] = NIBBLES_FIN_PIN_STARBOARD; complete = false; }
+      else { finPin[0] = fp[0] | -1; finPin[1] = fp[1] | -1; }
+      JsonArray fcal = top[F("fin_cal")];
+      for (int f = 0; f < 2; f++) {
+        JsonArray c = fcal.isNull() ? JsonArray() : fcal[f].as<JsonArray>();
+        finCal[f][0] = c.isNull() ? -1 : (c[0] | -1);
+        finCal[f][1] = c.isNull() ? -1 : (c[1] | -1);
+      }
+      if (fcal.isNull()) complete = false;
+      finPinsRecheck = true;
       nl_power_limiter_init(&power, &powerModel);  // new settings: start over (readings arrive several times a second)
       powerApplied = 0;
       return complete;

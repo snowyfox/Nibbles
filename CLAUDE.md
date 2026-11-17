@@ -55,14 +55,14 @@ idf.py -C firmware/eyes build
 idf.py -C firmware/eyes -p /dev/cu.usbmodemNNN flash
 idf.py -C firmware/base build                         # base prototype; flash the same way
 # base on the 1.91 (its own build folder; see firmware/base/CLAUDE.md):
-idf.py -C firmware/base -B firmware/base/build-191 -D SDKCONFIG=firmware/base/build-191/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board_191" build
+cd firmware/base && idf.py -B build-191 -D SDKCONFIG=build-191/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board_191" build
 idf.py -C firmware/monitor build                      # the Live / Standby monitors (1.64)
 ```
 
 Testing radio commands without pressing buttons: write commands (plus
 newline) to the base prototype's USB serial port: `next`, `prev`, `set N`,
 `wled next`, `wled set N`, `wled slot look|pal S N`, `bri N`, `wled bri N`, `auto on|off`, `preset N`, `page 0|1|2|3|4`, `survey`, `radio move N`,
-`key NAME [down|up]` (e.g. `key detail`: the screens' small-text pages), `keys`, `wled wifi on|off` (the controller joins `Nibbles` until it restarts), `ota status|wifi on|off`, `wifi set SSID PASS`, `mirror [push|link on|off]`, `role base|mirror`, `power`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `ble on`, `ble`, `monitors [sides|brains|toggle]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `[eyes|wled] bump
+`key NAME [down|up]` (e.g. `key detail`: the screens' small-text pages), `keys`, `keymap [B [S NAME|reset]]` / `keymap reset` (which key each switch is, saved on the base; also from a phone: a brain's `/keys` page, via WLED's Info panel), `wled wifi on|off` (the controller joins `Nibbles` until it restarts), `ota status|wifi on|off`, `wifi set SSID PASS`, `mirror [push|link on|off]`, `role base|mirror`, `power`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `ble on`, `ble`, `monitors [sides|brains|toggle]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `fins cal port|starboard|both up|down|clear` (the fin sensors wired to both brains), `[eyes|wled] bump
 flash|black MS`, `[eyes|wled] bump preset N MS`, and `shot` (a screenshot of
 its display as base64 RGB565; see `firmware/base/CLAUDE.md`). WLED builds are
 in `wled/README.md`. Updating the base (and its mirror board) without USB: `tools/base_ota.py`

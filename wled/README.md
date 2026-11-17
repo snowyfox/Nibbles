@@ -78,6 +78,24 @@ eyes and base (`shared/nibbles_link`).
   list in `/ledmap.json`; a fin without a live angle keeps its partner copy.
   On the shark since 2026-10-21 (port fin): 112 of 114 port fin LEDs showed
   exactly the colour of the cell they were over.
+- **Fin sensors on the brains** (code 2026-11-15, not yet tried with a
+  sensor): each fin's MT6701 analog output is wired to **both** brains in
+  parallel (signal to the same pin on each, grounds shared), so each brain
+  reads both fins itself, with nothing crossing the air. Setting `fin_pins`
+  `[port, starboard]` (default `[1, 2]` on `nibbles_brain_s3`, `-1` = none;
+  ADC1 pins only, GPIO 1-10 on the S3, since ADC2 can't be read with the
+  radio on). A task on core 0 averages 16 conversions per fin every 10 ms and
+  smooths them, as the fin sensor node did. Each brain is calibrated on its
+  own (its ADC reads a little differently): hold a fin at its limit and send
+  `fins cal port up` (or `down`, `starboard`, `both`, `clear`) on the base's
+  serial port, which reaches both brains (`NL_OP_FIN_CAL`), or
+  `{"nibbles":{"fincal":{"fin":"port","at":"up"}}}` to one brain. The limits
+  are saved as `fin_cal` `[[port down, up], [starboard down, up]]` (ADC
+  counts). A reading more than 20 degrees past either limit counts as no
+  sensor (`nl_fin_angle_cdeg`), and the Info page says "out of range (sensor
+  off?)"; a floating pin can still land inside the range, so an unplugged
+  sensor isn't always caught. A fin with a pin set ignores `NL_MSG_FIN_POSE`
+  from a fin sensor node. Power each sensor's 3V3 from one brain only.
 - **Streamed pictures** (since 2026-10-23): while this WLED shows another
   WLED's stream instead of its own effects (WLED's realtime mode: DDP,
   E1.31, Art-Net), it times the gaps between incoming packets
@@ -596,8 +614,8 @@ NIBBLES_ROOT=/Volumes/Code/Nibbles pio run -e nibbles_dev_s3_349 -t upload --upl
 - `nibbles_brain_s3`: a brain on a Waveshare ESP32-S3-DEV-KIT-N16R8
   (16 MB flash, 8 MB octal PSRAM, on-board antenna): wire link TX on GPIO 13 and the return wire on GPIO 14 (17 and 10 until 2026-11-09),
   an I2S mic (e.g. INMP441) on SD 4, WS 5, SCK 6 as AudioReactive's default,
-  the board's RGB LED (GPIO 38) as the default LED output. Built, not yet run
-  (the boards are on order).
+  the board's RGB LED (GPIO 38) as the default LED output. Fin sensors on
+  GPIO 1 (port) and 2 (starboard) by default (see "Fin sensors on the brains").
 - `nibbles_shark`: the real controller (below).
 - `nibbles_shark_eth`: `nibbles_shark` with Ethernet (the WT32-ETH01's
   LAN8720), for a wired stream from a main board. Built, not installed. WLED
@@ -773,3 +791,28 @@ tells that WLED the phone's time. A main board then broadcasts it every 10 s
 (`NL_MSG_TIME`) and the base sets its clock from it, for its logs and charge graph.
 Any change in WLED's own UI sends the time too. A controller in the `display`
 role doesn't pass it on, so use the brain's address.
+
+## Pages from the Info panel
+
+A phone joining the Nibbles network usually gets a captive-portal sheet,
+which shows WLED but has no address bar. So the brain's Info panel (the
+"Info" button at the bottom of WLED's page) has a **Nibbles pages** row with
+buttons to the usermod's pages: **Keys** (`/keys`) and **Set the time**
+(`/time`). Not on a controller in the `display` role.
+
+## The key map page (/keys)
+
+`http://<brain>/keys` shows the base's key boards as the base sees them:
+each switch in its LED colour with its key's name, which boards answer, and
+the switch pressed last (outlined for 8 s), so pressing a key on the keypad
+shows which tile it is. Tapping a switch picks another key for it; Reset puts
+a board (or all of them) back to the base's built-in map. Changes are saved
+on the base at once (its NVS), as with the base's `keymap` serial command
+(`firmware/base/CLAUDE.md`).
+
+The page asks the base through this brain: `/keys/ask?c=TEXT` (gives
+`{"id":N}`) sends `TEXT` to the base as `NL_MSG_CONSOLE`, and
+`/keys/answer?id=N` returns the base's answer (202 while it's coming, 410 if
+a part was lost: the page asks again). The base must be heard (its
+heartbeat, within 5 s), and it only takes `keymap ...` and `keys` this way.
+The page refreshes with `keymap all` every 1.2 s while it's open.
