@@ -65,6 +65,14 @@ python3 tools/base_ask.py "ota wifi off"
 tools/nibbles_wifi.sh leave                      # the Mac back on its own network
 ```
 
+- **No internet while on Nibbles** (Wi-Fi only, e.g. a hotel): Claude can't act
+  while the Mac is offline, so start the unattended push and read its log after:
+  `python3 tools/ota_push.py --detach eyes monitors base` (any of the three).
+  It joins Nibbles, updates each group, checks each board kept its image
+  (the eyes: both eyes), sends everything off Wi-Fi, rejoins the usual
+  network, and ends the log (`logs/ota_push_*.log`) with `RESULT`. Boards
+  already on the build are skipped. Tested 2026-11-17: all five boards in 4 min.
+  Wait for it with a background loop on the log, not by polling.
 - **One group at a time.** The brain's access point takes only a few clients;
   with the eyes, both monitors and the Mac on it the Mac couldn't join
   (`tmpErr`). Eyes, then monitors, then the base.

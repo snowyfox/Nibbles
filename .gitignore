@@ -10,3 +10,6 @@ __pycache__/
 .cache/
 hardware/power_charger_board/photos/
 hardware/power_charger_board/assembly/notes/
+
+# tools/ota_push.py --detach
+logs/

@@ -570,6 +570,10 @@ Earlier features, still there (`main/main.c`):
   whole update. Tested: the base updated itself over Wi-Fi (11.3 s, kept). **Its
   Bluetooth goes off when its Wi-Fi goes on**: with the clock window still
   advertising, it joined but answered nothing. Steps: the `update-boards` skill.
+  **Unattended** (2026-11-17, for a computer with no other internet than the
+  Wi-Fi it moves to Nibbles): `tools/ota_push.py --detach eyes monitors base`
+  does the whole round and checks every board kept its image; tested on all five
+  boards in 4 min.
 - **Mirror board** (`main/mirror_link.c`): a second 3.49 up the pole runs the
   same firmware with `role mirror` (USB serial; `role base` back; saved in
   NVS). It runs only the screen and the cable: no radio, power board, keypads
