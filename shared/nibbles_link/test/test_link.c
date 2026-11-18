@@ -851,6 +851,39 @@ static void test_console(void)
     CHECK(n == NL_CONSOLE_HEAD + 1 && nl_console_rx_add(&rx, &m) && rx.len == 0, "an empty answer is one empty last part");
 }
 
+static void test_ota(void)
+{
+    CHECK(sizeof(nl_ota_wifi_t) + sizeof(nl_radio_hdr_t) <= 250, "the Wi-Fi request fits a packet (%u)", (unsigned)sizeof(nl_ota_wifi_t));
+    CHECK(sizeof(nl_ota_state_t) <= NL_MAX_PAYLOAD, "the state fits (%u)", (unsigned)sizeof(nl_ota_state_t));
+    CHECK(sizeof(nl_ota_part_t) <= NL_MAX_PAYLOAD && NL_OTA_PART_MAX >= 200, "a cable part fits a frame (%u)", (unsigned)sizeof(nl_ota_part_t));
+    nl_ota_wifi_t w;
+    CHECK(nl_ota_wifi_make(&w, NL_OTA_TO_EYES, true, 15, "Nibbles", "secret123"), "a request builds");
+    CHECK(nl_ota_wifi_for(&w, NL_OTA_TO_EYES) && !nl_ota_wifi_for(&w, NL_OTA_TO_MONITORS), "only the boards it names take it");
+    CHECK(!strcmp(w.ssid, "Nibbles") && !strcmp(w.pass, "secret123") && w.on == 1 && w.minutes == 15, "its fields");
+    char longpass[80];
+    memset(longpass, 'x', sizeof(longpass) - 1);
+    longpass[79] = 0;
+    CHECK(!nl_ota_wifi_make(&w, NL_OTA_TO_ALL, true, 0, "Nibbles", longpass), "a password too long is refused");
+    memset(&w, 'x', sizeof(w));
+    w.targets = NL_OTA_TO_ALL;
+    CHECK(!nl_ota_wifi_for(&w, NL_OTA_TO_EYES), "unterminated strings are ignored");
+
+    nl_ota_part_t m = { .op = NL_OTA_DATA, .len = 100, .off = 4096 }, r;
+    m.data[99] = 0x5A;
+    uint8_t frame[NL_MAX_FRAME];
+    const size_t n = nl_encode(NL_MSG_OTA_PART, 3, &m, nl_ota_part_size(&m), frame, sizeof(frame));
+    nl_parser_t p;
+    nl_parser_init(&p);
+    nl_frame_t f;
+    bool got = false;
+    for (size_t i = 0; i < n; i++) if (nl_parse_byte(&p, frame[i], &f)) got = true;
+    CHECK(got && f.type == NL_MSG_OTA_PART && nl_ota_part_parse(f.payload, f.len, &r), "a part crosses the cable");
+    CHECK(r.off == 4096 && r.len == 100 && r.data[99] == 0x5A, "with its offset and bytes");
+    CHECK(!nl_ota_part_parse(f.payload, f.len - 1, &r), "a short one is refused");
+    m.len = NL_OTA_PART_MAX;
+    CHECK(nl_encode(NL_MSG_OTA_PART, 4, &m, nl_ota_part_size(&m), frame, sizeof(frame)) > 0, "a full part encodes");
+}
+
 int main(void)
 {
     srand(1);
@@ -874,6 +907,7 @@ int main(void)
     test_ab();
     test_relay();
     test_console();
+    test_ota();
     CHECK(sizeof(nl_ar_sync_t) == 44 && sizeof(NL_AR_SYNC_HEADER) == 6, "the sound sync packet matches AudioReactive's");
     CHECK(sizeof(nl_time_t) == 4 && !nl_time_valid(0) && !nl_time_valid(12345) && nl_time_valid(1793566000), "the time packet");
     printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);

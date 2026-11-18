@@ -9,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "eye_ota.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -60,6 +61,11 @@ static void send_heartbeat(void)
 static void handle(const nl_frame_t *f)
 {
     if (f->version != NL_VERSION) return;
+    if (f->type == NL_MSG_OTA_PART) {   // an update between the eyes: not under the lock
+        nl_ota_part_t m;
+        if (nl_ota_part_parse(f->payload, f->len, &m)) eye_ota_part(&m);
+        return;
+    }
     const int64_t now = esp_timer_get_time();
     const nl_role_t me = board_role();
     taskENTER_CRITICAL(&lock);
@@ -90,7 +96,12 @@ static void link_task(void *arg)
     uint8_t buf[256];
     int64_t next_heartbeat = 0;
     for (;;) {
-        const int n = uart_read_bytes(LINK_UART, buf, sizeof(buf), pdMS_TO_TICKS(20));
+        // Whatever has arrived, or wait up to 20 ms for one byte: a frame is handled
+        // as soon as it is complete (update parts go back and forth one at a time).
+        size_t avail = 0;
+        uart_get_buffered_data_len(LINK_UART, &avail);
+        const size_t want = avail ? (avail < sizeof(buf) ? avail : sizeof(buf)) : 1;
+        const int n = uart_read_bytes(LINK_UART, buf, want, pdMS_TO_TICKS(20));
         for (int i = 0; i < n; i++) {
             nl_frame_t f;
             if (nl_parse_byte(&parser, buf[i], &f)) handle(&f);
@@ -161,6 +172,8 @@ bool link_get_eye_state(nl_eye_state_t *out, uint32_t max_age_ms)
 void link_send_audio(const nl_audio_t *a) { send(NL_MSG_AUDIO, a, sizeof(*a)); }
 
 void link_send_eye_state(const nl_eye_state_t *s) { send(NL_MSG_EYE_STATE, s, sizeof(*s)); }
+
+void link_send_ota(const nl_ota_part_t *m) { send(NL_MSG_OTA_PART, m, nl_ota_part_size(m)); }
 
 void link_send_look(const nl_eye_look_t *l) { send(NL_MSG_EYE_LOOK, l, sizeof(*l)); }
 

@@ -17,6 +17,7 @@ of Nibbles' own code; WLED itself stays upstream.
 | **Preview screen** | Waveshare ESP32-S3-AMOLED-1.91 (RM67162, 536 x 240), MAC 3C:0F:02:D9:7A:08, was the fin sensor node | `firmware/preview/` (ESP-IDF 5.5.5) | **Board reused as the base 1.91 on 2026-11-14** (the monitors took over its job; reflash `firmware/preview` to bring it back). Started 2026-11-01: side view of the shark from a brain's radio stream (`NL_MSG_PREVIEW`); test pattern with no stream. Running on the board; loss on a stable channel not measured yet, and it shows the brain's Live until a second brain exists |
 | **Shared protocol** | used by all of the above | `shared/nibbles_link/` | Framing, radio packets, eye messages, commands, bumps, channel scanning with fallback anchoring, WLED audio conversion; host tests (`make -C shared/nibbles_link`) |
 | **Radio transport** | ESP-IDF boards (eyes, base) | `shared/nibbles_espnow/` | ESP-NOW: anchor or scan, broadcast, commands with ack/retry |
+| **Updates without USB** | base, monitors, eyes | `shared/nibbles_ota/` | Two app slots with rollback, text protocol (USB, mirror cable), Wi-Fi upload; boards join Wi-Fi when the base asks over the radio (`ota remote`). Added for the monitors and eyes 2026-11-17 |
 
 `docs/architecture.md` has the agreed design and roadmap: roles, the wired eye
 link, ESP-NOW with WLED as the channel anchor, the message rules, and phases.
@@ -32,6 +33,7 @@ how the firmware works and why.
 | Port eye | 28:84:85:3B:6F:F4 | recognised by MAC (`PORT_EYE_MACS`); the ears (mic + audio analysis) |
 | Base | 28:84:85:90:93:00 | ESP32-S3-Touch-LCD-3.49 running `firmware/base` (since 2026-11-08; the previous base, 80:45:6B:35:D0:14, died in a USB ground loop that day. The first base prototype, 28:84:85:91:27:08, is spare) |
 | Base 1.91 | 3C:0F:02:D9:7A:08 | `firmware/base` on the 1.91 (was the preview screen until 2026-11-14) |
+| Base 1.91 (main) | 3C:0F:02:D9:7F:8C | the new 1.91 that is the base from now on (2026-11-17; no header pins soldered yet). Flashed with `firmware/base` (`build-191`) the same day; the 1.91 above becomes the spare |
 | Live monitor | 28:84:85:8D:40:4C | ESP32-S3-Touch-AMOLED-1.64 running `firmware/monitor` |
 | Standby monitor | 28:84:85:8D:4C:4C | same, Standby by MAC |
 | Right Brain | 14:C1:9F:2B:15:34 | ESP32-S3-DEV-KIT-N16R8 running WLED (`nibbles_brain_s3`); GPIO 13 to controller GPIO 35, return wire on GPIO 14. Replaced 2026-11-15 (the first, E8:3D:C1:F7:79:E4, was shorted on the bench); restored from the 2026-11-09 brainA backup |
@@ -62,11 +64,11 @@ idf.py -C firmware/monitor build                      # the Live / Standby monit
 Testing radio commands without pressing buttons: write commands (plus
 newline) to the base prototype's USB serial port: `next`, `prev`, `set N`,
 `wled next`, `wled set N`, `wled slot look|pal S N`, `bri N`, `wled bri N`, `auto on|off`, `preset N`, `page 0|1|2|3|4`, `survey`, `radio move N`,
-`key NAME [down|up]` (e.g. `key detail`: the screens' small-text pages), `keys`, `keymap [B [S NAME|reset]]` / `keymap reset` (which key each switch is, saved on the base; also from a phone: a brain's `/keys` page, via WLED's Info panel), `wled wifi on|off` (the controller joins `Nibbles` until it restarts), `ota status|wifi on|off`, `wifi set SSID PASS`, `mirror [push|link on|off]`, `role base|mirror`, `power`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `ble on`, `ble`, `monitors [sides|brains|toggle]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `fins cal port|starboard|both up|down|clear` (the fin sensors wired to both brains), `[eyes|wled] bump
+`key NAME [down|up]` (e.g. `key detail`: the screens' small-text pages), `keys`, `keymap [B [S NAME|reset]]` / `keymap reset` (which key each switch is, saved on the base; also from a phone: a brain's `/keys` page, via WLED's Info panel), `wled wifi on|off` (the controller joins `Nibbles` until it restarts), `ota status|wifi on|off`, `ota remote [on|off] [eyes|monitors|all] [MIN]` (the monitors and eyes join the saved network for an update), `wifi set SSID PASS`, `mirror [push|link on|off]`, `role base|mirror`, `power`, `lights on|off`, `pole on|off`, `log`, `log on|off`, `log tail`, `log list`, `log get N`, `time [UNIX|forget]`, `ble on`, `ble`, `monitors [sides|brains|toggle]`, `eyepic N [STATE]|off`, `ab`, `ab take [MS]`, `ab hold on|off`, `react preset|beats|peaks`, `fins on|off|toggle`, `fins cal port|starboard|both up|down|clear` (the fin sensors wired to both brains), `[eyes|wled] bump
 flash|black MS`, `[eyes|wled] bump preset N MS`, and `shot` (a screenshot of
 its display as base64 RGB565; see `firmware/base/CLAUDE.md`). WLED builds are
-in `wled/README.md`. Updating the base (and its mirror board) without USB: `tools/base_ota.py`
-(see "Updates without USB" in `firmware/base/CLAUDE.md`). To play the base's keys from a MIDI keyboard:
+in `wled/README.md`. Updating the base (and its mirror board), the monitors and the eyes without USB: `tools/base_ota.py`
+(see "Updates without USB" in `firmware/base/CLAUDE.md`; shared code in `shared/nibbles_ota`). The `update-boards` skill (`.claude/skills/update-boards/`) has the whole routine, by USB or over the air; `tools/nibbles_wifi.sh join|leave` and `tools/base_ask.py "CMD"` drive it with no USB. To play the base's keys from a MIDI keyboard:
 `tools/midi_keys/` (`python3 tools/midi_keys/server.py`, then Chrome).
 
 ## Conventions

@@ -1,5 +1,6 @@
-// Firmware updates without USB: the text protocol (USB console, mirror cable)
-// and the Wi-Fi upload. See ota.h.
+// Firmware updates without USB: the text protocol (USB console, mirror cable),
+// the binary one (the eye cable) and the Wi-Fi upload. See ota.h. Moved here
+// from firmware/base on 2026-11-17 so the monitors and the eyes share it.
 #include "ota.h"
 
 #include <stdarg.h>
@@ -26,6 +27,9 @@ static const char *TAG = "ota";
 // ------------------------------------------------------------------ shared
 static SemaphoreHandle_t lock;            // one writer at a time (serial or HTTP)
 static char build_id[17];
+static const char *board_name = "base";
+static const char *bin_name = "nibbles_base.bin";
+static bool (*good_check)(void);
 
 // The update in progress: from the protocol (serial / mirror cable) or HTTP.
 static volatile bool active;
@@ -56,14 +60,38 @@ static void restart_soon(void)
     esp_timer_start_once(t, 500 * 1000);
 }
 
+static esp_timer_handle_t good_timer;
+static int good_tries;
+
 static void mark_good(void *arg)
 {
     const esp_partition_t *run = esp_ota_get_running_partition();
     esp_ota_img_states_t st;
-    if (esp_ota_get_state_partition(run, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
-        esp_ota_mark_app_valid_cancel_rollback();
-        ESP_LOGI(TAG, "this image ran %d s: kept (%s)", OTA_GOOD_AFTER_S, run->label);
+    if (esp_ota_get_state_partition(run, &st) != ESP_OK || st != ESP_OTA_IMG_PENDING_VERIFY) return;
+    if (good_check && !good_check()) {
+        // Not working yet: look again, and give up (back to the old image) after a while.
+        if (++good_tries * OTA_GOOD_RETRY_S >= OTA_GOOD_GIVE_UP_S) {
+            ESP_LOGE(TAG, "this image never worked properly: restarting into the old one");
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+            esp_restart();
+        }
+        ESP_LOGW(TAG, "this image isn't working properly yet: not kept, looking again in %d s", OTA_GOOD_RETRY_S);
+        esp_timer_start_once(good_timer, OTA_GOOD_RETRY_S * 1000000LL);
+        return;
     }
+    esp_ota_mark_app_valid_cancel_rollback();
+    ESP_LOGI(TAG, "this image ran %d s: kept (%s)", OTA_GOOD_AFTER_S + good_tries * OTA_GOOD_RETRY_S, run->label);
+}
+
+void ota_set_name(const char *name, const char *bin) { board_name = name; bin_name = bin; }
+
+void ota_set_good_check(bool (*check)(void)) { good_check = check; }
+
+bool ota_image_kept(void)
+{
+    esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+    esp_ota_get_state_partition(esp_ota_get_running_partition(), &st);
+    return st != ESP_OTA_IMG_PENDING_VERIFY;
 }
 
 void ota_start(void)
@@ -77,9 +105,8 @@ void ota_start(void)
     esp_ota_get_state_partition(run, &st);
     ESP_LOGI(TAG, "running %s, build %s%s", run->label, build_id,
              st == ESP_OTA_IMG_PENDING_VERIFY ? ", new: kept if it runs " : "");
-    static esp_timer_handle_t t;
     const esp_timer_create_args_t a = { .callback = mark_good, .name = "ota_good" };
-    if (esp_timer_create(&a, &t) == ESP_OK) esp_timer_start_once(t, OTA_GOOD_AFTER_S * 1000000LL);
+    if (esp_timer_create(&a, &good_timer) == ESP_OK) esp_timer_start_once(good_timer, OTA_GOOD_AFTER_S * 1000000LL);
 }
 
 const char *ota_build_id(void) { return build_id; }
@@ -108,6 +135,12 @@ bool ota_busy(void)
         xSemaphoreGive(lock);
     }
     return active;
+}
+
+int ota_progress_pct(void)
+{
+    if (!ota_busy()) return -1;
+    return total ? (int)(written * 100 / total) : 0;
 }
 
 void ota_progress_text(char *out, size_t len)
@@ -143,6 +176,52 @@ static esp_err_t finish(void)
     if (err == ESP_OK) ESP_LOGI(TAG, "update from %s done (%u bytes): restarting into %s", source, (unsigned)written, target->label);
     else ESP_LOGE(TAG, "update from %s failed at the end: %s", source, esp_err_to_name(err));
     return err;
+}
+
+// ------------------------------------------------------------------ the binary protocol (the eye cable)
+esp_err_t ota_part_begin(size_t size, const char *from)
+{
+    if (!lock) lock = xSemaphoreCreateMutex();
+    if (!size) return ESP_ERR_INVALID_SIZE;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    const esp_err_t err = begin(size, from);
+    xSemaphoreGive(lock);
+    return err;
+}
+
+esp_err_t ota_part_write(uint32_t off, const void *data, size_t n, uint32_t *next)
+{
+    if (!lock) lock = xSemaphoreCreateMutex();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (!active) err = ESP_ERR_INVALID_STATE;
+    else if (off + n == written) err = ESP_OK;                 // a repeat: the sender missed our answer
+    else if (off != written || written + n > total) err = ESP_ERR_INVALID_ARG;
+    else if ((err = esp_ota_write(handle, data, n)) == ESP_OK) { written += n; last_us = esp_timer_get_time(); }
+    *next = written;
+    xSemaphoreGive(lock);
+    return err;
+}
+
+esp_err_t ota_part_end(void)
+{
+    if (!lock) lock = xSemaphoreCreateMutex();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (active && written == total) err = finish();
+    else if (active) { esp_ota_abort(handle); active = false; err = ESP_ERR_INVALID_SIZE; }
+    xSemaphoreGive(lock);
+    if (err == ESP_OK) restart_soon();
+    return err;
+}
+
+void ota_part_abort(void)
+{
+    if (!lock) lock = xSemaphoreCreateMutex();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (active) esp_ota_abort(handle);
+    active = false;
+    xSemaphoreGive(lock);
 }
 
 // ------------------------------------------------------------------ the text protocol
@@ -253,13 +332,22 @@ static volatile bool wifi_wanted;
 static esp_netif_t *sta;
 static httpd_handle_t httpd;
 static char ip_text[16];
+static uint8_t ip_raw[4];
+static int64_t wifi_off_at;               // 0: stays on until asked
+static esp_timer_handle_t wifi_timer;
+// A network that isn't there: each try scans every channel and takes the
+// radio off ESP-NOW's, so tries are spaced out (2 s, doubling to 30 s).
+static esp_timer_handle_t retry_timer;
+static int retry_ms = 2000;
+
+static void retry_cb(void *arg) { if (wifi_wanted) esp_wifi_connect(); }
 
 static esp_err_t http_info(httpd_req_t *req)
 {
     const esp_app_desc_t *d = esp_app_get_description();
     char text[200];
-    snprintf(text, sizeof(text), "Nibbles base %s, build %s, running %s\nUpdate: curl --data-binary @nibbles_base.bin http://%s/ota\n",
-             d->version, build_id, esp_ota_get_running_partition()->label, ip_text);
+    snprintf(text, sizeof(text), "Nibbles %s %s, build %s, running %s\nUpdate: curl --data-binary @%s http://%s/ota\n",
+             board_name, d->version, build_id, esp_ota_get_running_partition()->label, bin_name, ip_text);
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, text);
 }
@@ -318,22 +406,57 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *e = data;
         snprintf(ip_text, sizeof(ip_text), IPSTR, IP2STR(&e->ip_info.ip));
+        memcpy(ip_raw, &e->ip_info.ip.addr, 4);
+        retry_ms = 2000;
         ESP_LOGI(TAG, "Wi-Fi up: http://%s/ (update: POST the .bin to /ota)", ip_text);
         if (wifi_wanted) http_start();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         ip_text[0] = 0;
-        if (wifi_wanted) esp_wifi_connect();   // keep trying while it's wanted
+        memset(ip_raw, 0, 4);
+        if (wifi_wanted && retry_timer) {   // keep trying while it's wanted, less and less often
+            esp_timer_stop(retry_timer);
+            esp_timer_start_once(retry_timer, retry_ms * 1000LL);
+            ESP_LOGI(TAG, "Wi-Fi not joined: trying again in %d s", retry_ms / 1000);
+            retry_ms = retry_ms * 2 > 30000 ? 30000 : retry_ms * 2;
+        }
+    }
+}
+
+// Off again once the time is up, unless an update is being written.
+static void wifi_check(void *arg)
+{
+    if (wifi_wanted && wifi_off_at && esp_timer_get_time() >= wifi_off_at) {
+        if (ota_busy()) wifi_off_at = esp_timer_get_time() + 60000000LL;
+        else {
+            ESP_LOGI(TAG, "Wi-Fi on long enough: off");
+            ota_wifi_set(false);
+        }
     }
 }
 
 void ota_wifi_init(void)
 {
     if (!lock) lock = xSemaphoreCreateMutex();
+    const esp_timer_create_args_t a = { .callback = wifi_check, .name = "ota_wifi" };
+    if (esp_timer_create(&a, &wifi_timer) == ESP_OK) esp_timer_start_periodic(wifi_timer, 5000000LL);
+    const esp_timer_create_args_t r = { .callback = retry_cb, .name = "ota_retry" };
+    esp_timer_create(&r, &retry_timer);
     esp_netif_init();
     esp_event_loop_create_default();
     sta = esp_netif_create_default_wifi_sta();
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL);
     esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, on_wifi, NULL);
+}
+
+bool ota_wifi_saved(char ssid[33], char pass[65])
+{
+    nvs_handle_t h;
+    size_t n1 = 33, n2 = 65;
+    ssid[0] = pass[0] = 0;
+    if (nvs_open("ota", NVS_READONLY, &h) != ESP_OK) return false;
+    const bool ok = nvs_get_str(h, "ssid", ssid, &n1) == ESP_OK && nvs_get_str(h, "pass", pass, &n2) == ESP_OK;
+    nvs_close(h);
+    return ok && ssid[0];
 }
 
 bool ota_wifi_save(const char *ssid, const char *pass)
@@ -350,20 +473,34 @@ void ota_wifi_set(bool on)
     if (!sta) { ESP_LOGW(TAG, "no Wi-Fi on this board"); return; }
     if (!on) {
         wifi_wanted = false;
+        wifi_off_at = 0;
+        if (retry_timer) esp_timer_stop(retry_timer);
+        retry_ms = 2000;
         if (httpd) { httpd_stop(httpd); httpd = NULL; }
         esp_wifi_disconnect();
         ip_text[0] = 0;
+        memset(ip_raw, 0, 4);
         ESP_LOGI(TAG, "Wi-Fi off");
         return;
     }
+    char ssid[33], pass[65];
+    if (!ota_wifi_saved(ssid, pass)) { ESP_LOGW(TAG, "no network saved: \"wifi set SSID PASSWORD\" first"); return; }
+    ota_wifi_join(ssid, pass, 0);
+}
+
+void ota_wifi_join(const char *ssid, const char *pass, unsigned minutes)
+{
+    if (!sta) { ESP_LOGW(TAG, "no Wi-Fi on this board"); return; }
+    wifi_off_at = minutes ? esp_timer_get_time() + minutes * 60000000LL : 0;
     wifi_config_t c = { 0 };
-    nvs_handle_t h;
-    size_t n1 = sizeof(c.sta.ssid), n2 = sizeof(c.sta.password);
-    const bool have = nvs_open("ota", NVS_READONLY, &h) == ESP_OK &&
-                      nvs_get_str(h, "ssid", (char *)c.sta.ssid, &n1) == ESP_OK &&
-                      nvs_get_str(h, "pass", (char *)c.sta.password, &n2) == ESP_OK;
-    if (have) nvs_close(h);
-    if (!have || !c.sta.ssid[0]) { ESP_LOGW(TAG, "no network saved: \"wifi set SSID PASSWORD\" first"); return; }
+    strlcpy((char *)c.sta.ssid, ssid, sizeof(c.sta.ssid));
+    strlcpy((char *)c.sta.password, pass, sizeof(c.sta.password));
+    if (wifi_wanted) {   // already on: the same network just keeps going
+        wifi_config_t now;
+        if (esp_wifi_get_config(WIFI_IF_STA, &now) == ESP_OK && !strcmp((char *)now.sta.ssid, (char *)c.sta.ssid) &&
+            !strcmp((char *)now.sta.password, (char *)c.sta.password)) return;
+        esp_wifi_disconnect();
+    }
     uint8_t primary;
     wifi_second_chan_t second;
     if (esp_wifi_get_channel(&primary, &second) == ESP_OK) c.sta.channel = primary;   // look on the radio's channel first
@@ -375,6 +512,13 @@ void ota_wifi_set(bool on)
 }
 
 bool ota_wifi_on(void) { return wifi_wanted; }
+
+int ota_wifi_ip(uint8_t ip[4])
+{
+    if (!wifi_wanted) { memset(ip, 0, 4); return 0; }
+    memcpy(ip, ip_raw, 4);
+    return ip_text[0] ? 2 : 1;
+}
 
 void ota_wifi_text(char *out, size_t len)
 {

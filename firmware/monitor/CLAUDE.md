@@ -98,3 +98,13 @@ Build and flash: `idf.py -C firmware/monitor build`, then
 A lone brain with the controller unplugged sends as Standby
 (`NL_ROLE_WLED_STANDBY`), so its picture shows on the Standby monitor, not
 Live (seen 2026-11-14 with the Left Brain alone on USB).
+
+## Updates without USB (2026-11-17)
+
+- `partitions.csv` (the base's): two 6 MB app slots and rollback; one USB
+  flash per monitor to change to it. Don't use `app-flash` afterwards.
+- The base's `ota remote on monitors` makes both join its saved network for
+  15 min; the footer shows `Update: http://IP/` in amber. Upload with
+  `tools/base_ota.py wifi IP firmware/monitor/build/nibbles_monitor.bin`.
+- The USB console takes the text protocol too (`ota status`, and
+  `tools/base_ota.py usb PORT BIN`).

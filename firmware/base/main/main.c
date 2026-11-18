@@ -22,6 +22,7 @@
 #include "logger.h"
 #include "mirror_link.h"
 #include "ota.h"
+#include "ota_peers.h"
 #include "rtc.h"
 #include "ble_time.h"
 #include "nibbles_espnow.h"
@@ -117,6 +118,12 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
     }
     if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second from each brain: straight to the screen
         display_preview(h->role == NL_ROLE_WLED_STANDBY, pl, len);
+        return;
+    }
+    if (h->type == NL_MSG_OTA_STATE && len == sizeof(nl_ota_state_t)) {   // a board on Wi-Fi for an update
+        nl_ota_state_t s;
+        memcpy(&s, pl, sizeof(s));
+        ota_peers_heard(mac, &s);
         return;
     }
     if (h->type == NL_MSG_TIME && len == sizeof(nl_time_t)) {
@@ -719,8 +726,8 @@ static void radio_console_poll(void)
     if (!a) return;
     a->len = 0;
     a->text[0] = 0;
-    if (!keypad_console(q.text, radio_answer_line, a))
-        radio_answer_line(a, "ERROR the base takes only keymap and keys over the radio");
+    if (!keypad_console(q.text, radio_answer_line, a) && !ota_peers_console(q.text, radio_answer_line, a))
+        radio_answer_line(a, "ERROR the base takes only keymap, keys, ota remote and ota wifi over the radio");
     ESP_LOGI(TAG, "radio console: %s (%u bytes back)", q.text, (unsigned)a->len);
     size_t off = 0;
     for (uint8_t part = 0;; part++) {
@@ -749,10 +756,8 @@ static void console_task(void *arg)
         }
         line[n] = 0;
         n = 0;
-        if (!strcmp(line, "ota wifi on") || !strcmp(line, "ota wifi off")) {
-            if (!mirror_is_mirror()) ota_wifi_set(line[10] == 'n');
-            continue;
-        }
+        if (mirror_is_mirror() && (!strcmp(line, "ota wifi on") || !strcmp(line, "ota wifi off"))) continue;
+        if (!mirror_is_mirror() && ota_peers_console(line, console_reply, NULL)) continue;   // ota remote ...: the monitors and eyes
         if (ota_command(line, console_reply, NULL)) continue;
         if (keypad_console(line, NULL, NULL)) continue;   // keymap ..., keys: which key each switch is (keypad.h)
         if (!strcmp(line, "role mirror") || !strcmp(line, "role base")) {
@@ -1132,7 +1137,9 @@ void app_main(void)
         {
             static ble_time_state_t bt_was;
             uint32_t bt_time;
-            if (ble_time_poll(rtc_time_known(), &bt_time)) {
+            // Bluetooth stops for Wi-Fi too: sharing the radio with it, the base joined but
+            // answered nothing over Wi-Fi (2026-11-17).
+            if (ble_time_poll(rtc_time_known() || ota_wifi_on(), &bt_time)) {
                 ESP_LOGI(TAG, "time from the phone: %lu", (unsigned long)bt_time);
                 rtc_set(bt_time);
                 display_event("Clock set from the phone, Bluetooth off");
@@ -1177,6 +1184,8 @@ void app_main(void)
             char text[100], mt[96];
             ota_progress_text(text, sizeof(text));
             if (!text[0]) ota_wifi_text(text, sizeof(text));
+            char pe[96];
+            if (ota_peers_event(pe, sizeof(pe))) display_event("%s", pe);   // a monitor or the eyes on Wi-Fi
             if (!text[0]) {
                 mirror_link_text(mt, sizeof(mt));
                 if (!strncmp(mt, "Mirror update", 13)) snprintf(text, sizeof(text), "%s", mt);

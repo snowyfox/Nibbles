@@ -266,6 +266,26 @@ Hypno Ember, Prism, Vortex Jungle, Hypno Candy, Vortex Magma.
   ~73 KB internal RAM free. A 5 s `radio:` log line shows channel, lock,
   rx/tx/fail and free internal heap.
 
+### Updates without USB (`eye_ota.c`, `shared/nibbles_ota`; 2026-11-17)
+- `partitions.csv` now has two 6 MB app slots (the unused 7 MB `storage`
+  partition is gone); nvs stays at 0x9000. One USB flash per eye to change it.
+  Don't use `app-flash` afterwards (see the base's notes).
+- A new image is kept once it has run 30 s **and drawn a frame in the last
+  second** (`ota_set_good_check`); if it hasn't drawn after another 90 s, the
+  eye goes back to the old image.
+- The base's `ota remote on eyes` makes the leader join Wi-Fi (15 min); upload
+  `build/nibbles.bin` to it with `tools/base_ota.py wifi IP build/nibbles.bin`.
+- **The leader updates the port eye**: every 10 s (from 45 s after boot, only
+  once its own image is kept) it asks the port eye's build over the cable
+  (`NL_MSG_OTA_PART`, `NL_OTA_ASK`). If it differs, it sends its own running
+  image in 216-byte parts, one at a time, each answered. It gives up after 3
+  failed tries until it restarts. Its state goes into the base's `ota remote`
+  list ("port eye 45%", "same build"). So **the starboard eye's build wins**:
+  flash the starboard eye and the port eye follows, and a newer build flashed
+  only on the port eye gets replaced.
+- The link task now reads what has arrived instead of waiting 20 ms for 256
+  bytes, so a frame is handled as soon as it's complete.
+
 ### Controls
 None on the eyes themselves: brightness is fixed at 100% (see the radio notes),
 presets and reactivity come from the base.

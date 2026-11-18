@@ -23,6 +23,9 @@ void link_send_eye_state(const nl_eye_state_t *s);
 void link_send_look(const nl_eye_look_t *l);
 bool link_take_look(nl_eye_look_t *out);
 
+// An update part to the other eye (eye_ota.c); parts from it go to eye_ota_part().
+void link_send_ota(const nl_ota_part_t *m);
+
 // Figures reported in our heartbeat.
 void link_set_status(uint16_t fps_x10, uint16_t late_frames);
 

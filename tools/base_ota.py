@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Update the base (or a mirror board) without a USB flash: firmware/base/main/ota.h.
+"""Update the base (or a mirror board) without a USB flash: shared/nibbles_ota/include/ota.h.
+
+The monitors and the eyes take the same Wi-Fi upload (2026-11-17): on the base,
+"ota remote on monitors|eyes|all", then "ota remote" lists their addresses, and
+    python tools/base_ota.py wifi IP firmware/monitor/build/nibbles_monitor.bin
+    python tools/base_ota.py wifi IP firmware/eyes/build/nibbles.bin   (the starboard eye;
+                                     it passes the image to the port eye over the cable)
 
     python tools/base_ota.py usb PORT [BIN]       over the board's USB serial console
     python tools/base_ota.py wifi HOST [BIN]      to a base on Wi-Fi ("ota wifi on", or

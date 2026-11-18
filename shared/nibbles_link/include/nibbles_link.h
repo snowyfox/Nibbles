@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,6 +47,9 @@ typedef enum {
     NL_MSG_HOP = 21,        // move to another radio channel together (nl_hop_t), broadcast; boards without it ignore it
     NL_MSG_SHOW = 22,       // what Live and Standby are, base -> radio, 2 Hz per side and on a change (nl_show_t)
     NL_MSG_CONSOLE = 23,    // a text command for the base and its answer, brain <-> base, unicast (nl_console_t)
+    NL_MSG_OTA_WIFI = 24,   // join a network to take an update, base -> radio, broadcast (nl_ota_wifi_t)
+    NL_MSG_OTA_STATE = 25,  // a board's update state while that is on, board -> radio, 1 Hz (nl_ota_state_t)
+    NL_MSG_OTA_PART = 26,   // an update passed on over a cable, leader eye <-> port eye (nl_ota_part_t)
 } nl_msg_type_t;
 
 typedef enum {
@@ -946,6 +950,106 @@ typedef struct NL_PACKED {
     float fft_magnitude;
     float fft_major_peak;   // Hz
 } nl_ar_sync_t;
+
+// ---------------------------------------------------------------- updates without USB
+// (2026-11-17) The base asks boards on the radio to join a Wi-Fi network for a
+// while (NL_MSG_OTA_WIFI, sent a few times; the network's name and password
+// are the base's saved ones, sent in the clear: ESP-NOW broadcasts can't be
+// encrypted). Each board it names joins, takes the image as an HTTP POST to
+// /ota (tools/base_ota.py wifi IP BIN) and, while it is on, broadcasts
+// NL_MSG_OTA_STATE once a second so the base can list who is where. The
+// leader eye passes its image to the port eye over the cable
+// (NL_MSG_OTA_PART), so one upload updates both eyes.
+#define NL_OTA_TO_EYES      0x01
+#define NL_OTA_TO_MONITORS  0x02
+#define NL_OTA_TO_ALL       0xFF
+#define NL_OTA_SSID_LEN     33      // 32 characters + NUL
+#define NL_OTA_PASS_LEN     64      // 63 characters + NUL
+
+typedef struct NL_PACKED {
+    uint8_t targets;        // NL_OTA_TO_* bits
+    uint8_t on;             // 1: join; 0: leave
+    uint16_t minutes;       // leave again after this long without an update (0: the board's default)
+    char ssid[NL_OTA_SSID_LEN];
+    char pass[NL_OTA_PASS_LEN];
+} nl_ota_wifi_t;
+
+// Fills m; false if a name or password is too long.
+static inline bool nl_ota_wifi_make(nl_ota_wifi_t *m, uint8_t targets, bool on, uint16_t minutes,
+                                    const char *ssid, const char *pass)
+{
+    memset(m, 0, sizeof(*m));
+    m->targets = targets;
+    m->on = on ? 1 : 0;
+    m->minutes = minutes;
+    if (!ssid) ssid = "";
+    if (!pass) pass = "";
+    if (strlen(ssid) >= NL_OTA_SSID_LEN || strlen(pass) >= NL_OTA_PASS_LEN) return false;
+    memcpy(m->ssid, ssid, strlen(ssid));
+    memcpy(m->pass, pass, strlen(pass));
+    return true;
+}
+
+// A received one is for this board (target bit) and its strings end.
+static inline bool nl_ota_wifi_for(const nl_ota_wifi_t *m, uint8_t my_target)
+{
+    return (m->targets & my_target) && memchr(m->ssid, 0, NL_OTA_SSID_LEN) && memchr(m->pass, 0, NL_OTA_PASS_LEN);
+}
+
+typedef enum {
+    NL_OTA_WIFI_OFF = 0,
+    NL_OTA_WIFI_JOINING = 1,
+    NL_OTA_WIFI_UP = 2,     // ip is set: POST the image to http://ip/ota
+} nl_ota_wifi_state_t;
+
+#define NL_OTA_IDLE         255     // nl_ota_state_t.pct: no update being written
+
+typedef struct NL_PACKED {
+    uint8_t wifi;           // nl_ota_wifi_state_t
+    uint8_t ip[4];
+    uint8_t pct;            // this board's update in progress, or NL_OTA_IDLE
+    char name[16];          // "Live monitor", "Eyes"
+    char build[17];         // first 16 hex digits of the running ELF's SHA-256
+    char note[32];          // anything else ("port eye 45%"), "" for none
+} nl_ota_state_t;
+
+// The cable: one request, one answer (op | NL_OTA_REPLY), off = the next
+// offset wanted. data carries the image for NL_OTA_DATA and the build id
+// (16 characters) in the answer to NL_OTA_ASK.
+typedef enum {
+    NL_OTA_ASK = 1,         // -> status, build in data
+    NL_OTA_BEGIN = 2,       // off = image size; erases first (seconds)
+    NL_OTA_DATA = 3,        // off = where, data = bytes
+    NL_OTA_END = 4,         // checks the image, boots it next
+    NL_OTA_ABORT = 5,
+} nl_ota_op_t;
+#define NL_OTA_REPLY        0x80
+
+typedef enum {
+    NL_OTA_ST_OK = 0,
+    NL_OTA_ST_BUSY = 1,     // another update is being written
+    NL_OTA_ST_ERR = 2,      // failed (wrong offset, flash error, bad image): start again
+} nl_ota_status_t;
+
+#define NL_OTA_PART_HEADER_LEN  8
+#define NL_OTA_PART_MAX         (NL_MAX_PAYLOAD - NL_OTA_PART_HEADER_LEN - 8)   // 216 bytes a frame
+
+typedef struct NL_PACKED {
+    uint8_t op;             // nl_ota_op_t, | NL_OTA_REPLY in answers
+    uint8_t status;         // answers: nl_ota_status_t
+    uint16_t len;           // bytes in data
+    uint32_t off;
+    uint8_t data[NL_OTA_PART_MAX];
+} nl_ota_part_t;
+
+// A received part, copied into m; false if it is malformed.
+static inline bool nl_ota_part_parse(const uint8_t *payload, size_t len, nl_ota_part_t *m)
+{
+    if (len < NL_OTA_PART_HEADER_LEN || len > sizeof(*m)) return false;
+    memcpy(m, payload, len);
+    return m->len <= NL_OTA_PART_MAX && NL_OTA_PART_HEADER_LEN + (size_t)m->len == len;
+}
+static inline size_t nl_ota_part_size(const nl_ota_part_t *m) { return NL_OTA_PART_HEADER_LEN + m->len; }
 
 #ifdef __cplusplus
 }

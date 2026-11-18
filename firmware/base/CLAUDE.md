@@ -547,6 +547,29 @@ Earlier features, still there (`main/main.c`):
   is made before the radio starts Wi-Fi (`ota_wifi_init`). **Not yet tested
   against a real network** (needs the password); the key combo and the "no
   network saved" path are.
+- **The code moved to `shared/nibbles_ota`** (2026-11-17) so the monitors and the
+  eyes share it. **`ota remote on [eyes|monitors|all] [MIN]`** broadcasts
+  `NL_MSG_OTA_WIFI` three times with the network saved by `wifi set` (sent in the
+  clear: ESP-NOW broadcasts can't be encrypted); the boards named join it for MIN
+  minutes (default 15, longer while an update is being written) and broadcast
+  `NL_MSG_OTA_STATE` once a second (`main/ota_peers.c`). `ota remote` lists them
+  (name, `http://IP/`, build, progress, the port eye's state); a board getting an
+  address shows on the event line. `ota remote off [...]` sends them off again.
+  **Tested 2026-11-17** with the Right Brain's `Nibbles` (password `wled1234`, WLED's
+  default; "wireless" was refused with a handshake timeout): the eyes and both
+  monitors joined in about a second (4.3.2.3-5) and the radio kept working;
+  uploads took 3.7 s (eyes) and 6.9 s (a monitor), each kept after 30 s.
+  **The brain's access point takes only a few clients** (the Mac couldn't join,
+  CoreWLAN error -3912 / tmpErr, until the monitors left): ask for one group at a
+  time (`ota remote on eyes`, then `monitors`). A network a board can't join is
+  retried at 2 s doubling to 30 s, since each try scans every channel and takes
+  the board off ESP-NOW's for a moment.
+  **No USB needed** (2026-11-17): the base also takes `ota remote ...`, `ota wifi
+  on|off` and `ota wifi` (its address) over the radio from a brain
+  (`NL_MSG_CONSOLE`, `tools/base_ask.py`), so a computer on `Nibbles` drives the
+  whole update. Tested: the base updated itself over Wi-Fi (11.3 s, kept). **Its
+  Bluetooth goes off when its Wi-Fi goes on**: with the clock window still
+  advertising, it joined but answered nothing. Steps: the `update-boards` skill.
 - **Mirror board** (`main/mirror_link.c`): a second 3.49 up the pole runs the
   same firmware with `role mirror` (USB serial; `role base` back; saved in
   NVS). It runs only the screen and the cable: no radio, power board, keypads

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-set(EXTRA_COMPONENT_DIRS ../../shared/nibbles_link ../../shared/nibbles_espnow)
+set(EXTRA_COMPONENT_DIRS ../../shared/nibbles_link ../../shared/nibbles_espnow ../../shared/nibbles_ota)
 project(nibbles_monitor)
 
 # LVGL draws in software: optimised even though the rest is built for debugging.

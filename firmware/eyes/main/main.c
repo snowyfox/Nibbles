@@ -16,6 +16,9 @@
 #include "esp_heap_caps.h"
 #include "freertos/queue.h"
 #include "nibbles_espnow.h"
+#include "eye_ota.h"
+#include "ota.h"
+#include "ota_remote.h"
 #include "presets.h"
 #include "render.h"
 #include "sensors.h"
@@ -33,6 +36,7 @@ typedef struct {
 
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8_t *pl, size_t len)
 {
+    if (ota_remote_radio(h, pl, len)) return;   // the base asks for Wi-Fi to take an update
     if (h->type == NL_MSG_AUDIO && len == sizeof(nl_audio_t) && h->role == NL_ROLE_WLED) {
         nl_audio_t a;
         memcpy(&a, pl, sizeof(a));
@@ -234,6 +238,7 @@ static void eye_task(void *arg)
             link_send_eye_state(&shared);
         }
         render_frame(&eye.p);
+        eye_ota_frame();
         frames++;
         if (bump_rx_us && (bumps.bump.action != NL_BUMP_PRESET || bump_preset < 0 || rendered == bump_preset)) {
             ESP_LOGI(TAG, "bump shown %.1f ms after it arrived", (esp_timer_get_time() - bump_rx_us) / 1000.0f);
@@ -313,6 +318,8 @@ void app_main(void)
 
     ESP_ERROR_CHECK(render_init());
     if (link_start() != ESP_OK) ESP_LOGE(TAG, "eye link unavailable; running standalone");
+    ota_set_name(board_side() == NL_SIDE_PORT ? "port eye" : "starboard eye", "nibbles.bin");
+    eye_ota_start();   // a new image is kept once it has drawn frames for 30 s; the leader updates the port eye
     if (EYES_RADIO && board_role() == NL_ROLE_EYE_LEADER) {
         radio_cmds = xQueueCreate(4, sizeof(nl_cmd_t));
         radio_bumps = xQueueCreate(8, sizeof(bump_item_t));
@@ -326,9 +333,12 @@ void app_main(void)
             .handler = on_radio,
             .core = 0,
         };
+        ota_wifi_init();   // the Wi-Fi netif before the radio starts Wi-Fi
         if (nl_espnow_start(&rcfg) != ESP_OK) {
             ESP_LOGE(TAG, "radio unavailable");
             radio_cmds = NULL;
+        } else {
+            ota_remote_start(NL_OTA_TO_EYES, "Eyes");
         }
     }
     if (audio_start() != ESP_OK) ESP_LOGE(TAG, "audio unavailable; eye will not react to sound");

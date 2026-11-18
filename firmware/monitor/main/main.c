@@ -29,6 +29,8 @@
 #include "nibbles_link.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "ota.h"
+#include "ota_remote.h"
 #include "led_pos.h"
 
 static const char *TAG = "monitor";
@@ -189,6 +191,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *a, uint8_t *px)
 static void on_radio(const uint8_t mac[6], const nl_radio_hdr_t *hdr, const uint8_t *payload, size_t len)
 {
     const int64_t now = esp_timer_get_time();
+    if (ota_remote_radio(hdr, payload, len)) return;   // the base asks for Wi-Fi to take an update
     if (hdr->type == NL_MSG_SHOW && len == sizeof(nl_show_t)) {
         const nl_show_t *s = (const nl_show_t *)payload;
         if (s->side > NL_SHOW_STANDBY) return;
@@ -484,8 +487,16 @@ static void ui_update(void)
 
     nl_espnow_stats_t st;
     nl_espnow_get_stats(&st);
-    lv_label_set_text_fmt(u.foot, "ch %d %s   %s", st.channel, st.locked ? "" : "(searching)",
-                          last_rx_us && now - last_rx_us < STREAM_LOST_MS * 1000LL ? "picture ok" : "no picture");
+    char upd[48];
+    ota_remote_text(upd, sizeof(upd));   // while the base has it on Wi-Fi: where to send the update
+    if (upd[0]) {
+        lv_label_set_text(u.foot, upd);
+        set_col(u.foot, COL_WARN);
+    } else {
+        lv_label_set_text_fmt(u.foot, "ch %d %s   %s", st.channel, st.locked ? "" : "(searching)",
+                              last_rx_us && now - last_rx_us < STREAM_LOST_MS * 1000LL ? "picture ok" : "no picture");
+        set_col(u.foot, COL_TITLE);
+    }
 }
 
 // The shark from the stream: a dot per LED; dim grey without a stream.
@@ -620,9 +631,11 @@ static void shot_print(void)
     printf("SHOT END\n");
 }
 
+static void console_reply(void *ctx, const char *text) { printf("%s\n", text); }
+
 static void console_task(void *arg)
 {
-    char line[64];
+    static char line[OTA_LINE_MAX + 64];   // "ota data" lines (tools/base_ota.py usb PORT BIN) are about 1 KB
     size_t n = 0;
     for (;;) {
         uint8_t c;
@@ -633,6 +646,7 @@ static void console_task(void *arg)
         }
         line[n] = 0;
         n = 0;
+        if (ota_command(line, console_reply, NULL)) continue;
         if (!strcmp(line, "shot") || !strcmp(line, "shot rle")) shot_print();
         else if (!strcmp(line, "side live") || !strcmp(line, "side standby")) {
             nvs_handle_t h;
@@ -666,7 +680,7 @@ static void console_task(void *arg)
             }
             my_brain = v;
             printf("BRAIN %s\n", v ? "left" : "right");
-        } else if (line[0]) printf("? commands: side live|standby, brain right|left, flip, shot\n");
+        } else if (line[0]) printf("? commands: side live|standby, brain right|left, flip, shot, ota status|...\n");
     }
 }
 
@@ -723,7 +737,11 @@ void app_main(void)
     side = side_from_settings();
     my_brain = brain_from_settings();
     usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb.rx_buffer_size = 4096;   // whole "ota data" lines without dropping bytes
     usb_serial_jtag_driver_install(&usb);
+    const char *name = side == NL_SHOW_STANDBY ? "Standby monitor" : "Live monitor";
+    ota_set_name(name, "nibbles_monitor.bin");
+    ota_start();   // a new image is kept once it has run 30 s
 
     sent = xSemaphoreCreateBinary();
     lcd_init();
@@ -747,7 +765,9 @@ void app_main(void)
         .anchor_channel = START_CHANNEL, .anchor_fallback_ms = 0,   // follows the brains' channel
         .handler = on_radio, .core = 0,
     };
+    ota_wifi_init();   // the Wi-Fi netif before the radio starts Wi-Fi
     ESP_ERROR_CHECK(nl_espnow_start(&radio));
+    ota_remote_start(NL_OTA_TO_MONITORS, name);
     xTaskCreatePinnedToCore(ui_task, "ui", 8192, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(console_task, "console", 4096, NULL, 2, NULL, 0);
     ESP_LOGI(TAG, "up: the %s monitor, %d LEDs on %d x %d", side == NL_SHOW_STANDBY ? "Standby" : "Live", LED_POS_COUNT, LCD_W, LCD_H);
