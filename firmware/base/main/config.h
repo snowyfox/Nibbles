@@ -84,8 +84,9 @@
 #define PIN_SD_D0            8
 
 // The 1.91 is mounted in portrait (the user, 2026-11-14): 1 turns the picture
-// round 180 degrees if it comes out upside down in the box.
-#define DISPLAY_191_UPSIDE_DOWN 0
+// round 180 degrees if it comes out upside down in the box (it did, in the
+// printed base enclosure: the user, 2026-11-18).
+#define DISPLAY_191_UPSIDE_DOWN 1
 
 // No clock chip on the 1.91: rtc.c keeps time only from "time" or the radio.
 #define BASE_HAS_RTC_CHIP    0
@@ -175,10 +176,10 @@
 // board. The FeatherWing buffers its data input (a 74AHCT1G125, powered from
 // its USB/BAT pins), so it can stand in for the hub's buffer in front of the
 // hub-version key_columns, which have none (2026-11-16).
-#define KEYPAD_PANEL_FIRST       0
+#define KEYPAD_PANEL_FIRST       1
 #define KEYPAD_PANEL_ROW         8    // pixels per row
 #define KEYPAD_PANEL_FLIP_ROWS   0    // 1: the first board on the last row
-#define KEYPAD_PANEL_FLIP_KEYS   0    // 1: switch 1 at the end of its row
+#define KEYPAD_PANEL_FLIP_KEYS   1    // 1: switch 1 at the end of its row (as mounted in the base, 2026-11-19)
 // Its own scale (0-255): the 5050 WS2812Bs are much brighter than the keys'
 // SK6812MINI-Es; 24 x 60 mA x 16/255 = ~90 mA at full white.
 #define KEYPAD_PANEL_LEVEL       16

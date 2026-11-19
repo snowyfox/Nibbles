@@ -170,8 +170,15 @@ file. All of it can also be driven from USB serial.
   panel's own 74AHCT1G125 then buffers the data for the hub-version key boards). Each pixel row is a key board in chain order and each
   pixel along it a switch (`keypad_panel.h`, host-tested), so it follows the
   boards, not the key names; flips for how it's mounted, its own level
-  (`KEYPAD_PANEL_LEVEL`, 16). Built, not run on hardware (no keypads or panel
-  wired yet; the orientation flags are a guess until it's mounted).
+  (`KEYPAD_PANEL_LEVEL`, 16). A board the base doesn't find leaves its row
+  dark (2026-11-19), so a gap means a cable is out.
+  **On hardware 2026-11-19** (the 1.91 base box, one key board 0x38 plus the
+  wing, wing first in the chain: `KEYPAD_PANEL_FIRST 1`): `FLIP_ROWS 0`,
+  `FLIP_KEYS 1` match how they're mounted (the user confirmed). 0x38 sits on
+  the right of the keypad and is the wing's right-hand column, so 0x39 and 0x3A
+  must sit in the middle and on the left; the wing's leftmost column stays dark
+  with three boards. The user may want the layout changed later (e.g. skip a
+  column, or per-board positions) once the hardware is done.
 - **Remapping without a firmware change** (2026-11-16, `keymap` on the USB
   console; `keypad_console` in `keypad.c`, text in `keymap_text.c`,
   host-tested): `KEYPAD_BOARDS` is the default and each board's map can be

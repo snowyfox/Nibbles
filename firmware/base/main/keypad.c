@@ -76,7 +76,8 @@ static void show_leds(void)
     taskEXIT_CRITICAL(&lock);
     // The chain runs through the boards in KEYPAD_BOARDS order, switch 1 first on each,
     // with the mirror panel after them, or before them with KEYPAD_PANEL_FIRST.
-    // led[n]: the nth board with LEDs.
+    // led[n]: the nth board with LEDs. A board the base doesn't find leaves its
+    // panel row dark, so an unplugged board shows as a gap.
     int i = KEYPAD_PANEL_FIRST ? KEYPAD_PANEL_PIXELS : 0, nled = 0;
     int led[NBOARDS];
     for (int b = 0; b < NBOARDS; b++) {
@@ -91,7 +92,7 @@ static void show_leds(void)
         uint32_t c = 0;
         if (keypad_panel_source(p, KEYPAD_PANEL_PIXELS, KEYPAD_PANEL_ROW, KEYPAD_PANEL_FLIP_ROWS,
                                 KEYPAD_PANEL_FLIP_KEYS, &b, &k) &&
-            b < nled && k < boards[led[b]].keys && map[led[b]][k])
+            b < nled && (found & 1 << led[b]) && k < boards[led[b]].keys && map[led[b]][k])
             c = rgb[map[led[b]][k]];
         set_pixel(i, c, KEYPAD_PANEL_LEVEL);
     }
@@ -167,6 +168,7 @@ static void keypad_task(void *arg)
                 }
                 ESP_LOGW(TAG, "keypad board 0x%02x lost (%s)", boards[b].addr, esp_err_to_name(err));
                 found &= ~(1 << b);
+                leds_dirty = true;   // its panel row goes dark
                 // whatever it had down comes up
                 for (int k = 0; k < boards[b].keys; k++)
                     if (!(stable[b] & 1 << k) && map[b][k] && cb) cb(map[b][k], false);
