@@ -24,7 +24,8 @@ Waveshare **ESP32-S3-Touch-AMOLED-1.75**:
 
 Two identical boards are mounted **back to back** as the shark's eyes, 120 mm
 **forward** of the pole's twist axis (toward the nose), screens facing out to
-each side: **starboard** = 28:84:85:3A:DA:78 (the original), **port** =
+each side: **starboard** = 28:84:85:8D:80:E4 (since the original, 28:84:85:3A:DA:78, was
+replaced; flashed by USB 2026-11-21), **port** =
 28:84:85:3B:6F:F4. One firmware binary serves both; the port board is picked
 out by MAC (`PORT_EYE_MACS` in `config.h`, logged as `motion: port eye` at
 boot). The starboard screen's +x points toward the nose, the port screen's
@@ -156,6 +157,9 @@ Managed components: `waveshare/esp32_s3_touch_amoled_1_75` (BSP), `waveshare/qmi
 
 ### Eye behaviour (`eye.c`)
 - States: awake → drowsy → asleep → waking (wide-eyed, then a blink).
+  **Sleep is off since 2026-11-21** (`EYE_CAN_SLEEP 0`, the user, for the
+  festival): the eye stays awake in a quiet room. The code stays
+  (`eye_t.can_sleep`); the host tests turn it on to keep testing it.
 - **Hype** (energetic mode): driven by dancing *or* vigorous motion (activity),
   held 2 s after motion stops, then fades. In hype: rings flow outward one per
   beat, colours cycle faster, more wobble and glow, bigger beat thumps, spirals
@@ -163,6 +167,11 @@ Managed components: `waveshare/esp32_s3_touch_amoled_1_75` (BSP), `waveshare/qmi
 - Colour drifts over time and is pulled toward the music's bass/treble balance.
 - **Preset swaps** hide behind a deliberate blink (close 0.14 s, hold 0.08 s
   while the preset changes, open 0.2 s), also from asleep; not while waking.
+  **Quick changes cut** (2026-11-21): a change within `SWAP_QUICK_S` (0.6 s)
+  of the last one, or while the lids are still opening from a swap blink,
+  switches at once with no blink, so bump keys tapped several times a
+  second don't make the eye blink over and over. After a pause the next
+  change blinks again.
 
 ### Presets (`presets.c`)
 18 presets, cycled every `PRESET_CYCLE_S` (10 s), alternating ring and spiral

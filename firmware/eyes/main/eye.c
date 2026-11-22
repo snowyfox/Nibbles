@@ -65,6 +65,8 @@ void eye_init(eye_t *e, uint32_t seed)
     e->lid_base = 1.0f;
     e->blink_t = -1.0f;
     e->swap_t = -1.0f;
+    e->since_swap_s = 1e6f;
+    e->can_sleep = EYE_CAN_SLEEP;
     e->next_blink_s = BLINK_MIN_S;
     e->hue_drift = e->hue = HUE_COOL_DEG;
     e->next_sacc_s = 1.0f;
@@ -135,7 +137,7 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     switch (e->state) {
     case EYE_AWAKE:
         e->lid_base = approach(e->lid_base, 1.0f, 0.2f, dt);
-        if (e->silent_s > SILENCE_SLEEP_S) set_state(e, EYE_DROWSY);
+        if (e->can_sleep && e->silent_s > SILENCE_SLEEP_S) set_state(e, EYE_DROWSY);
         break;
     case EYE_DROWSY:
         e->lid_base = fmaxf(ASLEEP_LID, e->lid_base - dt / DROWSY_CLOSE_S);
@@ -160,8 +162,17 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
     // Preset swaps hide behind a deliberate blink (a sleeping eye briefly
     // closes its slit too), started once any ordinary blink has finished and
     // not while waking up. The swap happens while the lids are shut.
+    // Changes in quick succession (bump keys tapped fast) cut straight over:
+    // at most one swap blink per SWAP_QUICK_S, and none needed while the lids
+    // are still opening from the last one.
     p->swap_now = false;
-    if (e->swap_pending && e->swap_t < 0.0f && e->state != EYE_WAKING && e->blink_t < 0.0f) {
+    e->since_swap_s += dt;
+    if (e->swap_pending && e->state != EYE_WAKING &&
+        (e->since_swap_s < SWAP_QUICK_S || (e->swap_t >= 0.0f && e->swap_done))) {
+        p->swap_now = true;
+        e->swap_pending = false;
+        e->since_swap_s = 0.0f;
+    } else if (e->swap_pending && e->swap_t < 0.0f && e->state != EYE_WAKING && e->blink_t < 0.0f) {
         e->swap_t = 0.0f;
         e->swap_done = false;
     }
@@ -173,6 +184,7 @@ void eye_update(eye_t *e, const audio_features_t *a, const motion_features_t *m,
             p->swap_now = true;
             e->swap_done = true;
             e->swap_pending = false;
+            e->since_swap_s = 0.0f;
         }
         if (e->swap_t >= SWAP_CLOSE_S + SWAP_HOLD_S + SWAP_OPEN_S) {
             e->swap_t = -1.0f;

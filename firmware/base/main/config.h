@@ -144,10 +144,18 @@
 // switches between a pin and GND, its pins pull themselves up) at 0x27, all
 // three address jumpers high (PCF8574T: 0x20-0x27; PCF8574AT: 0x38-0x3F).
 // A board that isn't there is just never found, so the entries can stay.
+// In the base box the boards are mounted with switch 1 at the BOTTOM, so each
+// list below runs bottom to top (the user, 2026-11-21).
+// The one-handed layout (2026-11-21, the user's design), from the top:
+//   left (0x3A): 1-8 for the Left Brain
+//   middle (0x39): SET/BUMP, TARGET, BANK, SWAP, FLASH, BLACKOUT, MONITORS, DETAIL
+//   right (0x38): 1-8 for the Right Brain
+#define KL(n) ((ctl_key_t)(KEY_L1 + (n) - 1))
+#define KR(n) ((ctl_key_t)(KEY_R1 + (n) - 1))
 #define KEYPAD_BOARDS { \
-    { 0x38, KEYPAD_TCA9534, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_NUM5, KEY_NUM6, KEY_NUM7, KEY_NUM8 } }, \
-    { 0x39, KEYPAD_TCA9534, 8, { KEY_ALL, KEY_BODY, KEY_EYES, KEY_FINS, KEY_PAGE, KEY_LATCH, KEY_BLACKOUT, KEY_FIN_SENSOR } }, \
-    { 0x3A, KEYPAD_TCA9534, 8, { KEY_TAKE, KEY_FLASH, KEY_UNLOCK, KEY_MOD_PALETTE, KEY_MOD_LAYER, KEY_MONITORS, KEY_DETAIL, KEY_NONE } }, \
+    { 0x38, KEYPAD_TCA9534, 8, { KR(8), KR(7), KR(6), KR(5), KR(4), KR(3), KR(2), KR(1) } }, \
+    { 0x39, KEYPAD_TCA9534, 8, { KEY_DETAIL, KEY_MONITORS, KEY_BLACKOUT, KEY_FLASH, KEY_SWAP, KEY_BANK, KEY_TARGET, KEY_SETBUMP } }, \
+    { 0x3A, KEYPAD_TCA9534, 8, { KL(8), KL(7), KL(6), KL(5), KL(4), KL(3), KL(2), KL(1) } }, \
     { 0x27, KEYPAD_PCF8574, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_EYES, KEY_BODY, KEY_LATCH, KEY_TAKE } }, \
 }
 #define KEYPAD_POLL_MS       10

@@ -315,6 +315,7 @@ static void test_sleep_end_to_end(void)
     static scene_t sc;
     mic_init(&sc.m);
     eye_init(&sc.e, 7);
+    sc.e.can_sleep = true;   // off in the firmware (EYE_CAN_SLEEP), tested anyway
 
     int not_awake = 0;
     scene_run(&sc, 90, FAINT_MUSIC, 0, 0, &not_awake, NULL);
@@ -626,6 +627,7 @@ static void test_preset_swap(void)
 {
     static eye_t e;
     eye_init(&e, 3);
+    e.can_sleep = true;
     audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.5f, .warmth = 0.5f };
     motion_features_t still = { 0 };
     const float dt = 1.0f / 30;
@@ -840,10 +842,53 @@ static void test_eye_link_sharing(void)
     CHECK(max_lid_diff == 0.0f && swapped, "lids and the preset swap blink match exactly (max lid difference %.3f)", max_lid_diff);
 }
 
+// EYE_CAN_SLEEP 0: a silent room never puts the eye to sleep.
+static void test_no_sleep(void)
+{
+    static eye_t e;
+    eye_init(&e, 1);
+    audio_features_t quiet = { .level_db = -95.0f, .avg_db = -95.0f, .warmth = 0.5f };
+    motion_features_t still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int i = 0; i < (int)(120 / dt); i++) eye_update(&e, &quiet, &still, dt);
+    CHECK(EYE_CAN_SLEEP || e.state == EYE_AWAKE, "sleep off: 2 min of silence, state %s", eye_state_name(e.state));
+}
+
+// Bump keys tapped several times a second: one blink, then straight cuts;
+// after a pause the next change blinks again.
+static void test_quick_swaps(void)
+{
+    static eye_t e;
+    eye_init(&e, 3);
+    audio_features_t music = { .level_db = -40.0f, .avg_db = -40.0f, .loudness = 0.5f, .warmth = 0.5f };
+    motion_features_t still = { 0 };
+    const float dt = 1.0f / 30;
+    for (int i = 0; i < 60; i++) eye_update(&e, &music, &still, dt);
+    int swaps = 0;
+    float min_lid_late = 1.0f;
+    for (int i = 0; i < 60; i++) {          // a change every 0.2 s for 2 s
+        if (i % 6 == 0) eye_request_swap(&e);
+        eye_update(&e, &music, &still, dt);
+        if (e.p.swap_now) swaps++;
+        if (i >= 18 && e.blink_t < 0.0f) min_lid_late = fminf(min_lid_late, e.p.lid_open);
+    }
+    CHECK(swaps == 10, "quick swaps: all 10 changes shown (%d)", swaps);
+    CHECK(min_lid_late > 0.95f, "quick swaps: no blink after the first (lowest lid %.2f)", min_lid_late);
+    for (int i = 0; i < 45; i++) eye_update(&e, &music, &still, dt);   // a pause
+    eye_request_swap(&e);
+    float min_lid = 1.0f;
+    for (int i = 0; i < 15; i++) {
+        eye_update(&e, &music, &still, dt);
+        min_lid = fminf(min_lid, e.p.lid_open);
+    }
+    CHECK(min_lid < 0.05f, "quick swaps: after a pause the next change blinks (lid %.2f)", min_lid);
+}
+
 static void test_sleep_wake(void)
 {
     static eye_t e;
     eye_init(&e, 1);
+    e.can_sleep = true;
     audio_features_t quiet = { .level_db = -90.0f, .avg_db = -90.0f, .warmth = 0.5f };
     motion_features_t still = { 0 };
     const float dt = 1.0f / 30;
@@ -973,6 +1018,8 @@ int main(void)
     test_twist();
     test_hype();
     test_preset_swap();
+    test_no_sleep();
+    test_quick_swaps();
     test_bumps();
     test_peak_beats();
     test_eye_link_sharing();

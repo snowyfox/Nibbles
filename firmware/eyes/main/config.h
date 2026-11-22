@@ -89,6 +89,9 @@
 #define QUIET_DB             (-86.5f)
 #define QUIET_AVG_S          1.5f
 #define SILENCE_SLEEP_S      20.0f   // quiet this long -> eye gets drowsy
+// 0: the eye never falls asleep (the user, 2026-11-21: off at the festival).
+// The sleep code stays (eye_t.can_sleep); 1 brings it back.
+#define EYE_CAN_SLEEP        0
 #define WAKE_MARGIN_DB       3.0f    // a sound this far above QUIET_DB wakes the eye...
 #define WAKE_SOUND_S         0.15f   // ...if it lasts this long
 
@@ -184,6 +187,9 @@
 #define SWAP_CLOSE_S         0.14f
 #define SWAP_HOLD_S          0.08f
 #define SWAP_OPEN_S          0.20f
+// A preset change within this long of the last one (bump keys tapped several
+// times a second) cuts straight over instead of blinking again (2026-11-21).
+#define SWAP_QUICK_S         0.6f
 #define DROWSY_CLOSE_S       5.0f    // time for lids to close once drowsy
 #define WAKE_MOTION_G        0.35f   // a jolt this big wakes the eye too
 

@@ -249,8 +249,11 @@ def run(groups, password, minutes):
             time.sleep(10)
         else:
             raise GiveUp("could not join Nibbles")
-        time.sleep(3)
-        if not ask("ota wifi", tries=5):
+        # macOS opens its captive-portal window on joining and downloads WLED's
+        # whole page from the brain; requests sent meanwhile timed out
+        # (2026-11-21, a hotel). Give it 30 s, and ask more patiently.
+        time.sleep(30)
+        if not ask("ota wifi", tries=10):
             raise GiveUp(f"the base doesn't answer through the brain at {BRAIN}")
         for g in groups:
             try:

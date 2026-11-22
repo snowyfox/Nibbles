@@ -179,6 +179,36 @@ file. All of it can also be driven from USB serial.
   must sit in the middle and on the left; the wing's leftmost column stays dark
   with three boards. The user may want the layout changed later (e.g. skip a
   column, or per-board positions) once the hardware is done.
+  **2026-11-21:** the boards are mounted with switch 1 at the bottom, so
+  each board's list in `KEYPAD_BOARDS` now runs bottom to top (the columns
+  read top-down as designed: 1-8, ALL...BLACKOUT, TAKE...DETAIL). UNLOCK and
+  FIN SENSOR were taken off the keys (their switches are free), so the
+  keypad can't be locked from the keys; the mirror panel follows the switches
+  and needed no change.
+- **One-handed layout** (2026-11-21, the user's design after the first festival
+  night: the old layout's modes, held numbers and LATCH were too much one-handed).
+  `KEYPAD_BOARDS` from the top: left column **L1-L8 = the Left Brain's numbers**,
+  right column **R1-R8 = the Right Brain's**, middle **SET/BUMP, TARGET, BANK,
+  SWAP, FLASH, BLACKOUT, MONITORS, DETAIL** (`controls.c`, "one-handed layout";
+  host test `test_one_handed`).
+  - **SET/BUMP** (orange SET, blue BUMP; starts in SET): SET keeps a number at
+    once (no LATCH), BUMP shows it only while held (the old bump stack).
+  - **TARGET** cycles ALL (white) > BODY (pink) > FINS (orange) > BODY+FINS
+    (violet, `TGT_BODY_FINS`: the body preset with the fins following, ALL
+    without the eyes) > EYES (cyan).
+  - **BANK**: presets (white) or palettes (magenta, the palette viewer's list).
+  - **A brain's column** changes Live if that brain is on the shark (or there's
+    one brain), else Standby: sent straight to that brain (`ACT_*` with
+    `standby`), the eyes cued for the swap; never the brain on the shark. BUMP on
+    the off-shark brain previews there while held and puts Standby back after.
+  - **SWAP** (the old TAKE): SET, a tap swaps the brains (`take_ab`); BUMP, the
+    other brain while held. `ctl.left_live` comes from `NL_MSG_AB` (main), except
+    for 2 s after a SWAP.
+  - Key lights: the brain's current preset (or palette) for the target red on
+    the brain on the shark, green on the other; the rest dim blue (left) / warm
+    (right). The simple page's target box says the target and "SET PRESET",
+    "BUMP PALETTE" etc. The monitors (not updated) show BODY+FINS as ALL.
+  - The old keys (NUM, LATCH, TAKE, PAGE, ...) still work if mapped.
 - **Remapping without a firmware change** (2026-11-16, `keymap` on the USB
   console; `keypad_console` in `keypad.c`, text in `keymap_text.c`,
   host-tested): `KEYPAD_BOARDS` is the default and each board's map can be

@@ -15,7 +15,20 @@ join)
     cat > /tmp/nibbles_join.swift <<'EOF'
 import CoreWLAN
 let i = CWWiFiClient.shared().interface()!
-guard let n = try? i.scanForNetworks(withName: "Nibbles").first else { print("Nibbles not found"); exit(1) }
+// A full scan, picked by name: scanForNetworks(withName:) found nothing at
+// a hotel while a full scan listed Nibbles at -28 dBm (2026-11-21). Try a few times.
+var found: CWNetwork? = nil
+// Scans come back incomplete now and then (32 of 79 networks), so try the
+// system's cached results and fresh scans, up to ten times.
+func pick(_ s: Set<CWNetwork>?) -> CWNetwork? {
+    (s ?? []).filter { $0.ssid == "Nibbles" }.max { $0.rssiValue < $1.rssiValue }
+}
+for _ in 0..<10 {
+    found = pick(i.cachedScanResults()) ?? pick(try? i.scanForNetworks(withSSID: nil))
+    if found != nil { break }
+    Thread.sleep(forTimeInterval: 3)
+}
+guard let n = found else { print("Nibbles not found"); exit(1) }
 do { try i.associate(to: n, password: CommandLine.arguments[1]); print("joined Nibbles") }
 catch { print("could not join:", error); exit(1) }
 EOF

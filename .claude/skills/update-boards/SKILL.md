@@ -73,6 +73,13 @@ tools/nibbles_wifi.sh leave                      # the Mac back on its own netwo
   network, and ends the log (`logs/ota_push_*.log`) with `RESULT`. Boards
   already on the build are skipped. Tested 2026-11-17: all five boards in 4 min.
   Wait for it with a background loop on the log, not by polling.
+- **Set the Mac's Wi-Fi DNS to a manual server (e.g. 9.9.9.9) first** (the user does
+  it: System Settings, Wi-Fi, Details, DNS; it's for the Wi-Fi service, not per network).
+  WLED's access point answers every name lookup with 4.3.2.1, so on joining, every
+  background service on the Mac opened connections to the brain and its web server
+  stopped answering (2026-11-21, a hotel: three failed pushes, then fine with 9.9.9.9).
+  Leave the captive-portal window alone (closing it can drop the network); the push
+  waits 30 s after joining for it.
 - **One group at a time.** The brain's access point takes only a few clients;
   with the eyes, both monitors and the Mac on it the Mac couldn't join
   (`tmpErr`). Eyes, then monitors, then the base.

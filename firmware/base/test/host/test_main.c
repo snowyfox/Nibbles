@@ -1158,8 +1158,103 @@ static void test_keypad_panel(void)
     CHECK(!keypad_panel_source(0, 32, 0, false, false, &b, &k));
 }
 
+static bool any_standby(void)
+{
+    for (int i = 0; i < nacts; i++) if (acts[i].standby) return true;
+    return false;
+}
+static bool all_standby(void)
+{
+    for (int i = 0; i < nacts; i++) if (!acts[i].standby) return false;
+    return nacts > 0;
+}
+
+// The one-handed layout (2026-11-21): per-brain columns, SET/BUMP, TARGET, BANK, SWAP.
+static void test_one_handed(void)
+{
+    ctl_t c;
+    ctl_init(&c, 0);
+    ctl_action_t out[CTL_MAX_ACTIONS];
+    live(&c, 1, 1, 0);
+    // SET (the default), one brain: a tap keeps it, both columns are that brain.
+    CHECK(!c.bump_mode && c.target == TGT_ALL);
+    press(&c, (ctl_key_t)(KEY_R1 + 2));
+    CHECK(has(ACT_PRESET, TGT_BODY, 3) && has(ACT_PRESET, TGT_EYES, 3) && !any_standby());
+    CHECK(c.live.body == 3 && c.live.eyes == 3);
+    release(&c, (ctl_key_t)(KEY_R1 + 2));
+    CHECK(nacts == 0 && c.live.body == 3);
+    tap(&c, (ctl_key_t)(KEY_L1 + 3));
+    CHECK(c.live.body == 4);
+
+    // TARGET goes round ALL, BODY, FINS, BODY+FINS, EYES.
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_BODY);
+    press(&c, (ctl_key_t)(KEY_R1 + 4)); CHECK(has(ACT_PRESET, TGT_BODY, 5) && !has(ACT_PRESET, TGT_EYES, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 4));
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_FINS);
+    press(&c, (ctl_key_t)(KEY_R1 + 1)); CHECK(has(ACT_PRESET, TGT_FINS, 2) && c.live.fins == 2); release(&c, (ctl_key_t)(KEY_R1 + 1));
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_BODY_FINS);
+    press(&c, (ctl_key_t)(KEY_R1 + 5)); CHECK(has(ACT_PRESET, TGT_BODY, 6) && has(ACT_PRESET, TGT_FINS, 0) && !has(ACT_PRESET, TGT_EYES, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 5));
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_EYES);
+    press(&c, (ctl_key_t)(KEY_R1 + 6)); CHECK(has(ACT_PRESET, TGT_EYES, 7) && !has(ACT_PRESET, TGT_BODY, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 6));
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_ALL);
+
+    // BUMP: only while held.
+    tap(&c, KEY_SETBUMP); CHECK(c.bump_mode);
+    const int body = c.live.body;
+    press(&c, KEY_R8);
+    CHECK(has(ACT_BUMP, TGT_BODY, 8) && c.live.body == body);
+    release(&c, KEY_R8);
+    CHECK(has(ACT_BUMP_END, TGT_BODY, -9999) && c.live.body == body);
+    tap(&c, KEY_SETBUMP); CHECK(!c.bump_mode);
+
+    // BANK: palettes. SET puts one on the body's layer.
+    tap(&c, KEY_BANK); CHECK(c.page == PAGE_PALETTES);
+    press(&c, KEY_R1);
+    CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, ctl_set_palette(&c, 1)));
+    release(&c, KEY_R1);
+    tap(&c, KEY_BANK); CHECK(c.page == PAGE_PRESETS);
+
+    // Two brains, the Right one on the shark: the Left column only touches Standby.
+    live(&c, 1, 1, 0);
+    CHECK(ctl_set_ab(&c, true, out) == 0 && c.ab);
+    c.left_live = false;
+    press(&c, (ctl_key_t)(KEY_L1 + 4));
+    CHECK(all_standby() && has(ACT_PRESET, TGT_BODY, 5) && c.live.body == 1 && c.standby.body == 5 && c.standby.eyes == 5);
+    release(&c, (ctl_key_t)(KEY_L1 + 4));
+    press(&c, (ctl_key_t)(KEY_R1 + 1));
+    CHECK(!any_standby() && c.live.body == 2 && c.standby.body == 5);
+    release(&c, (ctl_key_t)(KEY_R1 + 1));
+
+    // BUMP on the brain off the shark: that brain while held, then back.
+    tap(&c, KEY_SETBUMP);
+    press(&c, (ctl_key_t)(KEY_L1 + 6));
+    CHECK(all_standby() && has(ACT_PRESET, TGT_BODY, 7) && c.standby.body == 7);
+    release(&c, (ctl_key_t)(KEY_L1 + 6));
+    CHECK(all_standby() && has(ACT_PRESET, TGT_BODY, 5) && c.standby.body == 5);
+
+    // SWAP in BUMP: the other brain while held.
+    press(&c, KEY_SWAP);
+    CHECK(has(ACT_AB_HOLD, -1, 1));
+    release(&c, KEY_SWAP);
+    CHECK(has(ACT_AB_HOLD, -1, 0) && !c.left_live);
+    // SWAP in SET: a tap swaps, and the columns follow.
+    tap(&c, KEY_SETBUMP);
+    press(&c, KEY_SWAP);
+    CHECK(has(ACT_AB_TAKE, -1, -9999) && c.left_live && c.live.body == 5 && c.standby.body == 2);
+    release(&c, KEY_SWAP);
+    press(&c, (ctl_key_t)(KEY_L1 + 2));
+    CHECK(!any_standby() && c.live.body == 3);
+    release(&c, (ctl_key_t)(KEY_L1 + 2));
+
+    // Colours: the Left column's live preset red now.
+    uint32_t rgb[KEY_COUNT];
+    ctl_led_colors(&c, 0, rgb);
+    CHECK(rgb[(ctl_key_t)(KEY_L1 + 2)] == 0xff1010 && rgb[(ctl_key_t)(KEY_R1 + 1)] == 0x00e040 && rgb[KEY_TARGET] == 0xffffff);
+    CHECK(ctl_key_by_name("l1") == KEY_L1 && ctl_key_by_name("swap") == KEY_SWAP);
+}
+
 int main(void)
 {
+    test_one_handed();
     test_standby_fills_from_live();
     test_number_is_a_bump();
     test_latch_number();

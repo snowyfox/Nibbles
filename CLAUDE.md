@@ -29,7 +29,7 @@ how the firmware works and why.
 
 | Board | MAC / USB serial | Role |
 |---|---|---|
-| Starboard eye | 28:84:85:3A:DA:78 | link leader (shared eye brain) and radio gateway |
+| Starboard eye | 28:84:85:8D:80:E4 | link leader (shared eye brain) and radio gateway. Replaced (the first, 28:84:85:3A:DA:78, is out); USB-flashed with the OTA layout 2026-11-21, so it updates over the air like the others. Any eye not listed in `PORT_EYE_MACS` runs as starboard |
 | Port eye | 28:84:85:3B:6F:F4 | recognised by MAC (`PORT_EYE_MACS`); the ears (mic + audio analysis) |
 | Base | 28:84:85:90:93:00 | ESP32-S3-Touch-LCD-3.49 running `firmware/base` (since 2026-11-08; the previous base, 80:45:6B:35:D0:14, died in a USB ground loop that day. The first base prototype, 28:84:85:91:27:08, is spare) |
 | Base 1.91 | 3C:0F:02:D9:7A:08 | `firmware/base` on the 1.91 (was the preview screen until 2026-11-14) |

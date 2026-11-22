@@ -22,6 +22,9 @@ static const char *const key_names[] = {
     "left", "right", "up", "down",
     "pageup", "pagedown",
     "monitors", "detail",
+    "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8",
+    "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8",
+    "setbump", "target", "bank", "swap",
 };
 _Static_assert(sizeof(key_names) / sizeof(key_names[0]) == KEY_COUNT, "a name for every key");
 
@@ -36,8 +39,8 @@ ctl_key_t ctl_key_by_name(const char *name)
 
 const char *ctl_target_name(ctl_target_t t)
 {
-    static const char *names[] = { "ALL", "BODY", "EYES", "FINS" };
-    return t <= TGT_FINS ? names[t] : "?";
+    static const char *names[] = { "ALL", "BODY", "EYES", "FINS", "BODY+FINS" };
+    return t <= TGT_BODY_FINS ? names[t] : "?";
 }
 
 const char *ctl_page_name(int page)
@@ -201,10 +204,11 @@ static void held_clear(ctl_t *c)
 // FINS alone they do nothing (fin bumps are fin presets).
 static void bump_target(ctl_t *c, out_t *o, ctl_target_t t, uint8_t action, int arg)
 {
-    if (t == TGT_ALL || t == TGT_BODY) bump_on(c, o, TGT_BODY, action, arg);
+    const bool all = t == TGT_ALL || t == TGT_BODY_FINS;   // BODY+FINS: ALL without the eyes
+    if (all || t == TGT_BODY) bump_on(c, o, TGT_BODY, action, arg);
     if (t == TGT_ALL || t == TGT_EYES) bump_on(c, o, TGT_EYES, action, arg);
     if (action == NL_BUMP_PRESET && t == TGT_FINS) bump_on(c, o, TGT_FINS, action, arg);
-    if (action == NL_BUMP_PRESET && t == TGT_ALL && c->live.fins > 0) bump_on(c, o, TGT_FINS, action, 0);
+    if (action == NL_BUMP_PRESET && all && c->live.fins > 0) bump_on(c, o, TGT_FINS, action, 0);
 }
 
 static ctl_target_t key_target(ctl_key_t k)
@@ -279,8 +283,8 @@ static int fn_value(const ctl_t *c, fn_t f)
 // Palettes and layers: which of WLED's layers the target means. The body's go
 // to the body (the fins show it while they follow it); the fins' to the fins'
 // own layers, which only show while the fins run a fin preset (ALL includes them then).
-static bool on_body(const ctl_t *c, ctl_target_t t) { (void)c; return t == TGT_ALL || t == TGT_BODY; }
-static bool on_fins(const ctl_t *c, ctl_target_t t) { return t == TGT_FINS || (t == TGT_ALL && c->live.fins > 0); }
+static bool on_body(const ctl_t *c, ctl_target_t t) { (void)c; return t == TGT_ALL || t == TGT_BODY || t == TGT_BODY_FINS; }
+static bool on_fins(const ctl_t *c, ctl_target_t t) { return t == TGT_FINS || ((t == TGT_ALL || t == TGT_BODY_FINS) && c->live.fins > 0); }
 
 // A palette or a layer look while its key is held.
 static void bump_layered(ctl_t *c, out_t *o, bool pal, int value)
@@ -338,12 +342,14 @@ static bool is_target(ctl_key_t k) { return k >= KEY_ALL && k <= KEY_FINS; }
 static void stage(ctl_t *c, int preset)
 {
     ctl_layers_t *q = &c->standby_layers;
-    const bool body = c->target == TGT_ALL || c->target == TGT_BODY, fins = c->target == TGT_ALL || c->target == TGT_FINS;
+    const bool body = c->target == TGT_ALL || c->target == TGT_BODY || c->target == TGT_BODY_FINS,
+               fins = c->target == TGT_ALL || c->target == TGT_FINS || c->target == TGT_BODY_FINS;
     switch (c->target) {
         case TGT_ALL:  c->standby.body = preset; c->standby.eyes = preset; c->standby.fins = 0; break;
         case TGT_BODY: c->standby.body = preset; break;
         case TGT_EYES: c->standby.eyes = preset; break;
         case TGT_FINS: c->standby.fins = preset; break;
+        case TGT_BODY_FINS: c->standby.body = preset; c->standby.fins = 0; break;
     }
     if (body) q->body_pal = q->body_layer = -1;
     if (fins) q->fins_pal = q->fins_layer = -1;
@@ -377,7 +383,7 @@ static void latch_number(ctl_t *c, out_t *o)
     if (c->num_kind != FN_PRESET) { latch_layered(c, o); return; }
     const ctl_scene_t old = c->live;
     const int p = c->num_preset;
-    if ((c->target == TGT_ALL || c->target == TGT_BODY) && p != c->live.body) {
+    if ((c->target == TGT_ALL || c->target == TGT_BODY || c->target == TGT_BODY_FINS) && p != c->live.body) {
         emit(o, ACT_PRESET, TGT_BODY, c->target == TGT_ALL, p);   // ALL: the preset's eye settings too
         c->live.body = p;
         if (old.body > 0) {
@@ -394,7 +400,7 @@ static void latch_number(ctl_t *c, out_t *o)
         if (old.eyes > 0) c->standby.eyes = old.eyes;
     }
     // FINS: that fin preset; ALL: the fins follow the body again
-    const int fins = c->target == TGT_FINS ? p : c->target == TGT_ALL ? 0 : -1;
+    const int fins = c->target == TGT_FINS ? p : (c->target == TGT_ALL || c->target == TGT_BODY_FINS) ? 0 : -1;
     if (fins >= 0 && fins != c->live.fins) {
         emit(o, ACT_PRESET, TGT_FINS, 0, fins);
         c->live.fins = fins;
@@ -618,6 +624,148 @@ static void fn_press(ctl_t *c, out_t *o, ctl_key_t key, fn_t f)
     held_push(c, o, key, f.kind, fn_value(c, f));
 }
 
+// ------------------------------------------------------------------ one-handed layout
+// (2026-11-21, the user's design.) Column L1-L8 is the Left Brain's numbers,
+// R1-R8 the Right Brain's. SETBUMP, TARGET and BANK say what every number does:
+// SET keeps it at once (no LATCH), BUMP shows it only while held; the target;
+// presets or palettes. SWAP puts the other brain on the shark (SET: a tap; BUMP:
+// while held). A number for the brain on the shark changes Live; for the other
+// brain it changes Standby (that brain, its monitor), never the one on the shark.
+
+static void emit_sb(out_t *o, ctl_act_type_t type, uint8_t target, int value)
+{
+    if (o->n < CTL_MAX_ACTIONS) o->a[o->n++] = (ctl_action_t){ .type = type, .target = target, .value = (int16_t)value, .standby = true };
+}
+
+static int brain_num(ctl_key_t k, bool *left)
+{
+    if (k >= KEY_L1 && k <= KEY_L8) { *left = true; return k - KEY_L1 + 1; }
+    if (k >= KEY_R1 && k <= KEY_R8) { *left = false; return k - KEY_R1 + 1; }
+    return 0;
+}
+
+// Is that brain the one on the shark? With one brain, both columns are it.
+static bool brain_live(const ctl_t *c, bool left) { return !c->ab || c->left_live == left; }
+
+static fn_t brain_fn(const ctl_t *c, int n)
+{
+    if (c->page == PAGE_PALETTES) {
+        const int id = ctl_set_palette(c, n);
+        return id < 0 ? (fn_t){ FN_NONE, 0 } : fn_make(FN_WLED_PALETTE, id + 1);
+    }
+    return fn_make(FN_PRESET, n);
+}
+
+// SET on the brain on the shark: straight to Live, Standby untouched.
+static void set_live(ctl_t *c, out_t *o, fn_t f)
+{
+    const ctl_target_t t = c->target;
+    const int v = fn_value(c, f);
+    if (f.kind == FN_PRESET) {
+        if (on_body(c, t) && v != c->live.body) {
+            emit(o, ACT_PRESET, TGT_BODY, t == TGT_ALL, v);   // ALL: the preset's eye settings too
+            c->live.body = v;
+            c->layers.body_pal = -1;
+            c->layers.body_layer = 0;
+        }
+        if ((t == TGT_ALL || t == TGT_EYES) && v != c->live.eyes) {
+            emit(o, ACT_PRESET, TGT_EYES, 0, v);
+            c->live.eyes = v;
+        }
+        const int fins = t == TGT_FINS ? v : (t == TGT_ALL || t == TGT_BODY_FINS) ? 0 : -1;
+        if (fins >= 0 && fins != c->live.fins) {
+            emit(o, ACT_PRESET, TGT_FINS, 0, fins);
+            c->live.fins = fins;
+            c->layers.fins_pal = -1;
+            c->layers.fins_layer = 0;
+        }
+    } else if (is_pal(f.kind)) {
+        if (on_body(c, t)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, 0, v); c->layers.body_pal = v; }
+        if (on_fins(c, t)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, 0, v); c->layers.fins_pal = v; }
+    }
+}
+
+// SET on the brain that isn't on the shark: Standby, sent to that brain at once
+// (ctl_standby_sync keeps it there). The eyes have no second brain: cued, they
+// come along on SWAP.
+static void set_standby(ctl_t *c, out_t *o, fn_t f)
+{
+    const ctl_target_t t = c->target;
+    const int v = fn_value(c, f);
+    if (f.kind == FN_PRESET) {
+        stage(c, v);
+        if (on_body(c, t)) emit_sb(o, ACT_PRESET, TGT_BODY, v);
+        if (t == TGT_FINS) emit_sb(o, ACT_PRESET, TGT_FINS, v);
+        else if (t == TGT_ALL || t == TGT_BODY_FINS) emit_sb(o, ACT_PRESET, TGT_FINS, 0);
+    } else if (is_pal(f.kind) && t != TGT_EYES) {
+        const bool body = on_body(c, t), fins = t == TGT_FINS || ((t == TGT_ALL || t == TGT_BODY_FINS) && c->standby.fins > 0);
+        if (body) { c->standby_layers.body_pal = v; emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, v); }
+        if (fins) { c->standby_layers.fins_pal = v; emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, v); }
+    }
+}
+
+// Standby back as it was after a bump on the brain that isn't on the shark.
+static void standby_restore(ctl_t *c, out_t *o)
+{
+    const ctl_scene_t was = c->standby;
+    c->standby = c->sb_saved;
+    c->standby_layers = c->sb_saved_layers;
+    if (was.body != c->standby.body && c->standby.body > 0) emit_sb(o, ACT_PRESET, TGT_BODY, c->standby.body);
+    if (was.fins != c->standby.fins && c->standby.fins >= 0) emit_sb(o, ACT_PRESET, TGT_FINS, c->standby.fins);
+    ctl_layers_t now;
+    ctl_standby_layers(c, &now);
+    if (now.body_pal >= 0) emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, now.body_pal);
+    if (now.fins_pal >= 0 && c->standby.fins > 0) emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, now.fins_pal);
+    c->sb_key = KEY_NONE;
+}
+
+static void brain_key(ctl_t *c, out_t *o, ctl_key_t key, bool down)
+{
+    bool left;
+    const int n = brain_num(key, &left);
+    if (!down) {
+        if (key == c->sb_key) standby_restore(c, o);
+        else held_release(c, o, key);   // a Live bump (nothing if it was a SET)
+        return;
+    }
+    const fn_t f = brain_fn(c, n);
+    if (f.kind == FN_NONE) return;
+    if (brain_live(c, left)) {
+        if (c->bump_mode) held_push(c, o, key, f.kind, fn_value(c, f));
+        else set_live(c, o, f);
+    } else {
+        if (c->bump_mode) {
+            if (c->sb_key != KEY_NONE) standby_restore(c, o);   // one at a time
+            c->sb_saved = c->standby;
+            c->sb_saved_layers = c->standby_layers;
+            c->sb_key = key;
+        }
+        set_standby(c, o, f);
+    }
+}
+
+static void swap_key(ctl_t *c, out_t *o, bool down, uint32_t now_ms)
+{
+    if (!c->ab) return;
+    if (c->sb_key != KEY_NONE) standby_restore(c, o);
+    if (c->bump_mode) {
+        if (down) {
+            c->take_layers = c->nheld ? c->held_layers : c->layers;
+            c->take_preview = true;
+            held_push(c, o, KEY_SWAP, FN_TAKE, 0);
+        } else if (c->take_preview) {
+            c->take_preview = false;
+            held_release(c, o, KEY_SWAP);
+        }
+    } else if (down) {
+        take_ab(c, o);
+        c->left_live = !c->left_live;
+        c->swap_ms = now_ms;
+    }
+}
+
+static const ctl_target_t target_cycle[] = { TGT_ALL, TGT_BODY, TGT_FINS, TGT_BODY_FINS, TGT_EYES };
+
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out)
 {
     out_t o = { out, 0 };
@@ -648,6 +796,27 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
             bumps_off(c, &o);
         }
         return o.n;
+    }
+
+    bool left_col;
+    if (brain_num(key, &left_col)) {
+        brain_key(c, &o, key, down);
+        return o.n;
+    }
+    if (key == KEY_SWAP) {
+        swap_key(c, &o, down, now_ms);
+        return o.n;
+    }
+    if (key == KEY_SETBUMP || key == KEY_TARGET || key == KEY_BANK) {
+        if (!down) return 0;
+        if (key == KEY_SETBUMP) c->bump_mode = !c->bump_mode;
+        else if (key == KEY_BANK) c->page = c->page == PAGE_PALETTES ? PAGE_PRESETS : PAGE_PALETTES;
+        else {
+            int i = 0;
+            while (i < 5 && target_cycle[i] != c->target) i++;
+            c->target = target_cycle[(i + 1) % 5];
+        }
+        return 0;
     }
 
     if (is_target(key)) {
@@ -844,7 +1013,7 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)
 
 static uint32_t target_color(ctl_target_t t)
 {
-    static const uint32_t cols[] = { 0xffffff, 0xff40d0, 0x20c8ff, 0xff8000 };
+    static const uint32_t cols[] = { 0xffffff, 0xff40d0, 0x20c8ff, 0xff8000, 0x9040ff };   // ALL white, BODY pink, EYES cyan, FINS orange, BODY+FINS violet
     return cols[t];
 }
 
@@ -871,6 +1040,7 @@ static uint32_t fn_color(const ctl_t *c, fn_t f, const ctl_layers_t *sb)
             case TGT_BODY: live = preset == c->live.body; stby = preset == c->standby.body; break;
             case TGT_EYES: live = preset == c->live.eyes; stby = preset == c->standby.eyes; break;
             case TGT_FINS: live = preset == c->live.fins; stby = preset == c->standby.fins; break;
+            case TGT_BODY_FINS: live = preset == c->live.body; stby = preset == c->standby.body; break;
         }
         return live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : preset > 8 ? C_PAGE2 : C_IDLE;
     }
@@ -882,6 +1052,28 @@ static uint32_t fn_color(const ctl_t *c, fn_t f, const ctl_layers_t *sb)
     const bool stby = (on_body(c, c->target) && v == (pal ? sb->body_pal : sb->body_layer)) ||
                       (c->target == TGT_FINS && v == (pal ? sb->fins_pal : sb->fins_layer));
     return live && stby ? C_BOTH : live ? C_LIVE : stby ? C_STANDBY : pal ? C_PALETTE : C_LAYER;
+}
+
+// One-handed layout: a number on brain column `left`. The preset (or palette)
+// that brain shows for the target is lit: red on the brain on the shark, green
+// on the other; the rest dim, blue-ish on the Left column, warm on the Right, so
+// the two columns are told apart.
+static uint32_t brain_color(const ctl_t *c, bool left, int n, const ctl_layers_t *sb)
+{
+    const bool live = brain_live(c, left);
+    const ctl_scene_t *sc = live ? &c->live : &c->standby;
+    const uint32_t on = live ? C_LIVE : C_STANDBY, idle = left ? 0x081830 : 0x281808;
+    const fn_t f = brain_fn(c, n);
+    if (f.kind == FN_NONE) return C_OFF;
+    const int v = fn_value(c, f);
+    if (f.kind == FN_PRESET) {
+        const int cur = c->target == TGT_EYES ? sc->eyes : c->target == TGT_FINS ? sc->fins : sc->body;
+        return v == cur ? on : idle;
+    }
+    if (c->target == TGT_EYES) return C_OFF;   // the eyes have no palettes
+    const ctl_layers_t *l = live ? &c->layers : sb;
+    const int cur = c->target == TGT_FINS ? l->fins_pal : l->body_pal;
+    return v == cur ? on : dim(0xc020c0, 20);
 }
 
 void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
@@ -924,4 +1116,15 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     // TAKE: green while Standby differs from Live (blinking), dim when they match.
     rgb[KEY_TAKE] = c->take_preview ? 0xffffff : ctl_standby_diff(c) ? (blink ? C_STANDBY : dim(C_STANDBY, 25)) : C_IDLE;
     rgb[KEY_UNLOCK] = c->down[KEY_UNLOCK] ? 0x40ff40 : 0x002000;
+    // One-handed layout
+    for (int n = 1; n <= 8; n++) {
+        const ctl_key_t kl = (ctl_key_t)(KEY_L1 + n - 1), kr = (ctl_key_t)(KEY_R1 + n - 1);
+        rgb[kl] = c->down[kl] ? 0xffffff : brain_color(c, true, n, &sb);
+        rgb[kr] = c->down[kr] ? 0xffffff : brain_color(c, false, n, &sb);
+    }
+    rgb[KEY_SETBUMP] = c->bump_mode ? 0x0060ff : 0xff6000;          // BUMP blue, SET orange
+    rgb[KEY_TARGET] = target_color(c->target);
+    rgb[KEY_BANK] = c->page == PAGE_PALETTES ? 0xc020c0 : 0xc0c0c0;  // palettes magenta, presets white
+    rgb[KEY_SWAP] = !c->ab ? C_OFF : c->take_preview || c->down[KEY_SWAP] ? 0xffffff
+                  : ctl_standby_diff(c) ? (blink ? C_STANDBY : dim(C_STANDBY, 25)) : dim(C_STANDBY, 25);
 }

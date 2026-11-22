@@ -356,8 +356,8 @@ static void ui_build(void)
 
 static uint32_t target_col(int t)
 {
-    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS };
-    return t >= 0 && t <= 3 ? cols[t] : COL_DIM;
+    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS, 0x9040ff };   // BODY+FINS violet
+    return t >= 0 && t <= 4 ? cols[t] : COL_DIM;
 }
 
 static void fmt_preset(char *out, size_t n, int preset, const char *name)
@@ -465,8 +465,13 @@ static void simple_update(const display_status_t *s)
 
     // The keypad's target, and LOCKED, LATCH or what the numbers are.
     lv_obj_set_style_bg_color(m.s_target, lv_color_hex(s->keys_locked ? COL_DIM : target_col(s->target)), 0);
-    lv_label_set_text(m.s_target_name, ctl_target_name((ctl_target_t)s->target));
-    lv_label_set_text(m.s_target_note, s->keys_locked ? "LOCKED" : s->latch ? "LATCH" : ctl_page_name(s->page));
+    const char *tname = ctl_target_name((ctl_target_t)s->target);
+    lv_obj_set_style_text_font(m.s_target_name, strlen(tname) > 6 ? &lv_font_montserrat_40 : &lv_font_montserrat_48, 0);   // BODY+FINS
+    lv_label_set_text(m.s_target_name, tname);
+    // The one-handed layout's modes: SET or BUMP, and what the numbers are.
+    char note[24];
+    snprintf(note, sizeof(note), "%s %s", s->bump_mode ? "BUMP" : "SET", ctl_page_name(s->page));
+    lv_label_set_text(m.s_target_note, s->keys_locked ? "LOCKED" : note);
 
     // Only what's missing.
     const char *miss[3];

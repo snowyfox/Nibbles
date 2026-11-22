@@ -70,6 +70,14 @@ typedef enum {
     KEY_MONITORS,    // tap: the Live / Standby monitors show sides (Live, Standby) or brains (Right, Left)
     KEY_DETAIL,      // held: every screen shows its detail page while held; tap: stays there until tapped again
                      // (works while locked: it changes nothing on the shark)
+    // The one-handed layout (2026-11-21, the user's design): a column of 1-8
+    // per brain, and global keys that say what those numbers do.
+    KEY_L1, KEY_L8 = KEY_L1 + 7,   // numbers 1-8 for the Left Brain
+    KEY_R1, KEY_R8 = KEY_R1 + 7,   // numbers 1-8 for the Right Brain
+    KEY_SETBUMP,     // tap: the numbers SET (stay) or BUMP (only while held)
+    KEY_TARGET,      // tap: the next target, ALL > BODY > FINS > BODY+FINS > EYES
+    KEY_BANK,        // tap: the numbers are presets or palettes
+    KEY_SWAP,        // the other brain onto the shark: SET a tap swaps, BUMP while held
     KEY_COUNT
 } ctl_key_t;
 
@@ -78,6 +86,7 @@ typedef enum {
     TGT_BODY,        // WLED's body segment
     TGT_EYES,
     TGT_FINS,        // WLED's fin segment (fin presets)
+    TGT_BODY_FINS,   // the body's preset with the fins following it (ALL without the eyes; TARGET key only)
 } ctl_target_t;
 
 // What the shark shows (Live) or will show (Standby). Presets are 1-based on
@@ -182,6 +191,13 @@ typedef struct {
     bool monitors_by_brain;          // the monitors follow brains (Right, Left), not sides (NL_SHOW_BY_BRAIN)
     bool detail;                     // the screens show their detail pages (DETAIL held or tapped; NL_SHOW_DETAIL)
     bool detail_latched;             // DETAIL was tapped: they stay there until it's tapped again
+    // The one-handed layout (KEY_L1.., KEY_R1.., SETBUMP, TARGET, BANK, SWAP)
+    bool bump_mode;                  // the numbers and SWAP bump (while held) instead of setting
+    bool left_live;                  // two brains: the Left Brain is on the shark (main keeps it from NL_MSG_AB)
+    uint32_t swap_ms;                // when SWAP last swapped them (main waits before believing NL_MSG_AB again)
+    ctl_key_t sb_key;                // a number bumping the brain that isn't on the shark, or KEY_NONE
+    ctl_scene_t sb_saved;            // Standby as it was before that bump
+    ctl_layers_t sb_saved_layers;
 } ctl_t;
 
 void ctl_init(ctl_t *c, uint32_t autolock_ms);

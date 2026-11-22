@@ -1262,8 +1262,8 @@ static void set_look(lv_obj_t *val, const ctl_layers_t *l, const char *pal_name)
 
 static uint32_t target_col(int t)
 {
-    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS };
-    return t >= 0 && t <= 3 ? cols[t] : COL_DIM;
+    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS, 0x9040ff };   // BODY+FINS violet
+    return t >= 0 && t <= 4 ? cols[t] : COL_DIM;
 }
 
 static void fmt_ma(char *out, size_t n, int ma)

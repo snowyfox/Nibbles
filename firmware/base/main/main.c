@@ -89,6 +89,19 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         taskEXIT_CRITICAL(&lock);
         return;
     }
+    // A console question (the /keys page, base_ask.py) from either brain. Before the
+    // Standby filter below: it used to drop questions from the brain on Standby, so
+    // nothing answered while the brain hosting Nibbles was Standby (2026-11-21).
+    if (h->type == NL_MSG_CONSOLE && (h->role == NL_ROLE_WLED || h->role == NL_ROLE_WLED_STANDBY)) {
+        nl_console_t m;
+        if (radio_questions && nl_console_parse(pl, len, &m) && !(m.flags & NL_CONSOLE_ANSWER)) {
+            radio_question_t q = { .id = m.id };
+            memcpy(q.mac, mac, 6);
+            strlcpy(q.text, m.text, sizeof(q.text));
+            xQueueSend(radio_questions, &q, 0);   // full: dropped, the page asks again
+        }
+        return;
+    }
     if (h->role == NL_ROLE_WLED_STANDBY) {
         const int64_t t = esp_timer_get_time();
         taskENTER_CRITICAL(&lock);
@@ -105,16 +118,6 @@ static void on_packet(const uint8_t mac[6], const nl_radio_hdr_t *h, const uint8
         }
         taskEXIT_CRITICAL(&lock);
         if (h->type != NL_MSG_PREVIEW && h->type != NL_MSG_TIME) return;
-    }
-    if (h->type == NL_MSG_CONSOLE && (h->role == NL_ROLE_WLED || h->role == NL_ROLE_WLED_STANDBY)) {
-        nl_console_t m;
-        if (radio_questions && nl_console_parse(pl, len, &m) && !(m.flags & NL_CONSOLE_ANSWER)) {
-            radio_question_t q = { .id = m.id };
-            memcpy(q.mac, mac, 6);
-            strlcpy(q.text, m.text, sizeof(q.text));
-            xQueueSend(radio_questions, &q, 0);   // full: dropped, the page asks again
-        }
-        return;
     }
     if (h->type == NL_MSG_PREVIEW) {   // about 60 packets a second from each brain: straight to the screen
         display_preview(h->role == NL_ROLE_WLED_STANDBY, pl, len);
@@ -1093,6 +1096,9 @@ void app_main(void)
         xSemaphoreTake(ctl_mutex, portMAX_DELAY);
         nab = ctl_set_ab(&ctl, ab_on, ab_acts);
         ab_in_use = ab_on;
+        // Which brain is on the shark, for the per-brain number columns; not for
+        // 2 s after a SWAP, while NL_MSG_AB still says how it was.
+        if (ab_fresh && now_ms() - ctl.swap_ms > 2000) ctl.left_live = abs.live == 1;
         ctl_set_live(&ctl, &live, wfresh ? w.bri : 0, ffresh ? fs.follow : -1);
         ctl_set_layers(&ctl, &layers);
         const int nacts = ctl_tick(&ctl, now_ms(), acts);
@@ -1226,6 +1232,7 @@ void app_main(void)
             .keys_locked = c.locked,
             .take_preview = c.take_preview,
             .latch = c.down[KEY_LATCH],
+            .bump_mode = c.bump_mode,
         };
         name_of(ds.live_body, wled_names, 256, c.live.body);
         name_of(ds.live_eyes, eye_names, 64, c.live.eyes);

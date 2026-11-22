@@ -42,6 +42,8 @@ typedef struct {
     bool swap_pending;        // a preset change is waiting for the lids to hide it
     float swap_t;             // time into the swap blink, -1 when none
     bool swap_done;
+    float since_swap_s;       // time since the preset last changed (SWAP_QUICK_S)
+    bool can_sleep;           // EYE_CAN_SLEEP: may fall asleep in a quiet room
     float thump;
     float loud_smooth;
     float hue_drift, hue;
