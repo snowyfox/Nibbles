@@ -18,6 +18,7 @@
 // in the host tests (test/host); main.c feeds it key events and telemetry and
 // carries out the actions it returns.
 #pragma once
+#include <stddef.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -141,6 +142,12 @@ typedef enum {
 // WLED palettes on palette keys 1-8 (main can change them before use).
 #define CTL_DEFAULT_PALETTES { 6, 8, 9, 11, 36, 40, 44, 51 }  // Party, Lava, Ocean, Rainbow, Icefire, Magenta, Orange & Teal, Atlantica
 #define CTL_DEFAULT_PALETTE_NAMES { "Party", "Lava", "Ocean", "Rainbow", "Icefire", "Magenta", "Orange & Teal", "Atlantica" }
+// The one-handed layout's palettes bank: up to CTL_FAVS favourites, 8 per PAGE
+// (2026-11-21: page 1 cool / neon for trance, page 2 hot for dubstep and DnB).
+// Replaced without a firmware change by the base's `palettes` command (kept in NVS).
+#define CTL_FAVS             16
+#define CTL_DEFAULT_FAVS { 6, 36, 40, 44, 51, 50, 45, 58,   /* Party, Icefire, Magenta, Orange & Teal, Atlantica, Aurora, Tiamat, Toxy Reaf */ \
+                           8, 35, 13, 41, 16, 57, 61, 11 }  /* Lava, Fire, Sunset, Magred, Red & Blue, Candy, Pink Candy, Rainbow */
 
 // WLED's layer slots as last reported (NL_MSG_WLED_LAYERS); -1 = not known.
 typedef struct {
@@ -193,6 +200,9 @@ typedef struct {
     bool detail_latched;             // DETAIL was tapped: they stay there until it's tapped again
     // The one-handed layout (KEY_L1.., KEY_R1.., SETBUMP, TARGET, BANK, SWAP)
     bool bump_mode;                  // the numbers and SWAP bump (while held) instead of setting
+    int num_page;                    // PAGE: the brain columns are presets 1-8 (0) or 9-16 (1)
+    uint8_t favs[CTL_FAVS];          // the palettes bank: WLED palette ids, PAGE 1 then PAGE 2
+    int nfavs;
     bool left_live;                  // two brains: the Left Brain is on the shark (main keeps it from NL_MSG_AB)
     uint32_t swap_ms;                // when SWAP last swapped them (main waits before believing NL_MSG_AB again)
     ctl_key_t sb_key;                // a number bumping the brain that isn't on the shark, or KEY_NONE
@@ -251,6 +261,12 @@ void ctl_standby_layers(const ctl_t *c, ctl_layers_t *out);
 
 // Each key's LED colour now (0xRRGGBB, full scale; the LED driver dims it).
 void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT]);
+
+// The palettes bank's list ("Party, Lava, ..." or ids, comma-separated; names
+// as WLED's, any case). Returns how many it read into out (1..CTL_FAVS), or 0
+// with the first name it didn't know in bad.
+int ctl_parse_palettes(const char *text, uint8_t out[CTL_FAVS], char *bad, size_t badlen);
+void ctl_set_favs(ctl_t *c, const uint8_t *ids, int n);
 
 const char *ctl_key_name(ctl_key_t key);
 ctl_key_t ctl_key_by_name(const char *name);

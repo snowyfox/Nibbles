@@ -165,6 +165,7 @@ static struct {
     lv_obj_t *simple, *detail;   // the two pages: big text (normal), small text (DETAIL)
     // The simple page
     lv_obj_t *s_pct, *s_icon, *s_bar, *s_cap1, *s_val1, *s_cap2, *s_val2, *s_problem, *s_problem_t;
+    lv_obj_t *s_pcap, *s_xpct, *s_xcap, *s_xbar;   // PACK's caption; the external battery (LEMO)
     lv_obj_t *s_target, *s_target_name, *s_target_note, *s_warn, *s_event;
     // The detail page
     lv_obj_t *power, *pct, *pack_v, *chg, *input, *runtime, *lights, *temps, *problem;
@@ -235,46 +236,66 @@ static lv_obj_t *box(lv_obj_t *parent, int x, int y, int w, int h, uint32_t bg, 
 // pack's charge and a bar; time left (or what charging does); the lights'
 // watts; the worst problem in a red box; the keypad's target; only what's
 // missing; the last event for a few seconds. Everything else: DETAIL.
+// A charge bar on the simple page.
+static lv_obj_t *simple_bar(lv_obj_t *pg, int y, int w)
+{
+    lv_obj_t *b = lv_bar_create(pg);
+    lv_obj_set_pos(b, 8, y);
+    lv_obj_set_size(b, w, 26);
+    lv_bar_set_range(b, 0, 100);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COL_CARD), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(b, lv_color_hex(COL_TITLE), LV_PART_MAIN);
+    lv_obj_set_style_border_width(b, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(b, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(b, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(b, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_anim_duration(b, 0, LV_PART_MAIN);
+    return b;
+}
+
 static void build_simple(lv_obj_t *pg)
 {
+    // Top to bottom (2026-11-21): the event line, what's missing, the keypad's
+    // target, a problem, then the battery at the bottom. The top centimetre is
+    // hard to see in the box (its cutout, and where the user's eyes are), so only
+    // the event line is up there.
     const int w = LCD_W - 16;
-    m.s_pct = label_at(pg, &lv_font_montserrat_48, COL_TEXT, 8, 2, 0);
-    m.s_icon = label_at(pg, &lv_font_montserrat_48, COL_OK, 0, 2, 0);
-    lv_obj_align(m.s_icon, LV_ALIGN_TOP_RIGHT, -8, 2);
-    m.s_bar = lv_bar_create(pg);
-    lv_obj_set_pos(m.s_bar, 8, 60);
-    lv_obj_set_size(m.s_bar, w, 30);
-    lv_bar_set_range(m.s_bar, 0, 100);
-    lv_obj_set_style_bg_color(m.s_bar, lv_color_hex(COL_CARD), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(m.s_bar, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(m.s_bar, lv_color_hex(COL_TITLE), LV_PART_MAIN);
-    lv_obj_set_style_border_width(m.s_bar, 2, LV_PART_MAIN);
-    lv_obj_set_style_radius(m.s_bar, 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(m.s_bar, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(m.s_bar, 3, LV_PART_INDICATOR);
-    lv_obj_set_style_anim_duration(m.s_bar, 0, LV_PART_MAIN);
+    m.s_event = label_at(pg, &lv_font_montserrat_20, COL_TEXT, 8, 4, w);   // three lines
+    lv_label_set_long_mode(m.s_event, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(m.s_event, 76);
+    m.s_warn = label_at(pg, &lv_font_montserrat_20, COL_WARN, 8, 82, w);
 
-    m.s_cap1 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8, 100, w);
-    m.s_val1 = label_at(pg, &lv_font_montserrat_40, COL_TEXT, 8, 122, w);
-    m.s_cap2 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8, 176, w);
-    m.s_val2 = label_at(pg, &lv_font_montserrat_40, COL_TEXT, 8, 198, w);
-    lv_label_set_text(m.s_cap2, "LIGHTS");
-
-    m.s_problem = box(pg, 8, 254, w, 72, COL_BAD, LV_OPA_COVER, 8);
-    m.s_problem_t = label_at(m.s_problem, &lv_font_montserrat_28, COL_TEXT, 8, 2, w - 16);
-    lv_label_set_long_mode(m.s_problem_t, LV_LABEL_LONG_WRAP);
-    lv_obj_set_height(m.s_problem_t, 68);
-
-    m.s_target = box(pg, 8, 336, w, 96, COL_DIM, LV_OPA_COVER, 10);
+    m.s_target = box(pg, 8, 108, w, 96, COL_DIM, LV_OPA_COVER, 10);
     m.s_target_name = label_at(m.s_target, &lv_font_montserrat_48, COL_BG, 0, 4, w);
     lv_obj_set_style_text_align(m.s_target_name, LV_TEXT_ALIGN_CENTER, 0);
     m.s_target_note = label_at(m.s_target, &lv_font_montserrat_28, COL_BG, 0, 60, w);
     lv_obj_set_style_text_align(m.s_target_note, LV_TEXT_ALIGN_CENTER, 0);
 
-    m.s_warn = label_at(pg, &lv_font_montserrat_20, COL_WARN, 8, 440, w);
-    m.s_event = label_at(pg, &lv_font_montserrat_20, COL_TEXT, 8, 466, w);   // three lines, to the bottom
-    lv_label_set_long_mode(m.s_event, LV_LABEL_LONG_WRAP);
-    lv_obj_set_height(m.s_event, LCD_H - 466);
+    m.s_problem = box(pg, 8, 210, w, 72, COL_BAD, LV_OPA_COVER, 8);
+    m.s_problem_t = label_at(m.s_problem, &lv_font_montserrat_28, COL_TEXT, 8, 2, w - 16);
+    lv_label_set_long_mode(m.s_problem_t, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(m.s_problem_t, 68);
+
+    // The batteries, the bottom 252 px (2026-11-21): the pack, the external
+    // battery on the LEMO, then time left and the lights side by side.
+    const int y = LCD_H - 252;
+    m.s_pct = label_at(pg, &lv_font_montserrat_48, COL_TEXT, 8, y, 0);
+    m.s_pcap = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 132, y + 22, 0);
+    lv_label_set_text(m.s_pcap, "PACK");
+    m.s_icon = label_at(pg, &lv_font_montserrat_48, COL_OK, 0, y, 0);
+    lv_obj_align(m.s_icon, LV_ALIGN_TOP_RIGHT, -8, y);
+    m.s_bar = simple_bar(pg, y + 52, w);
+    m.s_xpct = label_at(pg, &lv_font_montserrat_48, COL_TEXT, 8, y + 86, 0);
+    m.s_xcap = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 132, y + 108, 0);
+    lv_label_set_text(m.s_xcap, "EXT");
+    m.s_xbar = simple_bar(pg, y + 138, w);
+
+    m.s_cap1 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8, y + 174, w / 2);
+    m.s_val1 = label_at(pg, &lv_font_montserrat_28, COL_TEXT, 8, y + 196, w / 2 + 8);
+    m.s_cap2 = label_at(pg, &lv_font_montserrat_20, COL_TITLE, 8 + w / 2 + 8, y + 174, w / 2 - 8);
+    m.s_val2 = label_at(pg, &lv_font_montserrat_28, COL_TEXT, 8 + w / 2 + 8, y + 196, w / 2 - 8);
+    lv_label_set_text(m.s_cap2, "LIGHTS");
 }
 
 static void ui_build(void)
@@ -356,7 +377,7 @@ static void ui_build(void)
 
 static uint32_t target_col(int t)
 {
-    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS, 0x9040ff };   // BODY+FINS violet
+    static const uint32_t cols[] = { 0xffd000, COL_WLED, COL_EYES, COL_FINS, COL_WLED };   // ALL yellow (2026-11-21)   // BODY+FINS: the TARGET key's BODY
     return t >= 0 && t <= 4 ? cols[t] : COL_DIM;
 }
 
@@ -417,6 +438,20 @@ static void simple_update(const display_status_t *s)
     lv_label_set_text(m.s_icon, charging ? LV_SYMBOL_CHARGE : p->docked ? LV_SYMBOL_USB : "");
     set_col(m.s_icon, charging ? COL_OK : COL_TITLE);
 
+    // The external battery on the LEMO: its charge, "USB-C" for a supply, "--" for nothing.
+    if (p->have_charger && p->input == INPUT_BATTERY && p->input_pct >= 0) {
+        const pack_level_t lv = pack_level(p->input_pct);
+        lv_label_set_text_fmt(m.s_xpct, "%d%%", p->input_pct);
+        set_col(m.s_xpct, lv == PACK_CRITICAL ? COL_BAD : lv == PACK_LOW ? COL_WARN : COL_TEXT);
+        lv_bar_set_value(m.s_xbar, p->input_pct, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(m.s_xbar, lv_color_hex(lv == PACK_CRITICAL ? COL_BAD : lv == PACK_LOW ? COL_WARN : COL_OK), LV_PART_INDICATOR);
+    } else {
+        const bool supply = p->have_charger && p->input == INPUT_SUPPLY;
+        lv_label_set_text(m.s_xpct, supply ? "USB-C" : "--");
+        set_col(m.s_xpct, supply ? COL_OK : COL_DIM);
+        lv_bar_set_value(m.s_xbar, 0, LV_ANIM_OFF);
+    }
+
     // Time left on the pack, or what charging is doing.
     if (p->docked && p->have_charger) {
         if (charging) {
@@ -470,7 +505,8 @@ static void simple_update(const display_status_t *s)
     lv_label_set_text(m.s_target_name, tname);
     // The one-handed layout's modes: SET or BUMP, and what the numbers are.
     char note[24];
-    snprintf(note, sizeof(note), "%s %s", s->bump_mode ? "BUMP" : "SET", ctl_page_name(s->page));
+    if (s->page == PAGE_PRESETS) snprintf(note, sizeof(note), "%s %s", s->bump_mode ? "BUMP" : "SET", s->num_page ? "9-16" : "1-8");
+    else snprintf(note, sizeof(note), "%s %s", s->bump_mode ? "BUMP" : "SET", ctl_page_name(s->page));
     lv_label_set_text(m.s_target_note, s->keys_locked ? "LOCKED" : note);
 
     // Only what's missing.

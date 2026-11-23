@@ -59,7 +59,12 @@ stays as the fallback until the new set has run a rehearsal.
   next tap. It works with the keys locked. Its LED is white while the details
   show. On the 3.49 it shows page 1 (Live and Standby). Serial: `key detail`.
 - **Simple page** (2026-11-14, `build_simple` / `simple_update`; 48 px font in
-  `sdkconfig.board_191`): nothing under 20 px. Pack % (48 px, coloured) with a
+  `sdkconfig.board_191`): nothing under 20 px. **Since 2026-11-21 the battery is
+  at the bottom** and the event line at the top (the top centimetre is hard to
+  see through the box's cutout), then what's missing, the target box, a problem.
+  The bottom 252 px: PACK % and bar, **EXT** % and bar (the battery on the LEMO,
+  `input_pct`; "USB-C" for a supply, "--" with nothing), then TIME LEFT (or
+  CHARGING / PLUGGED IN) and LIGHTS side by side in 28 px. Pack % (48 px, coloured) with a
   bolt (charging) or the USB plug (on a supply) on the right; a charge bar; TIME
   LEFT on the pack, or CHARGING and its current, or PLUGGED IN with Full / Weak /
   Idle (40 px); LIGHTS in watts or POLE OFF; the worst power problem in a red box
@@ -188,15 +193,29 @@ file. All of it can also be driven from USB serial.
 - **One-handed layout** (2026-11-21, the user's design after the first festival
   night: the old layout's modes, held numbers and LATCH were too much one-handed).
   `KEYPAD_BOARDS` from the top: left column **L1-L8 = the Left Brain's numbers**,
-  right column **R1-R8 = the Right Brain's**, middle **SET/BUMP, TARGET, BANK,
-  SWAP, FLASH, BLACKOUT, MONITORS, DETAIL** (`controls.c`, "one-handed layout";
-  host test `test_one_handed`).
+  right column **R1-R8 = the Right Brain's**, middle **SET/BUMP, SWAP, FLASH,
+  BLACKOUT, PAGE, DETAIL, TARGET, BANK** (the user's order, 2026-11-21; FLASH
+  lit white, BLACKOUT dark until pressed; the bottom four in colours of their own: PAGE teal / amber, DETAIL purple (white on), TARGET ALL yellow / BODY pink / EYES cyan, BANK red presets / magenta palettes;
+  `controls.c`, "one-handed layout"; host test `test_one_handed`). MONITORS is
+  off the keys (`monitors` on the console still works).
+  - **PAGE** (a tap): the columns' next 8 numbers, for both columns: presets
+    1-8 / 9-16 (fins 81-88 / 89-96; `ctl.num_page`, two pages while
+    `CTL_PRESETS` is 16), or with palettes favourites 1-8 / 9-16.
+    White on page 1, amber on page 2; the screen's note says
+    "SET 1-8", "BUMP 9-16", "SET PALETTE".
   - **SET/BUMP** (orange SET, blue BUMP; starts in SET): SET keeps a number at
     once (no LATCH), BUMP shows it only while held (the old bump stack).
   - **TARGET** cycles ALL (white) > BODY (pink) > FINS (orange) > BODY+FINS
     (violet, `TGT_BODY_FINS`: the body preset with the fins following, ALL
     without the eyes) > EYES (cyan).
-  - **BANK**: presets (white) or palettes (magenta, the palette viewer's list).
+  - **BANK**: presets (white) or palettes (magenta): **16 favourites**, 8 per
+    PAGE (`ctl.favs`, `CTL_DEFAULT_FAVS`: page 1 Party, Icefire, Magenta, Orange &
+    Teal, Atlantica, Aurora, Tiamat, Toxy Reaf; page 2 Lava, Fire, Sunset, Magred,
+    Red & Blue, Candy, Pink Candy, Rainbow). **`palettes`** (USB or a brain's
+    console: `/keys/ask?c=palettes...`, `base_ask.py`) lists them, `palettes Party,
+    Lava, ...` replaces them (WLED names, any case, or ids; up to 16; kept in NVS
+    `base`/`favpal`), `palettes reset` goes back to the defaults
+    (`ctl_parse_palettes`, host-tested).
   - **A brain's column** changes Live if that brain is on the shark (or there's
     one brain), else Standby: sent straight to that brain (`ACT_*` with
     `standby`), the eyes cued for the swap; never the brain on the shark. BUMP on

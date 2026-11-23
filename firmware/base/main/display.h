@@ -50,6 +50,7 @@ typedef struct {
     uint8_t diff;             // ctl_standby_diff()
     bool keys_locked, take_preview, latch;
     bool bump_mode;                  // the one-handed layout: numbers BUMP (else SET)
+    uint8_t num_page;                // its PAGE: 0 numbers 1-8, 1 numbers 9-16
     uint8_t keypads_found, keypads_total;
     int8_t ab_live;           // two brains: which is Live, 0 A, 1 B; -1 one brain
     bool monitors_by_brain;   // the monitors follow brains (Right, Left), not Live / Standby

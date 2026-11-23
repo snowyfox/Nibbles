@@ -39,7 +39,7 @@ ctl_key_t ctl_key_by_name(const char *name)
 
 const char *ctl_target_name(ctl_target_t t)
 {
-    static const char *names[] = { "ALL", "BODY", "EYES", "FINS", "BODY+FINS" };
+    static const char *names[] = { "ALL", "BODY", "EYES", "FINS", "BODY" };   // BODY+FINS is the TARGET key's BODY
     return t <= TGT_BODY_FINS ? names[t] : "?";
 }
 
@@ -76,6 +76,8 @@ void ctl_init(ctl_t *c, uint32_t autolock_ms)
     c->fin_sensor = -1;
     c->target = c->target_before = TGT_ALL;
     c->autolock_ms = autolock_ms;
+    static const uint8_t favs[CTL_FAVS] = CTL_DEFAULT_FAVS;
+    ctl_set_favs(c, favs, CTL_FAVS);
 }
 
 void ctl_set_live(ctl_t *c, const ctl_scene_t *live, uint8_t brightness, int fin_sensor)
@@ -649,11 +651,11 @@ static bool brain_live(const ctl_t *c, bool left) { return !c->ab || c->left_liv
 
 static fn_t brain_fn(const ctl_t *c, int n)
 {
-    if (c->page == PAGE_PALETTES) {
-        const int id = ctl_set_palette(c, n);
-        return id < 0 ? (fn_t){ FN_NONE, 0 } : fn_make(FN_WLED_PALETTE, id + 1);
+    if (c->page == PAGE_PALETTES) {   // the favourites, 8 per PAGE
+        const int i = n - 1 + 8 * c->num_page;
+        return i < c->nfavs ? fn_make(FN_WLED_PALETTE, c->favs[i] + 1) : (fn_t){ FN_NONE, 0 };
     }
-    return fn_make(FN_PRESET, n);
+    return fn_make(FN_PRESET, n + 8 * c->num_page);   // PAGE: 1-8 or 9-16
 }
 
 // SET on the brain on the shark: straight to Live, Standby untouched.
@@ -764,7 +766,10 @@ static void swap_key(ctl_t *c, out_t *o, bool down, uint32_t now_ms)
     }
 }
 
-static const ctl_target_t target_cycle[] = { TGT_ALL, TGT_BODY, TGT_FINS, TGT_BODY_FINS, TGT_EYES };
+// 2026-11-21 (festival night 2, the user): just ALL, BODY and EYES, and BODY is the
+// body with the fins following it (TGT_BODY_FINS, named BODY); no fin presets.
+static const ctl_target_t target_cycle[] = { TGT_ALL, TGT_BODY_FINS, TGT_EYES };
+#define TARGET_CYCLE_N ((int)(sizeof(target_cycle) / sizeof(target_cycle[0])))
 
 int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *out)
 {
@@ -813,8 +818,8 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
         else if (key == KEY_BANK) c->page = c->page == PAGE_PALETTES ? PAGE_PRESETS : PAGE_PALETTES;
         else {
             int i = 0;
-            while (i < 5 && target_cycle[i] != c->target) i++;
-            c->target = target_cycle[(i + 1) % 5];
+            while (i < TARGET_CYCLE_N && target_cycle[i] != c->target) i++;
+            c->target = target_cycle[(i + 1) % TARGET_CYCLE_N];
         }
         return 0;
     }
@@ -841,9 +846,12 @@ int ctl_key(ctl_t *c, ctl_key_t key, bool down, uint32_t now_ms, ctl_action_t *o
         case KEY_LATCH:
             if (down) latch_held(c, &o);
             break;
-        case KEY_PAGE:
+        case KEY_PAGE:   // a tap: the next 8 numbers (2026-11-21: presets 1-8 / 9-16, palettes the next 8)
             if (down) c->page_used = false;
-            else if (!c->page_used) c->page = (c->page + 1) % PAGE_COUNT;
+            else if (!c->page_used) {
+                const int pages = c->page == PAGE_PALETTES ? (c->nfavs + 7) / 8 : CTL_PRESETS / 8;
+                c->num_page = pages > 1 ? (c->num_page + 1) % pages : 0;
+            }
             break;
         case KEY_FLASH:
         case KEY_BLACKOUT:
@@ -1013,7 +1021,7 @@ int ctl_tick(ctl_t *c, uint32_t now_ms, ctl_action_t *out)
 
 static uint32_t target_color(ctl_target_t t)
 {
-    static const uint32_t cols[] = { 0xffffff, 0xff40d0, 0x20c8ff, 0xff8000, 0x9040ff };   // ALL white, BODY pink, EYES cyan, FINS orange, BODY+FINS violet
+    static const uint32_t cols[] = { 0xffd000, 0xff40d0, 0x20c8ff, 0xff8000, 0xff40d0 };   // ALL yellow, BODY pink, EYES cyan, FINS orange, BODY+FINS pink (the TARGET key's BODY)
     return cols[t];
 }
 
@@ -1098,7 +1106,7 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     rgb[KEY_MOD_LAYER] = c->down[KEY_MOD_LAYER] ? 0xffffff : 0x006050;
     rgb[KEY_MOD_BRIGHT] = c->down[KEY_MOD_BRIGHT] ? 0xffffff : 0x504000;
     rgb[KEY_POLE_POWER] = c->down[KEY_POLE_POWER] ? 0xff0000 : 0x301000;
-    rgb[KEY_DETAIL] = c->detail ? 0xffffff : 0x303030;
+    rgb[KEY_DETAIL] = c->detail ? 0xffffff : 0x7020e0;   // purple, white while the details show
     rgb[KEY_MONITORS] = c->down[KEY_MONITORS] ? 0xffffff : c->monitors_by_brain ? 0x2040c0 : 0x303030;   // blue: by brain
     for (int k = KEY_LEFT; k <= KEY_PAGE_DOWN; k++)   // lit while they do something: palettes showing
         rgb[k] = c->down[k] ? 0xffffff : ctl_mode(c) == PAGE_PALETTES ? 0x404040 : C_OFF;
@@ -1106,12 +1114,12 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
         const ctl_target_t t = key_target((ctl_key_t)k);
         rgb[k] = t == c->target ? target_color(t) : dim(target_color(t), 12);
     }
-    static const uint32_t page_cols[PAGE_COUNT] = { C_IDLE, 0xc020c0, 0x00c0a0 };
-    rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : page_cols[c->page];
+    // PAGE: white on 1-8, amber on 9-16, magenta with palettes showing.
+    rgb[KEY_PAGE] = c->down[KEY_PAGE] ? 0xffffff : c->num_page ? 0xffa000 : 0x00c0a0;   // teal page 1, amber page 2
     // LATCH: lit while there's something held to keep (a number or TAKE).
     rgb[KEY_LATCH] = c->down[KEY_LATCH] ? 0xffffff : (c->num_bump != KEY_NONE || c->take_preview) ? (blink ? 0xffd000 : 0x403400) : C_IDLE;
-    rgb[KEY_BLACKOUT] = c->down[KEY_BLACKOUT] ? 0xff0000 : 0x300000;
-    rgb[KEY_FLASH] = c->down[KEY_FLASH] ? 0xffffff : 0x303030;
+    rgb[KEY_BLACKOUT] = c->down[KEY_BLACKOUT] ? 0xff0000 : C_OFF;     // dark until pressed (2026-11-21)
+    rgb[KEY_FLASH] = c->down[KEY_FLASH] ? 0xffffff : 0xa0a0a0;        // white, brighter while pressed
     rgb[KEY_FIN_SENSOR] = c->fin_sensor == 1 ? 0x00c040 : c->fin_sensor == 0 ? 0x302000 : C_OFF;
     // TAKE: green while Standby differs from Live (blinking), dim when they match.
     rgb[KEY_TAKE] = c->take_preview ? 0xffffff : ctl_standby_diff(c) ? (blink ? C_STANDBY : dim(C_STANDBY, 25)) : C_IDLE;
@@ -1124,7 +1132,60 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     }
     rgb[KEY_SETBUMP] = c->bump_mode ? 0x0060ff : 0xff6000;          // BUMP blue, SET orange
     rgb[KEY_TARGET] = target_color(c->target);
-    rgb[KEY_BANK] = c->page == PAGE_PALETTES ? 0xc020c0 : 0xc0c0c0;  // palettes magenta, presets white
+    rgb[KEY_BANK] = c->page == PAGE_PALETTES ? 0xc020c0 : 0xff2000;  // palettes magenta, presets red
     rgb[KEY_SWAP] = !c->ab ? C_OFF : c->take_preview || c->down[KEY_SWAP] ? 0xffffff
                   : ctl_standby_diff(c) ? (blink ? C_STANDBY : dim(C_STANDBY, 25)) : dim(C_STANDBY, 25);
+}
+
+// ------------------------------------------------------------------ palettes bank list
+void ctl_set_favs(ctl_t *c, const uint8_t *ids, int n)
+{
+    c->nfavs = 0;
+    for (int i = 0; i < n && c->nfavs < CTL_FAVS; i++)
+        if (ids[i] < WLED_PALETTE_COUNT) c->favs[c->nfavs++] = ids[i];
+    if (c->num_page * 8 >= c->nfavs) c->num_page = 0;
+}
+
+static int lower(int ch) { return ch >= 'A' && ch <= 'Z' ? ch + 32 : ch; }
+
+int ctl_parse_palettes(const char *text, uint8_t out[CTL_FAVS], char *bad, size_t badlen)
+{
+    int n = 0;
+    const char *p = text;
+    while (*p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        const char *e = p;
+        while (*e && *e != ',') e++;
+        const char *end = e;
+        while (end > p && end[-1] == ' ') end--;
+        const size_t len = (size_t)(end - p);
+        int id = -1;
+        bool digits = len > 0;
+        for (size_t i = 0; i < len; i++) if (p[i] < '0' || p[i] > '9') digits = false;
+        if (digits) {
+            int v = 0;
+            for (size_t i = 0; i < len; i++) v = v * 10 + (p[i] - '0');
+            if (v < WLED_PALETTE_COUNT) id = v;
+        } else {
+            for (int k = 0; k < WLED_PALETTE_COUNT && id < 0; k++) {
+                const char *name = wled_palettes[k].name;
+                size_t i = 0;
+                while (i < len && name[i] && lower(name[i]) == lower(p[i])) i++;
+                if (i == len && !name[i]) id = k;
+            }
+        }
+        if (id < 0 || n == CTL_FAVS) {
+            if (bad && badlen) {
+                const size_t m = len < badlen - 1 ? len : badlen - 1;
+                memcpy(bad, p, m);
+                bad[m] = 0;
+            }
+            return 0;
+        }
+        out[n++] = (uint8_t)id;
+        p = e;
+    }
+    if (!n && bad && badlen) bad[0] = 0;
+    return n;
 }

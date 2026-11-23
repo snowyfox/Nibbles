@@ -148,13 +148,14 @@
 // list below runs bottom to top (the user, 2026-11-21).
 // The one-handed layout (2026-11-21, the user's design), from the top:
 //   left (0x3A): 1-8 for the Left Brain
-//   middle (0x39): SET/BUMP, TARGET, BANK, SWAP, FLASH, BLACKOUT, MONITORS, DETAIL
+//   middle (0x39): SET/BUMP, SWAP, FLASH, BLACKOUT, PAGE, DETAIL, TARGET, BANK
+//     (the user, 2026-11-21; PAGE cycles presets, palettes, layer looks; BANK presets/palettes)
 //   right (0x38): 1-8 for the Right Brain
 #define KL(n) ((ctl_key_t)(KEY_L1 + (n) - 1))
 #define KR(n) ((ctl_key_t)(KEY_R1 + (n) - 1))
 #define KEYPAD_BOARDS { \
     { 0x38, KEYPAD_TCA9534, 8, { KR(8), KR(7), KR(6), KR(5), KR(4), KR(3), KR(2), KR(1) } }, \
-    { 0x39, KEYPAD_TCA9534, 8, { KEY_DETAIL, KEY_MONITORS, KEY_BLACKOUT, KEY_FLASH, KEY_SWAP, KEY_BANK, KEY_TARGET, KEY_SETBUMP } }, \
+    { 0x39, KEYPAD_TCA9534, 8, { KEY_BANK, KEY_TARGET, KEY_DETAIL, KEY_PAGE, KEY_BLACKOUT, KEY_FLASH, KEY_SWAP, KEY_SETBUMP } }, \
     { 0x3A, KEYPAD_TCA9534, 8, { KL(8), KL(7), KL(6), KL(5), KL(4), KL(3), KL(2), KL(1) } }, \
     { 0x27, KEYPAD_PCF8574, 8, { KEY_NUM1, KEY_NUM2, KEY_NUM3, KEY_NUM4, KEY_EYES, KEY_BODY, KEY_LATCH, KEY_TAKE } }, \
 }

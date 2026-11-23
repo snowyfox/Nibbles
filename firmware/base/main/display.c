@@ -1262,7 +1262,7 @@ static void set_look(lv_obj_t *val, const ctl_layers_t *l, const char *pal_name)
 
 static uint32_t target_col(int t)
 {
-    static const uint32_t cols[] = { 0xffffff, COL_WLED, COL_EYES, COL_FINS, 0x9040ff };   // BODY+FINS violet
+    static const uint32_t cols[] = { 0xffd000, COL_WLED, COL_EYES, COL_FINS, COL_WLED };   // ALL yellow (2026-11-21)   // BODY+FINS: the TARGET key's BODY
     return t >= 0 && t <= 4 ? cols[t] : COL_DIM;
 }
 

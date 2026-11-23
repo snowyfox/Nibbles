@@ -188,12 +188,11 @@ static void test_pages_and_brightness(void)
     release(&c, KEY_NUM12);
     release(&c, KEY_PAGE);
     CHECK(c.page == PAGE_PRESETS);
+    // A tap: the next 8 numbers (2026-11-21; BANK switches presets and palettes now).
     tap(&c, KEY_PAGE);
-    CHECK(c.page == PAGE_PALETTES);
+    CHECK(c.page == PAGE_PRESETS && c.num_page == 1);
     tap(&c, KEY_PAGE);
-    CHECK(c.page == PAGE_LAYERS);
-    tap(&c, KEY_PAGE);
-    CHECK(c.page == PAGE_PRESETS);
+    CHECK(c.num_page == 0);
 }
 
 // The palette viewer: all of WLED's palettes in a list that goes round,
@@ -663,7 +662,7 @@ static void test_leds(void)
     ctl_led_colors(&c, 0, rgb);
     CHECK(rgb[KEY_NUM1] == 0xff1010);           // live
     CHECK(rgb[KEY_NUM3] == 0x00e040);           // staged
-    CHECK(rgb[KEY_ALL] == 0xffffff);            // selected target
+    CHECK(rgb[KEY_ALL] == 0xffd000);            // selected target (ALL yellow)
     CHECK(rgb[KEY_TAKE] != 0x202020);           // something to take
 }
 
@@ -1186,12 +1185,9 @@ static void test_one_handed(void)
     tap(&c, (ctl_key_t)(KEY_L1 + 3));
     CHECK(c.live.body == 4);
 
-    // TARGET goes round ALL, BODY, FINS, BODY+FINS, EYES.
-    tap(&c, KEY_TARGET); CHECK(c.target == TGT_BODY);
-    press(&c, (ctl_key_t)(KEY_R1 + 4)); CHECK(has(ACT_PRESET, TGT_BODY, 5) && !has(ACT_PRESET, TGT_EYES, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 4));
-    tap(&c, KEY_TARGET); CHECK(c.target == TGT_FINS);
-    press(&c, (ctl_key_t)(KEY_R1 + 1)); CHECK(has(ACT_PRESET, TGT_FINS, 2) && c.live.fins == 2); release(&c, (ctl_key_t)(KEY_R1 + 1));
-    tap(&c, KEY_TARGET); CHECK(c.target == TGT_BODY_FINS);
+    // TARGET goes round ALL, BODY (the body with the fins following), EYES.
+    tap(&c, KEY_TARGET); CHECK(c.target == TGT_BODY_FINS && !strcmp(ctl_target_name(c.target), "BODY"));
+    c.live.fins = 2;   // fins on a fin preset: BODY brings them back to following the body
     press(&c, (ctl_key_t)(KEY_R1 + 5)); CHECK(has(ACT_PRESET, TGT_BODY, 6) && has(ACT_PRESET, TGT_FINS, 0) && !has(ACT_PRESET, TGT_EYES, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 5));
     tap(&c, KEY_TARGET); CHECK(c.target == TGT_EYES);
     press(&c, (ctl_key_t)(KEY_R1 + 6)); CHECK(has(ACT_PRESET, TGT_EYES, 7) && !has(ACT_PRESET, TGT_BODY, -9999)); release(&c, (ctl_key_t)(KEY_R1 + 6));
@@ -1209,9 +1205,31 @@ static void test_one_handed(void)
     // BANK: palettes. SET puts one on the body's layer.
     tap(&c, KEY_BANK); CHECK(c.page == PAGE_PALETTES);
     press(&c, KEY_R1);
-    CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, ctl_set_palette(&c, 1)));
+    CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 6));   // the first favourite, Party
     release(&c, KEY_R1);
     tap(&c, KEY_BANK); CHECK(c.page == PAGE_PRESETS);
+    // PAGE: the columns become 9-16 (fins 89-96), then 1-8 again.
+    tap(&c, KEY_PAGE); CHECK(c.num_page == 1);
+    press(&c, KEY_R1); CHECK(has(ACT_PRESET, TGT_BODY, 9) && c.live.body == 9); release(&c, KEY_R1);
+    tap(&c, KEY_PAGE); CHECK(c.num_page == 0);
+    press(&c, KEY_R1); CHECK(c.live.body == 1); release(&c, KEY_R1);
+    // Palettes: the favourites, 8 per PAGE.
+    tap(&c, KEY_BANK);
+    press(&c, KEY_R1); CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 6)); release(&c, KEY_R1);   // Party
+    tap(&c, KEY_PAGE); CHECK(c.num_page == 1);
+    press(&c, KEY_R1); CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 8)); release(&c, KEY_R1);   // Lava
+    tap(&c, KEY_PAGE); CHECK(c.num_page == 0);
+    // A list of its own: names (any case) or ids; a short list has one page.
+    uint8_t ids[CTL_FAVS];
+    char bad[24];
+    CHECK(ctl_parse_palettes("orange & teal, Lava ,9", ids, bad, sizeof(bad)) == 3 && ids[0] == 44 && ids[1] == 8 && ids[2] == 9);
+    CHECK(ctl_parse_palettes("Party, Nope", ids, bad, sizeof(bad)) == 0 && !strcmp(bad, "Nope"));
+    ctl_parse_palettes("Ocean,Fire", ids, bad, sizeof(bad));
+    ctl_set_favs(&c, ids, 2);
+    press(&c, (ctl_key_t)(KEY_R1 + 1)); CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 35)); release(&c, (ctl_key_t)(KEY_R1 + 1));
+    CHECK(press(&c, (ctl_key_t)(KEY_R1 + 2)) == 0); release(&c, (ctl_key_t)(KEY_R1 + 2));   // nothing on 3
+    tap(&c, KEY_PAGE); CHECK(c.num_page == 0);
+    tap(&c, KEY_BANK);
 
     // Two brains, the Right one on the shark: the Left column only touches Standby.
     live(&c, 1, 1, 0);
@@ -1248,7 +1266,7 @@ static void test_one_handed(void)
     // Colours: the Left column's live preset red now.
     uint32_t rgb[KEY_COUNT];
     ctl_led_colors(&c, 0, rgb);
-    CHECK(rgb[(ctl_key_t)(KEY_L1 + 2)] == 0xff1010 && rgb[(ctl_key_t)(KEY_R1 + 1)] == 0x00e040 && rgb[KEY_TARGET] == 0xffffff);
+    CHECK(rgb[(ctl_key_t)(KEY_L1 + 2)] == 0xff1010 && rgb[(ctl_key_t)(KEY_R1 + 1)] == 0x00e040 && rgb[KEY_TARGET] == 0xffd000);
     CHECK(ctl_key_by_name("l1") == KEY_L1 && ctl_key_by_name("swap") == KEY_SWAP);
 }
 

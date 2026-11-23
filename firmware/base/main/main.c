@@ -7,6 +7,7 @@
 #include <string.h>
 #include "config.h"
 #include "controls.h"
+#include "wled_palettes.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
@@ -702,6 +703,68 @@ static void shot_task(void *arg)
 
 static void console_reply(void *ctx, const char *line) { printf("%s\n", line); }
 
+// The palettes bank's list (the one-handed layout): `palettes` lists it, `palettes
+// Party, Lava, ...` replaces it (names or ids, up to 16, 8 per PAGE), `palettes
+// reset` goes back to CTL_DEFAULT_FAVS. Kept in NVS (base/favpal). Over USB and
+// from a brain's console (/keys/ask, base_ask.py).
+static void favs_load(void)
+{
+    nvs_handle_t h;
+    uint8_t ids[CTL_FAVS];
+    size_t n = sizeof(ids);
+    if (nvs_open("base", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_blob(h, "favpal", ids, &n) == ESP_OK && n > 0) ctl_set_favs(&ctl, ids, (int)n);
+        nvs_close(h);
+    }
+}
+
+static void favs_list(keypad_reply_t reply, void *ctx)
+{
+    char line[200];
+    for (int page = 0; page * 8 < ctl.nfavs; page++) {
+        int len = snprintf(line, sizeof(line), "PALETTES page %d:", page + 1);
+        for (int i = page * 8; i < ctl.nfavs && i < page * 8 + 8 && len < (int)sizeof(line); i++)
+            len += snprintf(line + len, sizeof(line) - (size_t)len, "%s %d %s", i == page * 8 ? "" : ",", i % 8 + 1, wled_palettes[ctl.favs[i]].name);
+        reply(ctx, line);
+    }
+}
+
+static bool favs_console(const char *line, keypad_reply_t reply, void *ctx)
+{
+    if (strncmp(line, "palettes", 8) || (line[8] && line[8] != ' ')) return false;
+    if (!reply) reply = console_reply;
+    const char *arg = line[8] ? line + 9 : "";
+    while (*arg == ' ') arg++;
+    if (*arg) {
+        uint8_t ids[CTL_FAVS];
+        int n;
+        char bad[32];
+        if (!strcmp(arg, "reset")) {
+            static const uint8_t def[CTL_FAVS] = CTL_DEFAULT_FAVS;
+            memcpy(ids, def, sizeof(ids));
+            n = CTL_FAVS;
+        } else if (!(n = ctl_parse_palettes(arg, ids, bad, sizeof(bad)))) {
+            char msg[80];
+            snprintf(msg, sizeof(msg), "ERROR no WLED palette '%s' (or more than %d)", bad, CTL_FAVS);
+            reply(ctx, msg);
+            return true;
+        }
+        xSemaphoreTake(ctl_mutex, portMAX_DELAY);
+        ctl_set_favs(&ctl, ids, n);
+        xSemaphoreGive(ctl_mutex);
+        nvs_handle_t h;
+        if (nvs_open("base", NVS_READWRITE, &h) == ESP_OK) {
+            if (!strcmp(arg, "reset")) nvs_erase_key(h, "favpal");
+            else nvs_set_blob(h, "favpal", ids, (size_t)n);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+        display_event("Palettes: %d set", n);
+    }
+    favs_list(reply, ctx);
+    return true;
+}
+
 // Console questions from a brain's /keys page (NL_MSG_CONSOLE): only the
 // keypad's commands (`keymap ...`, `keys`), answered to the brain that asked.
 
@@ -729,8 +792,9 @@ static void radio_console_poll(void)
     if (!a) return;
     a->len = 0;
     a->text[0] = 0;
-    if (!keypad_console(q.text, radio_answer_line, a) && !ota_peers_console(q.text, radio_answer_line, a))
-        radio_answer_line(a, "ERROR the base takes only keymap, keys, ota remote and ota wifi over the radio");
+    if (!keypad_console(q.text, radio_answer_line, a) && !ota_peers_console(q.text, radio_answer_line, a) &&
+        !favs_console(q.text, radio_answer_line, a))
+        radio_answer_line(a, "ERROR the base takes only keymap, keys, palettes, ota remote and ota wifi over the radio");
     ESP_LOGI(TAG, "radio console: %s (%u bytes back)", q.text, (unsigned)a->len);
     size_t off = 0;
     for (uint8_t part = 0;; part++) {
@@ -763,6 +827,7 @@ static void console_task(void *arg)
         if (!mirror_is_mirror() && ota_peers_console(line, console_reply, NULL)) continue;   // ota remote ...: the monitors and eyes
         if (ota_command(line, console_reply, NULL)) continue;
         if (keypad_console(line, NULL, NULL)) continue;   // keymap ..., keys: which key each switch is (keypad.h)
+        if (favs_console(line, NULL, NULL)) continue;     // palettes ...: the palettes bank's list
         if (!strcmp(line, "role mirror") || !strcmp(line, "role base")) {
             const bool m = line[5] == 'm';
             printf("ROLE %s%s\n", m ? "mirror" : "base", mirror_set_role(m) ? ", restarting" : ": could not save");
@@ -1030,6 +1095,7 @@ void app_main(void)
     bump_mutex = xSemaphoreCreateMutex();
     ctl_mutex = xSemaphoreCreateMutex();
     ctl_init(&ctl, KEYPAD_AUTOLOCK_MS);
+    favs_load();
     ctl.monitors_by_brain = monitors_load();
     actions = xQueueCreate(16, sizeof(action_t));
     timed_bumps = xQueueCreate(1, sizeof(timed_bump_t));
@@ -1233,6 +1299,7 @@ void app_main(void)
             .take_preview = c.take_preview,
             .latch = c.down[KEY_LATCH],
             .bump_mode = c.bump_mode,
+            .num_page = (uint8_t)c.num_page,
         };
         name_of(ds.live_body, wled_names, 256, c.live.body);
         name_of(ds.live_eyes, eye_names, 64, c.live.eyes);
