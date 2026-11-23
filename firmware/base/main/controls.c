@@ -682,6 +682,15 @@ static void set_live(ctl_t *c, out_t *o, fn_t f)
             c->layers.fins_layer = 0;
         }
     } else if (is_pal(f.kind)) {
+        // The palette that's on already: off again, back to the preset's own (2026-11-23):
+        // the preset again, which brings its own palette (and drops any layer look).
+        if (on_body(c, t) && c->layers.body_pal == v && c->live.body > 0) {
+            emit(o, ACT_PRESET, TGT_BODY, 0, c->live.body);
+            c->layers.body_pal = -1;
+            c->layers.body_layer = 0;
+            if (on_fins(c, t) && c->live.fins > 0) emit(o, ACT_PRESET, TGT_FINS, 0, c->live.fins);
+            return;
+        }
         if (on_body(c, t)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, 0, v); c->layers.body_pal = v; }
         if (on_fins(c, t)) { emit(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, 0, v); c->layers.fins_pal = v; }
     }
@@ -701,6 +710,17 @@ static void set_standby(ctl_t *c, out_t *o, fn_t f)
         else if (t == TGT_ALL || t == TGT_BODY_FINS) emit_sb(o, ACT_PRESET, TGT_FINS, 0);
     } else if (is_pal(f.kind) && t != TGT_EYES) {
         const bool body = on_body(c, t), fins = t == TGT_FINS || ((t == TGT_ALL || t == TGT_BODY_FINS) && c->standby.fins > 0);
+        ctl_layers_t now;
+        ctl_standby_layers(c, &now);
+        if (body && now.body_pal == v && c->standby.body > 0) {   // on already: back to the preset's own
+            c->standby_layers.body_pal = c->standby_layers.body_layer = -1;
+            emit_sb(o, ACT_PRESET, TGT_BODY, c->standby.body);
+            if (fins && c->standby.fins > 0) {
+                c->standby_layers.fins_pal = c->standby_layers.fins_layer = -1;
+                emit_sb(o, ACT_PRESET, TGT_FINS, c->standby.fins);
+            }
+            return;
+        }
         if (body) { c->standby_layers.body_pal = v; emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_BODY, v); }
         if (fins) { c->standby_layers.fins_pal = v; emit_sb(o, ACT_SLOT_PALETTE, NL_SLOT_FINS, v); }
     }
@@ -1066,7 +1086,25 @@ static uint32_t fn_color(const ctl_t *c, fn_t f, const ctl_layers_t *sb)
 // that brain shows for the target is lit: red on the brain on the shark, green
 // on the other; the rest dim, blue-ish on the Left column, warm on the Right, so
 // the two columns are told apart.
-static uint32_t brain_color(const ctl_t *c, bool left, int n, const ctl_layers_t *sb)
+// A palette's colour at time t: its 16 colours in turn, blended, once round
+// every CTL_PAL_FADE_MS; 0 for a palette with no colours of its own.
+#define CTL_PAL_FADE_MS 3000
+#define CTL_PAL_OTHER_PCT 12
+static uint32_t palette_fade(int id, uint32_t now_ms, int pct)
+{
+    if (id < 0 || id >= WLED_PALETTE_COUNT || wled_palettes[id].kind == WLED_PAL_DYNAMIC) return 0;
+    const uint8_t (*rgb)[3] = wled_palettes[id].rgb;
+    const uint32_t pos = (now_ms % CTL_PAL_FADE_MS) * 16 * 256 / CTL_PAL_FADE_MS;   // 16 colours, 8-bit blend
+    const int i = (int)(pos >> 8), f = (int)(pos & 255), j = (i + 1) % 16;
+    uint32_t out = 0;
+    for (int ch = 0; ch < 3; ch++) {
+        const int v = (rgb[i][ch] * (256 - f) + rgb[j][ch] * f) >> 8;
+        out |= (uint32_t)(v * pct / 100) << (16 - 8 * ch);
+    }
+    return out ? out : 0x010101;   // a black stretch of the palette: just on
+}
+
+static uint32_t brain_color(const ctl_t *c, bool left, int n, const ctl_layers_t *sb, uint32_t now_ms)
 {
     const bool live = brain_live(c, left);
     const ctl_scene_t *sc = live ? &c->live : &c->standby;
@@ -1081,7 +1119,13 @@ static uint32_t brain_color(const ctl_t *c, bool left, int n, const ctl_layers_t
     if (c->target == TGT_EYES) return C_OFF;   // the eyes have no palettes
     const ctl_layers_t *l = live ? &c->layers : sb;
     const int cur = c->target == TGT_FINS ? l->fins_pal : l->body_pal;
-    return v == cur ? on : dim(0xc020c0, 20);
+    // Each key fades through its own palette (2026-11-23): the column of the brain
+    // on the shark at full brightness, the other brain's at 12% (40% looked the
+    // same: brightness isn't seen linearly, and the keys are scaled down already).
+    // The one that brain shows now stays solid red (on the shark) or green, as before the fades.
+    if (v == cur) return on;
+    const uint32_t fade = palette_fade(v, now_ms, live ? 100 : CTL_PAL_OTHER_PCT);
+    return fade ? fade : dim(0xc020c0, 20);
 }
 
 void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
@@ -1127,8 +1171,8 @@ void ctl_led_colors(const ctl_t *c, uint32_t now_ms, uint32_t rgb[KEY_COUNT])
     // One-handed layout
     for (int n = 1; n <= 8; n++) {
         const ctl_key_t kl = (ctl_key_t)(KEY_L1 + n - 1), kr = (ctl_key_t)(KEY_R1 + n - 1);
-        rgb[kl] = c->down[kl] ? 0xffffff : brain_color(c, true, n, &sb);
-        rgb[kr] = c->down[kr] ? 0xffffff : brain_color(c, false, n, &sb);
+        rgb[kl] = c->down[kl] ? 0xffffff : brain_color(c, true, n, &sb, now_ms);
+        rgb[kr] = c->down[kr] ? 0xffffff : brain_color(c, false, n, &sb, now_ms);
     }
     rgb[KEY_SETBUMP] = c->bump_mode ? 0x0060ff : 0xff6000;          // BUMP blue, SET orange
     rgb[KEY_TARGET] = target_color(c->target);

@@ -115,7 +115,10 @@ stays as the fallback until the new set has run a rehearsal.
   (Live, Standby) or by brain (Right, Left), goes with it (`NL_SHOW_BY_BRAIN`):
   the **MONITORS** key (`KEY_MONITORS`, tap to toggle; LED grey / blue; on the
   third key board since 2026-11-16) or `monitors [sides|brains|toggle]`; kept in NVS
-  (`base`/`mon_brain`). See `firmware/monitor/CLAUDE.md`.
+  (`base`/`mon_brain`). See `firmware/monitor/CLAUDE.md`. **Since 2026-11-23 the
+  base always starts by brain** (the user: each monitor fixed to one brain, the top
+  one the Left Brain); the saved setting is ignored, `monitors` still changes it
+  until a restart.
 - Tested 2026-11-14 on the bench with nothing attached: boots, screen drawn
   (screenshots), the monitors hear it. TF card: with a card in, it mounts and
   logs (L00014, 2026-11-14; the 0x107 timeout before was an empty slot). Power board and keypads not
@@ -149,6 +152,20 @@ file. All of it can also be driven from USB serial.
     400 mA margin less the lights' peak over 3 s, between 100 mA and the ILIM_HIZ pin's
     2 A. The pin stays the upper limit. Lights alone over 5 A can't be helped from
     here: see `docs/power.md`. In the log as `chg_limit_ma`.
+  - **External battery first** (2026-11-23, after the festival: the pack ran the
+    lights while a VB99 only fed the charger's 2 A): with a battery on the LEMO at
+    least about as high as the pack, the base switches the pack's ideal diode off
+    (`PACK_OFF`, `pack_should_be_off`: off at VBUS >= VBAT - 0.2 V, on again below
+    VBAT - 0.4 V, before the pack FET's body diode would carry the lights), so the
+    lights run from the LEMO and the pack only charges. The body diode still catches
+    the bus if the cable is pulled. And the charger's input limit is the register's
+    alone (EN_EXTILIM off, so the ILIM_HIZ divider's 2 A no longer caps it), up to
+    3.3 A: on a battery 10 A (a D-Tap) less 0.5 A less the lights' 3 s peak while
+    the pack is off; on a USB-C supply as before (5 A less margin less the lights).
+    Host-tested; **not yet tried on the power board** (needs the external battery):
+    check the lights run from the LEMO (pack current ~0 or charging), pulling the
+    cable doesn't blink them, the pack FET stays cool with the LEMO below the pack,
+    and the D-Tap current stays under 10 A. `power` logs `lights on, pack OFF`.
   - The pack's charge (`pack_percent`: a 21700 resting-voltage curve,
     corrected for sag at 100 mOhm) and the runtime at the present load.
   - Broadcasts `NL_MSG_BATTERY` every 200 ms (the INA226's voltage and
@@ -215,7 +232,14 @@ file. All of it can also be driven from USB serial.
     console: `/keys/ask?c=palettes...`, `base_ask.py`) lists them, `palettes Party,
     Lava, ...` replaces them (WLED names, any case, or ids; up to 16; kept in NVS
     `base`/`favpal`), `palettes reset` goes back to the defaults
-    (`ctl_parse_palettes`, host-tested).
+    (`ctl_parse_palettes`, host-tested). **Each palette key fades through its
+    own palette** (2026-11-23, `palette_fade`: its 16 colours blended, once
+    round every `CTL_PAL_FADE_MS`, 3 s): the column of the brain on the shark at
+    full brightness, the other brain's at 12% (`CTL_PAL_OTHER_PCT`; 40% looked no
+    different on the keys); the palette a brain shows now stays solid red (on the
+    shark) or green, as before the fades; **tapping it again takes the palette off**, back to the
+    preset's own (the preset is sent again, which also drops a layer look); the
+    mirror panel follows.
   - **A brain's column** changes Live if that brain is on the shark (or there's
     one brain), else Standby: sent straight to that brain (`ACT_*` with
     `standby`), the eyes cued for the swap; never the brain on the shark. BUMP on

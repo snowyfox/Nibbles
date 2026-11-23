@@ -220,9 +220,12 @@ typedef struct NL_PACKED {
 // The sender broadcasts START, then HOLD every NL_BUMP_KEEPALIVE_MS, then
 // STOP. A receiver treats HOLD for an unknown bump as a start (START lost)
 // and releases a bump that goes NL_BUMP_TIMEOUT_MS without a message (STOP
-// lost), so an effect can never stick on.
+// lost), so an effect can never stick on. 1500 ms since 2026-11-23 (300 ms let
+// a held bump flicker off and on whenever three HOLDs in a row were lost on a busy
+// festival channel); the base sends STOP three times, so releases stay instant.
+// Receivers on the old 300 ms still work, just with the flicker.
 #define NL_BUMP_KEEPALIVE_MS 100
-#define NL_BUMP_TIMEOUT_MS   300
+#define NL_BUMP_TIMEOUT_MS   1500
 
 typedef enum {
     NL_BUMP_FLASH = 1,      // everything white, full brightness

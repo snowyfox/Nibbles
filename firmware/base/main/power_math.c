@@ -65,12 +65,21 @@ temp_level_t die_temp_level(int c10)
     return c10 >= DIE_HOT_C10 ? TEMP_BAD : c10 >= DIE_WARM_C10 ? TEMP_WARN : TEMP_OK;
 }
 
-int charger_input_limit_ma(input_kind_t input, int light_peak_ma)
+int charger_input_limit_ma(input_kind_t input, int light_peak_ma, bool pack_off)
 {
-    if (input != INPUT_SUPPLY) return CHARGER_PIN_MA;
-    const int room = DONGLE_MA - DONGLE_MARGIN_MA - (light_peak_ma > 0 ? light_peak_ma : 0);
+    const int lights = light_peak_ma > 0 ? light_peak_ma : 0;
+    int room;
+    if (input == INPUT_SUPPLY) room = DONGLE_MA - DONGLE_MARGIN_MA - lights;
+    else if (input == INPUT_BATTERY) room = DTAP_MA - DTAP_MARGIN_MA - (pack_off ? lights : 0);
+    else return CHARGER_PIN_MA;   // nothing on the LEMO: what the board would set anyway
     const int limit = room / 10 * 10;   // 10 mA steps
-    return limit < CHARGER_MIN_MA ? CHARGER_MIN_MA : limit > CHARGER_PIN_MA ? CHARGER_PIN_MA : limit;
+    return limit < CHARGER_MIN_MA ? CHARGER_MIN_MA : limit > CHARGER_MAX_MA ? CHARGER_MAX_MA : limit;
+}
+
+bool pack_should_be_off(bool now_off, input_kind_t input, int vbus_mv, int pack_mv)
+{
+    if (input != INPUT_BATTERY || vbus_mv <= 0 || pack_mv <= 0) return false;
+    return vbus_mv >= pack_mv - (now_off ? PACK_ON_BELOW_MV : PACK_OFF_BELOW_MV);
 }
 
 int runtime_minutes(int pct, int load_mw)

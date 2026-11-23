@@ -145,6 +145,14 @@ Worst case over the dock cable is lights at full plus quick charging, around
 
 ### Lighting path
 
+**2026-11-23 (after the festival):** with a VB99 on the LEMO the internal pack still
+ran the lights whenever it was the higher of the two (a near-full pack, a part-used
+VB99 plus the cable's drop), and the LEMO only fed the charger, capped at the ILIM
+divider's 2 A, so heavy effects drained the pack. The base now switches the pack's
+diode off while the battery on the LEMO is at least about as high as the pack, and
+sets the charger's input limit itself (up to 3.3 A, within a D-Tap's 10 A with the
+lights); see "Power board" in `firmware/base/CLAUDE.md`. Not yet tested on the board.
+
 - **Priority switch:** ideal-diode controllers with enable pins (for example
   TI LM74700) choose the dock when present, otherwise the internal pack. The
   internal pack stays connected through its ideal diode at all times so it

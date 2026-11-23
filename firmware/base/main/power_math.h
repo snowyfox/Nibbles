@@ -64,14 +64,29 @@ typedef enum { TEMP_OK = 0, TEMP_WARN, TEMP_BAD } temp_level_t;
 temp_level_t cell_temp_level(int c10);   // INT16_MIN (no reading): TEMP_OK
 temp_level_t die_temp_level(int c10);
 
-// What the charger may draw from a USB-C supply (the dongle's trigger board gives
-// DONGLE_MA at 20 V), given the lights' recent peak on the same input: charging
-// gives way to the lights. Not on a supply: the ILIM_HIZ pin's limit, untouched.
+// What the charger may draw from the LEMO (2026-11-23: up to the chip's 3.3 A,
+// the ILIM_HIZ pin's 2 A cap turned off with EN_EXTILIM). The lights' recent peak
+// comes off it when they run from the same input: always on a USB-C supply (the
+// dongle's trigger board gives DONGLE_MA at 20 V); on an external battery only
+// while the pack is switched off (pack_off), within a D-Tap's DTAP_MA.
 #define DONGLE_MA           5000
 #define DONGLE_MARGIN_MA    400     // the base, and the reading's lag
-#define CHARGER_PIN_MA      2000    // the board's ILIM_HIZ divider, always the upper limit
+#define DTAP_MA             10000   // a VB99's D-Tap
+#define DTAP_MARGIN_MA      500
+#define CHARGER_MAX_MA      3300    // the BQ25798's highest input limit
+#define CHARGER_PIN_MA      2000    // the board's ILIM_HIZ divider (no longer the cap)
 #define CHARGER_MIN_MA      100     // the BQ25798's lowest setting
-int charger_input_limit_ma(input_kind_t input, int light_peak_ma);
+int charger_input_limit_ma(input_kind_t input, int light_peak_ma, bool pack_off);
+
+// Lights from an external battery first (2026-11-23): the pack's ideal diode
+// (PACK_OFF) goes off while a battery on the LEMO is at least about as high as the
+// pack, so the lights run from the LEMO and the pack only charges. It comes back on
+// before the LEMO sags far enough below the pack for the pack FET's body diode to
+// carry the lights (about 0.6 V): off at vbus >= pack - PACK_OFF_BELOW_MV, on again
+// below pack - PACK_ON_BELOW_MV. Unknown readings, no battery: on.
+#define PACK_OFF_BELOW_MV   200
+#define PACK_ON_BELOW_MV    400
+bool pack_should_be_off(bool now_off, input_kind_t input, int vbus_mv, int pack_mv);
 
 // Minutes left at load_mw from pct, or -1 when the load is too small to say.
 int runtime_minutes(int pct, int load_mw);

@@ -120,10 +120,11 @@ static bool bq_configure(void)
     ok &= rd(bq, 0x11, &r, 1) == ESP_OK && wr8(bq, 0x11, r & ~0x40) == ESP_OK;         // AUTO_INDET_EN = 0
     ok &= wr16(bq, 0x01, CHG_VREG_MV / 10) == ESP_OK;                                  // VREG, 10 mV
     ok &= wr16(bq, 0x03, CHG_ICHG_MA / 10) == ESP_OK;                                  // ICHG, 10 mA
-    if (CHG_IINDPM_MA) {
-        ok &= wr16(bq, 0x06, CHG_IINDPM_MA / 10) == ESP_OK;                            // IINDPM, 10 mA
-        ok &= rd(bq, 0x14, &r, 1) == ESP_OK && wr8(bq, 0x14, r & ~0x02) == ESP_OK;     // EN_EXTILIM = 0
-    }
+    // The input limit is the register's alone (2026-11-23): EN_EXTILIM off, so the
+    // ILIM_HIZ divider's 2 A no longer caps it; the power task sets it (up to 3.3 A)
+    // from what's on the LEMO. 2 A until then, as the divider would.
+    ok &= wr16(bq, 0x06, (CHG_IINDPM_MA ? CHG_IINDPM_MA : CHARGER_PIN_MA) / 10) == ESP_OK;   // IINDPM, 10 mA
+    ok &= rd(bq, 0x14, &r, 1) == ESP_OK && wr8(bq, 0x14, r & ~0x02) == ESP_OK;              // EN_EXTILIM = 0
     ok &= wr8(bq, 0x2E, 0x80 | 1 << 4) == ESP_OK;  // ADC on, continuous, 14 bit
     uint16_t vreg = 0, ichg = 0;
     ok &= rd16(bq, 0x01, &vreg) == ESP_OK && rd16(bq, 0x03, &ichg) == ESP_OK;
@@ -133,8 +134,7 @@ static bool bq_configure(void)
         if (rd(bq, 0x0F, &r, 1) == ESP_OK) wr8(bq, 0x0F, r & ~0x20);                   // EN_CHG = 0
         return false;
     }
-    ESP_LOGI(TAG, "charger set: %d mV, %d mA%s", CHG_VREG_MV, CHG_ICHG_MA,
-             CHG_IINDPM_MA ? ", input limit raised" : ", input limit from ILIM_HIZ (2 A)");
+    ESP_LOGI(TAG, "charger set: %d mV, %d mA, input limit from the base (ILIM_HIZ off)", CHG_VREG_MV, CHG_ICHG_MA);
     return true;
 }
 
@@ -254,7 +254,11 @@ static void power_task(void *arg)
         }
         // The pack is only ever switched off while the dock can run the lights.
         want_pole_off = pole_off_stays(want_pole_off, bq_ok ? input_kind(s.vbus_mv) : INPUT_NONE);
-        const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = !want_pack && s.docked;
+        // Lights from an external battery first (2026-11-23): the pack's diode off while
+        // the battery on the LEMO is about as high as the pack (pack_should_be_off).
+        const bool auto_pack_off = bq_ok && cfg_ok && s.docked &&
+                                   pack_should_be_off(pack_off, input_kind(s.vbus_mv), s.vbus_mv, s.vbat_mv);
+        const bool want_lights_off = !want_lights || want_pole_off, want_pack_off = s.docked && (!want_pack || auto_pack_off);
         if (exp_ok) {
             uint8_t in;
             if (want_lights_off != lights_off || want_pack_off != pack_off) {
@@ -299,14 +303,15 @@ static void power_task(void *arg)
             s.pack_ma = s.have_monitor && !s.docked ? -s.light_ma : 0;
             s.starved = false;
         }
-        // A USB-C supply is only good for so much: charging gives way to the lights.
+        // A USB-C supply is only good for so much, and so is a D-Tap while the lights run
+        // from it (pack off): charging gives way to the lights.
         // They jump with the music, so the limit follows their peak over the last 3 s:
         // down at once, up only after that.
         if (s.light_ma >= light_peak || now >= light_peak_until) {
             light_peak = s.light_ma;
             light_peak_until = now + 3000000;
         }
-        s.chg_limit_ma = charger_input_limit_ma((input_kind_t)s.input, light_peak);
+        s.chg_limit_ma = charger_input_limit_ma((input_kind_t)s.input, light_peak, pack_off);
         if (bq_ok && s.chg_limit_ma != chg_limit_set && wr16(bq, 0x06, s.chg_limit_ma / 10) == ESP_OK) {
             chg_limit_set = s.chg_limit_ma;
             ESP_LOGI(TAG, "charger input limit %d mA", chg_limit_set);

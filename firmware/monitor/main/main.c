@@ -65,6 +65,9 @@ static const char *TAG = "monitor";
 #define SHOW_LOST_MS   2000
 #define SHARK_W        296
 #define SHARK_H        150
+// The simple page's shark, bigger (2026-11-23): the same map scaled by 420/296.
+#define BIG_W          420
+#define BIG_H          213
 #define FRAME_MS       40
 
 #define COL_BG      0x000000
@@ -81,6 +84,7 @@ static const char *TAG = "monitor";
 static int side;      // NL_SHOW_LIVE or NL_SHOW_STANDBY: this monitor's side in the side mode
 static int my_brain;  // 0 Right, 1 Left: the brain this monitor follows in the brain mode
 static bool flipped_from_settings(void);
+static void shark_draw(bool stream);
 
 static esp_lcd_panel_io_handle_t io;
 static SemaphoreHandle_t sent;
@@ -282,6 +286,15 @@ static lv_obj_t *page_box(lv_obj_t *parent)
 // Landscape, 456 x 280: the banner across the top; the shark left, the
 // target and look on the right; the body preset big along the bottom, eyes
 // and fins under it.
+// The shark's canvas: big on the simple page, the old size on the detail page.
+static bool shark_big;
+static void shark_size(bool big)
+{
+    shark_big = big;
+    lv_canvas_set_buffer(u.shark, shark_px, big ? BIG_W : SHARK_W, big ? BIG_H : SHARK_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(u.shark, big ? (SCR_W - BIG_W) / 2 : 4, big ? SHARK_Y_SIMPLE : SHARK_Y_DETAIL);
+}
+
 static void ui_build(void)
 {
     lv_obj_t *scr0 = lv_screen_active();
@@ -298,12 +311,17 @@ static void ui_build(void)
     lv_obj_set_size(u.s_banner, SCR_W, 56);
     lv_obj_set_style_bg_opa(u.s_banner, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(u.s_banner, lv_color_hex(accent), 0);
-    u.s_title = label(u.s_banner, &lv_font_montserrat_40, COL_BG, 10, 6, 0, false);
-    u.s_note = label(u.s_banner, &lv_font_montserrat_28, COL_BG, 296, 13, SCR_W - 306, false);
+    // The preset's name across the top (2026-11-23; the banner's colour says Live or
+    // Standby), the brightness or NEW / SAME / ON SHARK on the right.
+    u.s_title = label(u.s_banner, &lv_font_montserrat_40, COL_BG, 10, 6, 330, false);
+    u.s_note = label(u.s_banner, &lv_font_montserrat_28, COL_BG, 336, 13, SCR_W - 346, false);
     lv_obj_set_style_text_align(u.s_note, LV_TEXT_ALIGN_RIGHT, 0);
-    u.s_cap = label(u.simple, &lv_font_montserrat_20, COL_TITLE, rx, 92, rw, false);
+    u.s_cap = label(u.simple, &lv_font_montserrat_20, COL_TITLE, rx, 92, rw, false);   // not shown any more
     u.s_val = label(u.simple, &lv_font_montserrat_40, COL_TEXT, rx, 116, rw, false);
     u.s_body = label(u.simple, &lv_font_montserrat_40, COL_TEXT, 8, 222, SCR_W - 16, false);
+    lv_obj_add_flag(u.s_cap, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(u.s_val, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(u.s_body, LV_OBJ_FLAG_HIDDEN);
 
     // The detail page: the first layout.
     u.detail = page_box(scr0);
@@ -323,11 +341,10 @@ static void ui_build(void)
     lv_obj_set_style_text_align(u.note, LV_TEXT_ALIGN_RIGHT, 0);
 
     // The shark, on both pages (moved by page_show).
-    shark_px = heap_caps_calloc(SHARK_W * SHARK_H, 2, MALLOC_CAP_SPIRAM);
+    shark_px = heap_caps_calloc(BIG_W * BIG_H, 2, MALLOC_CAP_SPIRAM);   // big enough for either size
     u.shark = lv_canvas_create(scr0);
-    lv_canvas_set_buffer(u.shark, shark_px, SHARK_W, SHARK_H, LV_COLOR_FORMAT_RGB565);
-    lv_obj_set_pos(u.shark, 4, SHARK_Y_SIMPLE);
-    u.shark_note = label(scr0, &lv_font_montserrat_20, COL_DIM, 4, SHARK_Y_SIMPLE + 2, SHARK_W, false);   // above the shark's back
+    shark_size(true);
+    u.shark_note = label(scr0, &lv_font_montserrat_20, COL_DIM, (SCR_W - BIG_W) / 2, SHARK_Y_SIMPLE + 2, BIG_W, false);   // above the shark's back
     lv_obj_set_style_text_align(u.shark_note, LV_TEXT_ALIGN_CENTER, 0);
 
     u.target = lv_obj_create(scr);
@@ -405,8 +422,10 @@ static void ui_update(void)
         page = want;
         lv_obj_add_flag(want ? u.simple : u.detail, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(want ? u.detail : u.simple, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_y(u.shark, want ? SHARK_Y_DETAIL : SHARK_Y_SIMPLE);
-        lv_obj_set_y(u.shark_note, (want ? SHARK_Y_DETAIL : SHARK_Y_SIMPLE) + 2);
+        shark_size(!want);
+        shark_draw(false);   // redrawn at the new size; the stream fills it in again
+        lv_obj_set_pos(u.shark_note, want ? 4 : (SCR_W - BIG_W) / 2, (want ? SHARK_Y_DETAIL : SHARK_Y_SIMPLE) + 2);
+        lv_obj_set_width(u.shark_note, want ? SHARK_W : BIG_W);
         lv_obj_set_style_text_font(u.shark_note, want ? &lv_font_montserrat_14 : &lv_font_montserrat_20, 0);
     }
     const char *note = !heard ? "" : s.flags & NL_SHOW_LOCKED ? "LOCKED" : s.flags & NL_SHOW_LATCH ? "LATCH" : "";
@@ -423,12 +442,12 @@ static void ui_update(void)
         lv_label_set_text_fmt(u.title, "%s %s", stby ? "STANDBY" : "LIVE", s.brain ? "L" : "R");
     }
     lv_label_set_text(u.note, note);
-    lv_label_set_text(u.s_title, lv_label_get_text(u.title));
-    lv_label_set_text(u.s_note, note);
-
     fmt_preset(text, sizeof(text), "", s.body, s.body_name);
     lv_label_set_text(u.body, heard ? text : "--");
     lv_label_set_text(u.s_body, heard ? text : "--");
+    // The simple page's banner: the preset, or which brain this is while it isn't heard.
+    if (heard) lv_label_set_text(u.s_title, text);
+    else lv_label_set_text(u.s_title, lv_label_get_text(u.title));
     // The simple page's one number or word: Live's brightness; Standby: NEW
     // (TAKE would change something) or SAME.
     if (!heard) {
@@ -449,6 +468,8 @@ static void ui_update(void)
             set_col(u.s_val, COL_DIM);
         }
     }
+    // The banner's right end: LATCH / ON SHARK / no base if there's one, else the value.
+    lv_label_set_text(u.s_note, note[0] || !heard ? note : lv_label_get_text(u.s_val));
     fmt_preset(text, sizeof(text), "Eyes  ", s.eyes, s.eyes_name);
     lv_label_set_text(u.eyes, heard ? text : "Eyes  --");
     if (s.fins > 0) fmt_preset(text, sizeof(text), "Fins  ", s.fins, s.fins_name);
@@ -499,6 +520,57 @@ static void ui_update(void)
     }
 }
 
+// The big shark, blended (2026-11-23, the user: no black spots between the LEDs).
+// Each LED spreads over a disc of radius BLEND_R with a weight falling off from its
+// centre; a pixel takes the weighted average of the LEDs over it, divided by at
+// least BLEND_FULL so the outer edge of the shark fades instead of ending hard.
+#define BLEND_R    4
+#define BLEND_FULL 24
+static void shark_draw_blended(const uint8_t *leds)
+{
+    static uint16_t *acc;    // r, g, b sums per pixel
+    static uint16_t *wsum;
+    static uint8_t wt[2 * BLEND_R + 1][2 * BLEND_R + 1];
+    if (!acc) {
+        acc = heap_caps_malloc((size_t)BIG_W * BIG_H * 3 * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        wsum = heap_caps_malloc((size_t)BIG_W * BIG_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        for (int dy = -BLEND_R; dy <= BLEND_R; dy++)
+            for (int dx = -BLEND_R; dx <= BLEND_R; dx++) {
+                const int d2 = dx * dx + dy * dy, r2 = (BLEND_R + 1) * (BLEND_R + 1);
+                wt[dy + BLEND_R][dx + BLEND_R] = d2 < r2 ? (uint8_t)(32 * (r2 - d2) / r2) : 0;
+            }
+        if (!acc || !wsum) return;
+    }
+    memset(acc, 0, (size_t)BIG_W * BIG_H * 3 * sizeof(uint16_t));
+    memset(wsum, 0, (size_t)BIG_W * BIG_H * sizeof(uint16_t));
+    for (int i = 0; i < LED_POS_COUNT; i++) {
+        int r = 0x30, g = 0x34, b = 0x3a;   // dim grey without a stream
+        if (leds) {
+            const uint8_t v = leds[i];
+            r = (v >> 5) * 255 / 7; g = ((v >> 2) & 7) * 255 / 7; b = (v & 3) * 255 / 3;
+        }
+        const int cx = led_pos[i][0] * BIG_W / SHARK_W, cy = led_pos[i][1] * BIG_H / SHARK_H;
+        for (int dy = -BLEND_R; dy <= BLEND_R; dy++) {
+            const int y = cy + dy;
+            if (y < 0 || y >= BIG_H) continue;
+            for (int dx = -BLEND_R; dx <= BLEND_R; dx++) {
+                const int x = cx + dx, k = wt[dy + BLEND_R][dx + BLEND_R];
+                if (!k || x < 0 || x >= BIG_W) continue;
+                const int p = y * BIG_W + x;
+                // r*k fits: 255 * 32 = 8160, and few discs overlap one pixel
+                acc[p * 3] += (uint16_t)(r * k >> 3); acc[p * 3 + 1] += (uint16_t)(g * k >> 3); acc[p * 3 + 2] += (uint16_t)(b * k >> 3);
+                wsum[p] += (uint16_t)k;
+            }
+        }
+    }
+    for (int p = 0; p < BIG_W * BIG_H; p++) {
+        if (!wsum[p]) continue;
+        const int d = wsum[p] < BLEND_FULL ? BLEND_FULL : wsum[p];
+        const int r = (acc[p * 3] << 3) / d, g = (acc[p * 3 + 1] << 3) / d, b = (acc[p * 3 + 2] << 3) / d;
+        shark_px[p] = lv_color_to_u16(lv_color_make(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b));
+    }
+}
+
 // The shark from the stream: a dot per LED; dim grey without a stream.
 static void shark_draw(bool stream)
 {
@@ -518,13 +590,24 @@ static void shark_draw(bool stream)
         taskEXIT_CRITICAL(&lock);
     }
     const uint16_t dim = lv_color_to_u16(lv_color_hex(0x30343a));
-    memset(shark_px, 0, SHARK_W * SHARK_H * 2);
+    const int w = shark_big ? BIG_W : SHARK_W, h = shark_big ? BIG_H : SHARK_H;
+    memset(shark_px, 0, (size_t)w * h * 2);
+    if (shark_big) {   // blended (2026-11-23): each LED a soft round glow, overlaps averaged
+        shark_draw_blended(stream ? now : NULL);
+        lv_obj_invalidate(u.shark);
+        return;
+    }
     static const int8_t off[][2] = { {0,-1}, {-1,0}, {0,0}, {1,0}, {0,1} };
+    static const int8_t off_big[][2] = { {0,-1}, {1,-1}, {-1,0}, {0,0}, {1,0}, {2,0}, {-1,1}, {0,1}, {1,1}, {2,1}, {0,2}, {1,2} };
+    const int8_t (*o)[2] = shark_big ? off_big : off;
+    const size_t no = shark_big ? sizeof(off_big) / sizeof(off_big[0]) : sizeof(off) / sizeof(off[0]);
     for (int i = 0; i < LED_POS_COUNT; i++) {
         const uint16_t c = stream ? lut[now[i]] : dim;
-        for (size_t k = 0; k < sizeof(off) / sizeof(off[0]); k++) {
-            const int x = led_pos[i][0] + off[k][0], y = led_pos[i][1] + off[k][1];
-            if (x >= 0 && x < SHARK_W && y >= 0 && y < SHARK_H) shark_px[y * SHARK_W + x] = c;
+        const int px = shark_big ? led_pos[i][0] * BIG_W / SHARK_W : led_pos[i][0];
+        const int py = shark_big ? led_pos[i][1] * BIG_H / SHARK_H : led_pos[i][1];
+        for (size_t k = 0; k < no; k++) {
+            const int x = px + o[k][0], y = py + o[k][1];
+            if (x >= 0 && x < w && y >= 0 && y < h) shark_px[y * w + x] = c;
         }
     }
     lv_obj_invalidate(u.shark);
@@ -713,7 +796,7 @@ static int side_from_settings(void)
 }
 
 // The brain mode's brain: saved ("brain right|left"), else the Live monitor
-// follows the Right Brain and the Standby one the Left.
+// (the top one) follows the Left Brain and the Standby one the Right.
 static int brain_from_settings(void)
 {
     nvs_handle_t h;
@@ -723,7 +806,9 @@ static int brain_from_settings(void)
         nvs_close(h);
         if (err == ESP_OK) return v ? 1 : 0;
     }
-    return side == NL_SHOW_STANDBY ? 1 : 0;
+    // Swapped 2026-11-23 (the user): the Live-by-MAC board is the top monitor, and
+    // the top one is the Left Brain's.
+    return side == NL_SHOW_STANDBY ? 0 : 1;
 }
 
 void app_main(void)

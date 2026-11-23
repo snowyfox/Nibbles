@@ -22,8 +22,9 @@ base keeps the choice in NVS and sends it in every `NL_MSG_SHOW`
 
 - **By side** (the first design): each monitor shows a side, Live or Standby,
   whichever brain is on it; a TAKE + LATCH moves the pictures between screens.
-- **By brain**: each monitor follows one brain. The Live-by-MAC board follows the
-  **Right Brain** and the Standby one the **Left**, unless `brain right|left` over
+- **By brain**: each monitor follows one brain. The Live-by-MAC board (the top one)
+  follows the **Left Brain** and the Standby one the **Right** (swapped 2026-11-23; the
+  base now always runs this mode), unless `brain right|left` over
   USB (saved, no restart) says otherwise. The banner says `RIGHT  LIVE` or
   `LEFT  STANDBY` and takes the colour of the brain's role (red, green), so a take
   swaps the banners, not the pictures. The brain is told by the preview's flags
@@ -36,6 +37,15 @@ base keeps the choice in NVS and sends it in every `NL_MSG_SHOW`
   a take in the brain mode** (needs the controller and the brains' wires).
 
 ## Two pages: simple, and detail while the base's DETAIL key says so (2026-11-14)
+
+**Simple page since 2026-11-23** (the user): the banner shows the body **preset's
+name** (40 px; its colour still says Live red / Standby green; the brain's name
+while it isn't heard), with LATCH / ON SHARK, or else Live's brightness or
+Standby's NEW / SAME, on its right; the shark below it **bigger**, 420 x 213 (the
+same map scaled by 420/296), centred, **blended**: each LED a soft disc of radius 4
+(`shark_draw_blended`, weighted average where discs overlap, the outer edge fading), so
+there are no black gaps between LEDs; no right column and no
+preset line at the bottom. The detail page keeps the 296 x 150 shark. What it was:
 
 Read from half a metre or more, so normally a **simple page**: a 56 px banner
 (40 px title: LIVE / STANDBY with the brain's letter, or RIGHT LIVE / LEFT STANDBY in

@@ -298,7 +298,13 @@ static void slot_stop(int i)
     if (slots[i].on) {
         slots[i].b.phase = NL_BUMP_STOP;
         slots[i].on = false;
-        nl_espnow_broadcast(NL_MSG_BUMP, &slots[i].b, sizeof(nl_bump_t));
+        // Three times (2026-11-23): broadcasts aren't acked, and the receivers' safety
+        // timeout is to become long (no more flicker on a busy channel), so the release
+        // itself must get through. A repeated STOP changes nothing on the receiver.
+        for (int n = 0; n < 3; n++) {
+            if (n) vTaskDelay(pdMS_TO_TICKS(4));
+            nl_espnow_broadcast(NL_MSG_BUMP, &slots[i].b, sizeof(nl_bump_t));
+        }
     }
     xSemaphoreGive(bump_mutex);
 }
@@ -1096,7 +1102,10 @@ void app_main(void)
     ctl_mutex = xSemaphoreCreateMutex();
     ctl_init(&ctl, KEYPAD_AUTOLOCK_MS);
     favs_load();
-    ctl.monitors_by_brain = monitors_load();
+    (void)monitors_load;
+    // The monitors follow brains, for good (the user, 2026-11-23: the top one the Left
+    // Brain, the other the Right). `monitors` on the console still changes it until a restart.
+    ctl.monitors_by_brain = true;
     actions = xQueueCreate(16, sizeof(action_t));
     timed_bumps = xQueueCreate(1, sizeof(timed_bump_t));
     if (display_start(on_touch) != ESP_OK) ESP_LOGE(TAG, "no display; carrying on without it");
@@ -1153,7 +1162,13 @@ void app_main(void)
         const nl_fin_state_t sf = stby_fin;
         const nl_wled_layers_t sl = stby_layers;
         taskEXIT_CRITICAL(&lock);
-        const bool ab_on = ab_fresh && stby_fresh && (abs.flags & NL_AB_ENABLED) && (abs.flags & NL_AB_A_UP) && (abs.flags & NL_AB_B_UP);
+        const bool ab_now = ab_fresh && stby_fresh && (abs.flags & NL_AB_ENABLED) && (abs.flags & NL_AB_A_UP) && (abs.flags & NL_AB_B_UP);
+        // A swap clears what the Standby brain said (it's the other brain now), so for
+        // a moment it isn't "heard": stay in two-brain mode through that, 3 s (2026-11-23:
+        // both palette columns went bright for a second after a SWAP).
+        static uint32_t ab_seen_ms;
+        if (ab_now) ab_seen_ms = now_ms();
+        const bool ab_on = ab_now || (ab_seen_ms && now_ms() - ab_seen_ms < 3000);
         if (stby_fresh && sw.preset && sw.name[0]) memcpy(wled_names[sw.preset], sw.name, NL_NAME_LEN);
         ctl_action_t ab_acts[CTL_MAX_ACTIONS];
         int nab = 0;
@@ -1164,7 +1179,17 @@ void app_main(void)
         ab_in_use = ab_on;
         // Which brain is on the shark, for the per-brain number columns; not for
         // 2 s after a SWAP, while NL_MSG_AB still says how it was.
-        if (ab_fresh && now_ms() - ctl.swap_ms > 2000) ctl.left_live = abs.live == 1;
+        if (ab_fresh) {
+            // After a SWAP the base's own view stands until the controller's report agrees
+            // (or 6 s go by); it used to give in after 2 s, so a late report flipped the
+            // columns back for a moment (2026-11-23).
+            const bool rep_left = abs.live == 1;
+            if (ctl.swap_ms && now_ms() - ctl.swap_ms < 6000) {
+                if (rep_left == ctl.left_live) ctl.swap_ms = 0;
+            } else {
+                ctl.left_live = rep_left;
+            }
+        }
         ctl_set_live(&ctl, &live, wfresh ? w.bri : 0, ffresh ? fs.follow : -1);
         ctl_set_layers(&ctl, &layers);
         const int nacts = ctl_tick(&ctl, now_ms(), acts);

@@ -728,15 +728,30 @@ static void test_log_format(void)
 
 static void test_charger_limit(void)
 {
-    CHECK(charger_input_limit_ma(INPUT_NONE, 7000) == CHARGER_PIN_MA);     // not on a supply: untouched
-    CHECK(charger_input_limit_ma(INPUT_BATTERY, 7000) == CHARGER_PIN_MA);
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 0) == CHARGER_PIN_MA);      // the pin's limit is the top
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 2000) == CHARGER_PIN_MA);
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3000) == 1600);             // lights + charger + margin = 5 A
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 4507) == 90 + 10);          // the chip's lowest setting
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 7000) == CHARGER_MIN_MA);   // lights alone over: as little as it can
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, -50) == CHARGER_PIN_MA);
-    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3333) % 10 == 0);           // the register's steps
+    CHECK(charger_input_limit_ma(INPUT_NONE, 7000, false) == CHARGER_PIN_MA);   // nothing on the LEMO
+    // A USB-C supply: lights + charger + margin within 5 A, now up to 3.3 A.
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 0, false) == CHARGER_MAX_MA);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 2000, false) == 2600);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3000, false) == 1600);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 4507, false) == 90 + 10);         // the chip's lowest setting
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 7000, false) == CHARGER_MIN_MA);  // lights alone over: as little as it can
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, -50, false) == CHARGER_MAX_MA);
+    CHECK(charger_input_limit_ma(INPUT_SUPPLY, 3333, false) % 10 == 0);          // the register's steps
+    // An external battery: the most the charger takes; with the pack off the lights
+    // share the D-Tap's 10 A.
+    CHECK(charger_input_limit_ma(INPUT_BATTERY, 7000, false) == CHARGER_MAX_MA);  // lights on the pack
+    CHECK(charger_input_limit_ma(INPUT_BATTERY, 4000, true) == CHARGER_MAX_MA);   // 4 + 3.3 + 0.5 < 10
+    CHECK(charger_input_limit_ma(INPUT_BATTERY, 7000, true) == 2500);
+    CHECK(charger_input_limit_ma(INPUT_BATTERY, 9800, true) == CHARGER_MIN_MA);
+    // The pack's diode: off while the battery is about as high as the pack, back on
+    // before the LEMO sags 0.4 V below it.
+    CHECK(!pack_should_be_off(false, INPUT_NONE, 16000, 15000));
+    CHECK(!pack_should_be_off(false, INPUT_SUPPLY, 20000, 15000));               // a supply wins by itself
+    CHECK(pack_should_be_off(false, INPUT_BATTERY, 15900, 16000));                // within 0.2 V: off
+    CHECK(!pack_should_be_off(false, INPUT_BATTERY, 15700, 16000));               // 0.3 V below: stays on
+    CHECK(pack_should_be_off(true, INPUT_BATTERY, 15700, 16000));                 // off, 0.3 V below: stays off
+    CHECK(!pack_should_be_off(true, INPUT_BATTERY, 15550, 16000));                // 0.45 V below: on again
+    CHECK(!pack_should_be_off(true, INPUT_BATTERY, 16500, 0));                    // no pack reading: on
 }
 
 static bool has_act(ctl_act_type_t t, int value)
@@ -1268,6 +1283,43 @@ static void test_one_handed(void)
     ctl_led_colors(&c, 0, rgb);
     CHECK(rgb[(ctl_key_t)(KEY_L1 + 2)] == 0xff1010 && rgb[(ctl_key_t)(KEY_R1 + 1)] == 0x00e040 && rgb[KEY_TARGET] == 0xffd000);
     CHECK(ctl_key_by_name("l1") == KEY_L1 && ctl_key_by_name("swap") == KEY_SWAP);
+    // Palettes bank: each key fades through its own palette; the column of the
+    // brain on the shark bright, the other brain's dim.
+    {
+        ctl_t p;
+        ctl_init(&p, 0);
+        ctl_action_t o[CTL_MAX_ACTIONS];
+        live(&p, 1, 1, 0);
+        ctl_set_ab(&p, true, o);
+        p.left_live = false;                     // the Right Brain is on the shark
+        tap(&p, KEY_BANK);
+        uint32_t a[KEY_COUNT], b[KEY_COUNT];
+        ctl_led_colors(&p, 0, a);
+        ctl_led_colors(&p, 1500, b);
+        CHECK(a[KEY_R1] != b[KEY_R1]);           // it moves
+        const uint8_t *party = wled_palettes[6].rgb[0];
+        const uint32_t full = (uint32_t)party[0] << 16 | (uint32_t)party[1] << 8 | party[2];
+        const uint32_t low = (uint32_t)(party[0] * 12 / 100) << 16 | (uint32_t)(party[1] * 12 / 100) << 8 | (uint32_t)(party[2] * 12 / 100);
+        CHECK(a[KEY_R1] == (full ? full : 0x010101));
+        CHECK(a[KEY_L1] == (low ? low : 0x010101));
+        // The palette a brain shows now: solid, red on the shark's brain.
+        ctl_layers_t l = { 6, -1, 0, 0 };        // Party on the body
+        ctl_set_layers(&p, &l);
+        ctl_led_colors(&p, 700, a);
+        CHECK(a[KEY_R1] == 0xff1010);
+        // Tapping the palette that's on: back to the preset's own (the preset again).
+        press(&p, KEY_R1);
+        CHECK(has(ACT_PRESET, TGT_BODY, 1) && !has(ACT_SLOT_PALETTE, -1, -9999) && p.layers.body_pal == -1);
+        release(&p, KEY_R1);
+        press(&p, KEY_R1);                       // and again: Party on
+        CHECK(has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 6));
+        release(&p, KEY_R1);
+        // The same on the other brain's column: Standby back to its preset.
+        p.standby.body = 4;
+        press(&p, KEY_L1); CHECK(all_standby() && has(ACT_SLOT_PALETTE, NL_SLOT_BODY, 6)); release(&p, KEY_L1);
+        press(&p, KEY_L1); CHECK(all_standby() && has(ACT_PRESET, TGT_BODY, 4) && !has(ACT_SLOT_PALETTE, -1, -9999)); release(&p, KEY_L1);
+    }
+
 }
 
 int main(void)
